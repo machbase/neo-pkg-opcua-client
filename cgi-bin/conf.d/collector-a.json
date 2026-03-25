@@ -1,0 +1,33 @@
+{
+  "opcua": {
+    "endpoint": "opc.tcp://192.168.1.189:53530/OPCUA/SimulationServer",
+    "readRetryInterval": 100,
+    "interval": 5000,
+    "nodes": [
+      { "nodeId": "ns=3;i=1001", "name": "sensor.tag1" },
+      { "nodeId": "ns=3;i=1002", "name": "sensor.tag2" },
+      { "nodeId": "ns=3;i=1003", "name": "sensor.tag3" },
+      { "nodeId": "ns=3;i=1004", "name": "sensor.tag4" },
+      { "nodeId": "ns=3;i=1005", "name": "sensor.tag5" },
+      { "nodeId": "ns=3;i=1006", "name": "sensor.tag6" }
+    ]
+  },
+  "db": {
+    "table": "TAG",
+    "host": "127.0.0.1",
+    "port": 5656,
+    "user": "sys",
+    "password": "manager"
+  },
+  "log": {
+    "level": "INFO",
+    "output": "both",
+    "format": "json",
+    "file": {
+      "path": "./logs/collector-a.log",
+      "maxSize": "10MB",
+      "maxFiles": 7,
+      "rotate": "daily"
+    }
+  }
+}
