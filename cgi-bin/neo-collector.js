@@ -19,10 +19,16 @@ try {
   init(config.log);
   const logger = getLogger('app');
 
+  const configName = path.basename(configPath, '.json');
+  const pidFile = path.join(ROOT, 'run', `${configName}.pid`);
+  fs.mkdirSync(path.dirname(pidFile), { recursive: true });
+  fs.writeFileSync(pidFile, String(process.pid), 'utf-8');
+
   const collector = new Collector(config);
 
   process.addShutdownHook(() => {
     logger.info('shutdown requested');
+    try { fs.unlinkSync(pidFile); } catch (_) {}
     collector.close();
   });
 
