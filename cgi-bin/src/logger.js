@@ -91,20 +91,12 @@ class Logger {
     constructor(name, config) {
         this.name = name;
         this._config = config || {};
-        const lvl = LEVELS[String(this._config.level || "INFO").toUpperCase()];
-        this._minLevel = lvl !== undefined ? lvl : LEVELS.INFO;
-        this._output = this._config.output || "console"; // "console" | "file" | "both"
-        this._format = this._config.format || "json";    // "json" | "text"
         this._rotator = null;
-
-        if ((this._output === "file" || this._output === "both") && this._config.file) {
-            const f = this._config.file;
-            this._rotator = new LogRotator(f.path, f.maxSize, f.maxFiles, f.rotate);
-        }
     }
 
     _format_(level, message, extra) {
-        if (this._format === "text") {
+        const fmt = this._config.format || "json";
+        if (fmt === "text") {
             const ts = new Date().toISOString();
             const detail = extra !== undefined ? " " + JSON.stringify(extra) : "";
             return ts + " [" + level + "] [" + this.name + "] " + message + detail;
@@ -120,15 +112,23 @@ class Logger {
     }
 
     _print(level, message, extra) {
-        if (LEVELS[level] < this._minLevel) return;
+        const minLevel = LEVELS[String(this._config.level || "INFO").toUpperCase()];
+        if (LEVELS[level] < (minLevel !== undefined ? minLevel : LEVELS.INFO)) return;
 
         const line = this._format_(level, message, extra);
+        const output = this._config.output || "console";
 
-        if (this._output === "console" || this._output === "both") {
+        if (output === "console" || output === "both") {
             console.log(line);
         }
-        if ((this._output === "file" || this._output === "both") && this._rotator) {
-            try { this._rotator.write(line); } catch (_) {}
+        if (output === "file" || output === "both") {
+            if (!this._rotator && this._config.file) {
+                const f = this._config.file;
+                this._rotator = new LogRotator(f.path, f.maxSize, f.maxFiles, f.rotate);
+            }
+            if (this._rotator) {
+                try { this._rotator.write(line); } catch (_) {}
+            }
         }
     }
 
@@ -143,11 +143,13 @@ class Logger {
     }
 }
 
-// Singleton root logger — replaced by init()
-let _rootConfig = {};
+// 동일 객체를 in-place로 갱신하여 기존 Logger 인스턴스에도 즉시 반영
+const _rootConfig = {};
 
 function init(config) {
-    _rootConfig = config || {};
+    const cfg = config || {};
+    Object.keys(_rootConfig).forEach(k => delete _rootConfig[k]);
+    Object.assign(_rootConfig, cfg);
 }
 
 function getLogger(name) {
