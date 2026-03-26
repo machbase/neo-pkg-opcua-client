@@ -10,9 +10,14 @@ machbase-neo jsh (goja 기반) 런타임 API 참조 문서.
 - **엔진**: goja (Go 기반 JS 엔진) — Node.js 아님
 - **모듈 시스템**: CommonJS (`require` / `module.exports`)
 - **비동기**: `async/await`, `Promise` 지원
-- **cwd**: `/work` (실제 경로 `/home/machbase/neo-tools`와 심볼릭 링크)
+- **cwd**: `/work` (실제 경로 `/home/machbase/neo-pkg-opcua-client`와 심볼릭 링크)
 - **미지원 항목**:
-  - `__dirname`, `__filename` 없음 → `process.cwd()` 사용
+  - `__dirname`, `__filename` 없음 → `process.argv[1]` 기반으로 ROOT 경로 계산:
+    ```js
+    const _argv = process.argv[1];
+    const ROOT = _argv.slice(0, _argv.lastIndexOf('/cgi-bin/') + '/cgi-bin'.length);
+    ```
+    `cgi-bin/` 하위 어느 디렉토리에서 실행해도 올바르게 동작합니다.
   - `AbortController` 없음 → 직접 구현 필요
   - `fs/promises` 없음 → `fs` 동기 API 사용
   - `process.hrtime.bigint()` 없음 → `process.hrtime()` 사용
@@ -323,5 +328,5 @@ os.constants.signals   // 시그널 상수 (SIGINT=2, SIGTERM=15, ...)
 ../machbase-neo/machbase-neo jsh -C 'console.println("hello")'
 ```
 
-- jsh cwd = `/work` (심볼릭 링크 → 실제 `/home/machbase/neo-tools`)
+- jsh cwd = `/work` (심볼릭 링크 → 실제 `/home/machbase/neo-pkg-opcua-client`)
 - 파일 경로는 `/work/...` 절대경로 사용 권장

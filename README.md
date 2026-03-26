@@ -88,15 +88,17 @@ Machbase TAG Table
 neo-tools/
 └── cgi-bin/
     ├── neo-collector.js        # 데몬 진입점
-    ├── collectors.js           # GET/POST  /cgi-bin/collectors
-    ├── collector.js            # GET/PUT/DELETE  /cgi-bin/collector?name=xxx
-    ├── collector-start.js      # POST  /cgi-bin/collector-start?name=xxx
-    ├── collector-stop.js       # POST  /cgi-bin/collector-stop?name=xxx
+    ├── api/
+    │   ├── collector.js        # POST/GET/PUT/DELETE  /cgi-bin/api/collector
+    │   └── collector/
+    │       ├── list.js         # GET    /cgi-bin/api/collector/list
+    │       ├── start.js        # POST   /cgi-bin/api/collector/start?name=xxx
+    │       └── stop.js         # POST   /cgi-bin/api/collector/stop?name=xxx
     ├── conf.d/
     │   └── collector-a.json    # 수집기 설정 파일
     ├── src/
-    │   ├── admin/
-    │   │   └── cgi_util.js         # CGI 유틸 (parseQuery, readBody, reply, CRUD)
+    │   ├── cgi/
+    │   │   └── cgi_util.js         # CGI 유틸 (parseQuery, readBody, reply, CRUD, isRunning)
     │   ├── collector.js            # Collector 클래스
     │   ├── logger.js               # Logger / LogRotator 클래스
     │   ├── db/
@@ -128,13 +130,13 @@ machbase-neo jsh -v /app=/path/to/neo-tools /app/cgi-bin/neo-collector.js /app/c
 
 | 메서드 | 경로 | 설명 |
 |--------|------|------|
-| GET | `/cgi-bin/collectors` | 수집기 목록 조회 |
-| POST | `/cgi-bin/collectors` | 수집기 등록 (body: `{ name, config }`) |
-| GET | `/cgi-bin/collector?name=xxx` | 수집기 단건 조회 |
-| PUT | `/cgi-bin/collector?name=xxx` | 수집기 설정 수정 (body: config) |
-| DELETE | `/cgi-bin/collector?name=xxx` | 수집기 삭제 |
-| POST | `/cgi-bin/collector-start?name=xxx` | 수집기 시작 (데몬 연동 예정) |
-| POST | `/cgi-bin/collector-stop?name=xxx` | 수집기 종료 (데몬 연동 예정) |
+| GET | `/cgi-bin/api/collector/list` | 수집기 목록 조회 (running 상태 포함) |
+| POST | `/cgi-bin/api/collector` | 수집기 등록 (body: `{ name, config }`) |
+| GET | `/cgi-bin/api/collector?name=xxx` | 수집기 단건 조회 |
+| PUT | `/cgi-bin/api/collector?name=xxx` | 수집기 설정 수정 (body: config) |
+| DELETE | `/cgi-bin/api/collector?name=xxx` | 수집기 삭제 |
+| POST | `/cgi-bin/api/collector/start?name=xxx` | 수집기 시작 (데몬 연동 예정) |
+| POST | `/cgi-bin/api/collector/stop?name=xxx` | 수집기 종료 (데몬 연동 예정) |
 
 ## 테스트
 
@@ -144,8 +146,11 @@ machbase-neo jsh -v /app=<프로젝트 경로> /app/cgi-bin/test/index.js
 
 ## 문서
 
+- [CGI API](cgi-bin/docs/API.md)
 - [설정](cgi-bin/docs/configuration.md)
 - [Logger](cgi-bin/docs/logger.md)
 - [OpcuaClient](cgi-bin/docs/opcua-client.md)
 - [MachbaseAppender](cgi-bin/docs/machbase-appender.md)
 - [Collector](cgi-bin/docs/collector.md)
+- [JSH Runtime Reference](cgi-bin/docs/JSH_REFERENCE.md)
+- [machbase-neo cgi-bin 가이드](https://wiki.machbase.com/pages/viewpage.action?pageId=329352275)

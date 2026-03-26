@@ -1,6 +1,6 @@
 # Collector CGI API
 
-`cgi-bin/` 하위의 CGI 스크립트가 제공하는 HTTP API 명세입니다.
+`cgi-bin/api/` 하위의 CGI 스크립트가 제공하는 HTTP API 명세입니다.
 모든 요청/응답 본문은 `application/json`입니다.
 
 ## 동작 방식
@@ -13,37 +13,37 @@ HTTP 서버 역할은 **machbase-neo**가 담당하며, 각 요청마다 해당 
 |------|------|
 | HTTP 수신 및 라우팅 | machbase-neo (CGI 호스트) |
 | 요청 전달 방식 | 환경변수(`REQUEST_METHOD`, `QUERY_STRING`) + stdin(요청 본문) |
-| 응답 방식 | stdout에 `Status:`, `Content-Type:` 헤더 + 본문 출력 |
+| 응답 방식 | stdout에 `Content-Type:` 헤더 + 본문 출력 |
 | 스크립트 실행 환경 | jsh (goja 기반 JS 엔진, Node.js 아님) |
 
 ### jsh 직접 실행 (테스트용)
 
 ```bash
-# 실행 위치: /home/machbase/neo-tools
+# 실행 위치: /home/machbase/neo-pkg-opcua-client
 # 주의: -e 플래그는 반드시 스크립트 파일 앞에 위치해야 함
 
 # GET 목록
-../machbase-neo/machbase-neo jsh -e REQUEST_METHOD=GET cgi-bin/collectors.js
+../machbase-neo/machbase-neo jsh -e REQUEST_METHOD=GET cgi-bin/api/collector/list.js
 
 # GET 단건
-../machbase-neo/machbase-neo jsh -e REQUEST_METHOD=GET -e QUERY_STRING=name=collector-a cgi-bin/collector.js
+../machbase-neo/machbase-neo jsh -e REQUEST_METHOD=GET -e QUERY_STRING=name=collector-a cgi-bin/api/collector.js
 
 # POST 등록
 echo '{"name":"collector-a","config":{...}}' | \
-  ../machbase-neo/machbase-neo jsh -e REQUEST_METHOD=POST cgi-bin/collectors.js
+  ../machbase-neo/machbase-neo jsh -e REQUEST_METHOD=POST cgi-bin/api/collector.js
 
 # PUT 수정
 echo '{...config...}' | \
-  ../machbase-neo/machbase-neo jsh -e REQUEST_METHOD=PUT -e QUERY_STRING=name=collector-a cgi-bin/collector.js
+  ../machbase-neo/machbase-neo jsh -e REQUEST_METHOD=PUT -e QUERY_STRING=name=collector-a cgi-bin/api/collector.js
 
 # DELETE 삭제
-../machbase-neo/machbase-neo jsh -e REQUEST_METHOD=DELETE -e QUERY_STRING=name=collector-a cgi-bin/collector.js
+../machbase-neo/machbase-neo jsh -e REQUEST_METHOD=DELETE -e QUERY_STRING=name=collector-a cgi-bin/api/collector.js
 
-# POST 시작 (현재 503 반환 — 수동 실행 안내)
-../machbase-neo/machbase-neo jsh -e REQUEST_METHOD=POST -e QUERY_STRING=name=collector-a cgi-bin/collector-start.js
+# POST 시작 (현재 미구현 — 수동 실행 안내 반환)
+../machbase-neo/machbase-neo jsh -e REQUEST_METHOD=POST -e QUERY_STRING=name=collector-a cgi-bin/api/collector/start.js
 
-# POST 종료 (현재 503 반환 — 수동 종료 안내)
-../machbase-neo/machbase-neo jsh -e REQUEST_METHOD=POST -e QUERY_STRING=name=collector-a cgi-bin/collector-stop.js
+# POST 종료 (현재 미구현 — 수동 종료 안내 반환)
+../machbase-neo/machbase-neo jsh -e REQUEST_METHOD=POST -e QUERY_STRING=name=collector-a cgi-bin/api/collector/stop.js
 ```
 
 ---
@@ -64,13 +64,11 @@ echo '{...config...}' | \
 
 ---
 
-## Collectors
+## GET /cgi-bin/api/collector/list
 
-### GET /cgi-bin/collectors
+전체 collector 목록과 각 config, 실행 상태를 반환합니다.
 
-전체 collector 목록과 각 config를 반환합니다.
-
-**응답 200**
+**응답**
 
 ```json
 {
@@ -78,44 +76,19 @@ echo '{...config...}' | \
   "data": [
     {
       "name": "collector-a",
-      "config": {
-        "opcua": {
-          "endpoint": "opc.tcp://192.168.1.100:53530/OPCUA/SimulationServer",
-          "readRetryInterval": 100,
-          "interval": 5000,
-          "nodes": [
-            { "nodeId": "ns=3;i=1001", "name": "sensor.tag1" }
-          ]
-        },
-        "db": {
-          "table": "TAG",
-          "host": "127.0.0.1",
-          "port": 5656,
-          "user": "sys",
-          "password": "manager"
-        },
-        "log": {
-          "level": "INFO",
-          "output": "console",
-          "format": "json",
-          "file": {
-            "path": "./logs/collector-a.log",
-            "maxSize": "10MB",
-            "maxFiles": 7,
-            "rotate": "size"
-          }
-        }
-      }
+      "running": false
     }
   ]
 }
 ```
 
+> `running`은 `cgi-bin/run/{name}.pid` 파일 존재 여부로 판단합니다.
+
 ---
 
-### POST /cgi-bin/collectors
+## POST /cgi-bin/api/collector
 
-새 collector를 등록합니다. 동일한 `name`이 이미 존재하면 409를 반환합니다.
+새 collector를 등록합니다.
 
 **요청 본문**
 
@@ -153,25 +126,23 @@ echo '{...config...}' | \
 }
 ```
 
-**응답**
-
-| 상태 코드 | 조건 |
-|-----------|------|
-| 201 | 등록 성공 |
-| 400 | `name` 또는 `config` 누락 |
-| 409 | 동일한 `name`이 이미 존재 |
-
-**응답 201**
+**응답 (성공)**
 
 ```json
 { "ok": true, "data": { "name": "collector-a" } }
 ```
 
+**응답 (실패)**
+
+| 조건 | reason |
+|------|--------|
+| `name` 누락 | `"name is required"` |
+| `config` 누락 | `"config is required"` |
+| 동일한 `name` 이미 존재 | `"collector 'xxx' already exists"` |
+
 ---
 
-## Collector
-
-### GET /cgi-bin/collector?name={name}
+## GET /cgi-bin/api/collector?name={name}
 
 특정 collector의 config를 조회합니다.
 
@@ -181,59 +152,30 @@ echo '{...config...}' | \
 |------|------|------|
 | `name` | Y | collector 이름 |
 
-**응답**
-
-| 상태 코드 | 조건 |
-|-----------|------|
-| 200 | 조회 성공 |
-| 400 | `name` 누락 |
-| 404 | 해당 collector 없음 |
-
-**응답 200**
+**응답 (성공)**
 
 ```json
 {
   "ok": true,
   "data": {
     "name": "collector-a",
-    "config": {
-      "opcua": {
-        "endpoint": "opc.tcp://192.168.1.100:53530/OPCUA/SimulationServer",
-        "readRetryInterval": 100,
-        "interval": 5000,
-        "nodes": [
-          { "nodeId": "ns=3;i=1001", "name": "sensor.tag1" }
-        ]
-      },
-      "db": {
-        "table": "TAG",
-        "host": "127.0.0.1",
-        "port": 5656,
-        "user": "sys",
-        "password": "manager"
-      },
-      "log": {
-        "level": "INFO",
-        "output": "console",
-        "format": "json",
-        "file": {
-          "path": "./logs/collector-a.log",
-          "maxSize": "10MB",
-          "maxFiles": 7,
-          "rotate": "size"
-        }
-      }
-    }
+    "config": { ... }
   }
 }
 ```
 
+**응답 (실패)**
+
+| 조건 | reason |
+|------|--------|
+| `name` 누락 | `"name is required"` |
+| 해당 collector 없음 | `"collector 'xxx' not found"` |
+
 ---
 
-### PUT /cgi-bin/collector?name={name}
+## PUT /cgi-bin/api/collector?name={name}
 
-특정 collector의 config를 수정합니다.
-요청 본문 전체가 새 config로 덮어씌워집니다.
+특정 collector의 config를 수정합니다. 요청 본문 전체가 새 config로 덮어씌워집니다.
 
 **쿼리 파라미터**
 
@@ -245,52 +187,28 @@ echo '{...config...}' | \
 
 ```json
 {
-  "opcua": {
-    "endpoint": "opc.tcp://192.168.1.100:53530/OPCUA/SimulationServer",
-    "readRetryInterval": 100,
-    "interval": 5000,
-    "nodes": [
-      { "nodeId": "ns=3;i=1001", "name": "sensor.tag1" }
-    ]
-  },
-  "db": {
-    "table": "TAG",
-    "host": "127.0.0.1",
-    "port": 5656,
-    "user": "sys",
-    "password": "manager"
-  },
-  "log": {
-    "level": "INFO",
-    "output": "console",
-    "format": "json",
-    "file": {
-      "path": "./logs/collector-a.log",
-      "maxSize": "10MB",
-      "maxFiles": 7,
-      "rotate": "size"
-    }
-  }
+  "opcua": { ... },
+  "db": { ... },
+  "log": { ... }
 }
 ```
 
-**응답**
-
-| 상태 코드 | 조건 |
-|-----------|------|
-| 200 | 수정 성공 |
-| 400 | `name` 누락 |
-| 404 | 해당 collector 없음 |
-
-**응답 200**
+**응답 (성공)**
 
 ```json
 { "ok": true, "data": { "name": "collector-a" } }
 ```
 
+**응답 (실패)**
+
+| 조건 | reason |
+|------|--------|
+| `name` 누락 | `"name is required"` |
+| 해당 collector 없음 | `"collector 'xxx' not found"` |
+
 ---
 
-### DELETE /cgi-bin/collector?name={name}
+## DELETE /cgi-bin/api/collector?name={name}
 
 특정 collector의 config 파일을 삭제합니다.
 
@@ -300,55 +218,52 @@ echo '{...config...}' | \
 |------|------|------|
 | `name` | Y | collector 이름 |
 
-**응답**
-
-| 상태 코드 | 조건 |
-|-----------|------|
-| 200 | 삭제 성공 |
-| 400 | `name` 누락 |
-| 404 | 해당 collector 없음 |
-
-**응답 200**
+**응답 (성공)**
 
 ```json
 { "ok": true }
 ```
 
+**응답 (실패)**
+
+| 조건 | reason |
+|------|--------|
+| `name` 누락 | `"name is required"` |
+| 해당 collector 없음 | `"collector 'xxx' not found"` |
+
 ---
 
-## Collector Start / Stop
-
-### POST /cgi-bin/collector-start?name={name}
+## POST /cgi-bin/api/collector/start?name={name}
 
 collector 실행을 요청합니다.
 
-> **현재 미구현.** 데몬 연동이 구현되기 전까지는 503을 반환합니다.
+> **현재 미구현.** 데몬 연동이 구현되기 전까지는 `ok: false`를 반환합니다.
 > 수동 실행: `machbase-neo jsh cgi-bin/neo-collector.js cgi-bin/conf.d/{name}.json`
 
-**응답**
+**응답 (실패)**
 
-| 상태 코드 | 조건 |
-|-----------|------|
-| 400 | `name` 누락 |
-| 404 | 해당 collector 없음 |
-| 503 | 데몬 미지원 (현재 항상 반환) |
+| 조건 | reason |
+|------|--------|
+| `name` 누락 | `"name is required"` |
+| 해당 collector 없음 | `"collector 'xxx' not found"` |
+| 데몬 미지원 (현재 항상) | `"daemon not supported yet. run manually: ..."` |
 
 ---
 
-### POST /cgi-bin/collector-stop?name={name}
+## POST /cgi-bin/api/collector/stop?name={name}
 
 collector 종료를 요청합니다.
 
-> **현재 미구현.** 데몬 연동이 구현되기 전까지는 503을 반환합니다.
+> **현재 미구현.** 데몬 연동이 구현되기 전까지는 `ok: false`를 반환합니다.
 > 수동 종료: `kill $(cat cgi-bin/run/{name}.pid)`
 
-**응답**
+**응답 (실패)**
 
-| 상태 코드 | 조건 |
-|-----------|------|
-| 400 | `name` 누락 |
-| 404 | 해당 collector 없음 |
-| 503 | 데몬 미지원 (현재 항상 반환) |
+| 조건 | reason |
+|------|--------|
+| `name` 누락 | `"name is required"` |
+| 해당 collector 없음 | `"collector 'xxx' not found"` |
+| 데몬 미지원 (현재 항상) | `"daemon not supported yet. stop manually: ..."` |
 
 ---
 
