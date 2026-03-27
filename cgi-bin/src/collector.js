@@ -47,6 +47,7 @@ class Collector {
                 const ts = r.sourceTimestamp ? new Date(r.sourceTimestamp) : new Date();
                 logger.debug("read", { nodeId: node.nodeId, name: node.name, value: r.value, ts: ts.toISOString() });
                 this.db.append(node.name, ts, r.value);
+                logger.debug("appended", { name: node.name, value: r.value, ts: ts.toISOString() });
             });
             this.db.flush();
             logger.info("collected", { count: this.nodes.length });
