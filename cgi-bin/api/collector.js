@@ -5,13 +5,8 @@
  * DELETE /cgi-bin/api/collector?name=xxx -- 제거
  */
 
-let _path;
-try { _path = require('path'); } catch(e) { throw new Error('FAIL:path ' + e.message); }
-const path = _path;
-let _proc;
-try { _proc = require('process'); } catch(e) { throw new Error('FAIL:process ' + e.message); }
-const process = _proc;
-
+const path = require('path');
+const process = require('process');
 const _argv = process.argv[1];
 const ROOT = _argv.slice(0, _argv.lastIndexOf('/cgi-bin/') + '/cgi-bin'.length);
 const CGI = require(path.join(ROOT, 'src', 'cgi', 'cgi_util.js'));
