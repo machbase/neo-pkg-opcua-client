@@ -45,6 +45,7 @@ class Collector {
             this.nodes.forEach((node, idx) => {
                 const r = results[idx];
                 const ts = r.sourceTimestamp ? new Date(r.sourceTimestamp) : new Date();
+                logger.debug("read", { nodeId: node.nodeId, name: node.name, value: r.value, ts: ts.toISOString() });
                 this.db.append(node.name, ts, r.value);
             });
             this.db.flush();
