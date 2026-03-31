@@ -29,11 +29,68 @@ HTTP 서버 역할은 **machbase-neo**가 담당하며, 각 요청마다 해당 
 ../machbase-neo/machbase-neo jsh -e REQUEST_METHOD=GET -e QUERY_STRING=name=collector-a cgi-bin/api/collector.js
 
 # POST 등록
-echo '{"name":"collector-a","config":{...}}' | \
+echo '{
+  "name": "collector-a",
+  "config": {
+    "opcua": {
+      "endpoint": "opc.tcp://192.168.1.100:53530/OPCUA/SimulationServer",
+      "readRetryInterval": 100,
+      "interval": 5000,
+      "nodes": [
+        { "nodeId": "ns=3;i=1001", "name": "sensor.tag1" }
+      ]
+    },
+    "db": {
+      "table": "TAG",
+      "host": "127.0.0.1",
+      "port": 5656,
+      "user": "sys",
+      "password": "manager"
+    },
+    "log": {
+      "level": "INFO",
+      "output": "console",
+      "format": "json",
+      "file": {
+        "path": "./logs/collector-a.log",
+        "maxSize": "10MB",
+        "maxFiles": 7,
+        "rotate": "size"
+      }
+    }
+  }
+}' | \
   ../machbase-neo/machbase-neo jsh -e REQUEST_METHOD=POST cgi-bin/api/collector.js
 
 # PUT 수정
-echo '{...config...}' | \
+echo '{
+  "opcua": {
+    "endpoint": "opc.tcp://192.168.1.100:53530/OPCUA/SimulationServer",
+    "readRetryInterval": 100,
+    "interval": 5000,
+    "nodes": [
+      { "nodeId": "ns=3;i=1001", "name": "sensor.tag1" }
+    ]
+  },
+  "db": {
+    "table": "TAG",
+    "host": "127.0.0.1",
+    "port": 5656,
+    "user": "sys",
+    "password": "manager"
+  },
+  "log": {
+    "level": "INFO",
+    "output": "console",
+    "format": "json",
+    "file": {
+      "path": "./logs/collector-a.log",
+      "maxSize": "10MB",
+      "maxFiles": 7,
+      "rotate": "size"
+    }
+  }
+}' | \
   ../machbase-neo/machbase-neo jsh -e REQUEST_METHOD=PUT -e QUERY_STRING=name=collector-a cgi-bin/api/collector.js
 
 # DELETE 삭제
@@ -159,7 +216,34 @@ echo '{...config...}' | \
   "ok": true,
   "data": {
     "name": "collector-a",
-    "config": { ... }
+    "config": {
+      "opcua": {
+        "endpoint": "opc.tcp://192.168.1.100:53530/OPCUA/SimulationServer",
+        "readRetryInterval": 100,
+        "interval": 5000,
+        "nodes": [
+          { "nodeId": "ns=3;i=1001", "name": "sensor.tag1" }
+        ]
+      },
+      "db": {
+        "table": "TAG",
+        "host": "127.0.0.1",
+        "port": 5656,
+        "user": "sys",
+        "password": "manager"
+      },
+      "log": {
+        "level": "INFO",
+        "output": "console",
+        "format": "json",
+        "file": {
+          "path": "./logs/collector-a.log",
+          "maxSize": "10MB",
+          "maxFiles": 7,
+          "rotate": "size"
+        }
+      }
+    }
   }
 }
 ```
@@ -187,9 +271,32 @@ echo '{...config...}' | \
 
 ```json
 {
-  "opcua": { ... },
-  "db": { ... },
-  "log": { ... }
+  "opcua": {
+    "endpoint": "opc.tcp://192.168.1.100:53530/OPCUA/SimulationServer",
+    "readRetryInterval": 100,
+    "interval": 5000,
+    "nodes": [
+      { "nodeId": "ns=3;i=1001", "name": "sensor.tag1" }
+    ]
+  },
+  "db": {
+    "table": "TAG",
+    "host": "127.0.0.1",
+    "port": 5656,
+    "user": "sys",
+    "password": "manager"
+  },
+  "log": {
+    "level": "INFO",
+    "output": "console",
+    "format": "json",
+    "file": {
+      "path": "./logs/collector-a.log",
+      "maxSize": "10MB",
+      "maxFiles": 7,
+      "rotate": "size"
+    }
+  }
 }
 ```
 
