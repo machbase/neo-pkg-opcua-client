@@ -90,10 +90,12 @@ neo-tools/
     ├── neo-collector.js        # 데몬 진입점
     ├── api/
     │   ├── collector.js        # POST/GET/PUT/DELETE  /cgi-bin/api/collector
-    │   └── collector/
-    │       ├── list.js         # GET    /cgi-bin/api/collector/list
-    │       ├── start.js        # POST   /cgi-bin/api/collector/start?name=xxx
-    │       └── stop.js         # POST   /cgi-bin/api/collector/stop?name=xxx
+    │   ├── collector/
+    │   │   ├── list.js         # GET    /cgi-bin/api/collector/list
+    │   │   ├── start.js        # POST   /cgi-bin/api/collector/start?name=xxx
+    │   │   └── stop.js         # POST   /cgi-bin/api/collector/stop?name=xxx
+    │   └── node/
+    │       └── children.js     # POST   /cgi-bin/api/node/children
     ├── conf.d/
     │   └── collector-a.json    # 수집기 설정 파일
     ├── src/
@@ -104,7 +106,7 @@ neo-tools/
     │   ├── db/
     │   │   └── machbase-appender.js  # MachbaseAppender 클래스
     │   └── opcua/
-    │       └── opcua-client.js       # OpcuaClient 클래스
+    │       └── opcua-client.js       # OpcuaClient 클래스 (read/write/browse/browseNext/children)
     ├── test/
     │   ├── index.js              # 테스트 진입점
     │   ├── runner.js             # 테스트 러너
@@ -137,6 +139,7 @@ machbase-neo jsh -v /app=/path/to/neo-tools /app/cgi-bin/neo-collector.js /app/c
 | DELETE | `/cgi-bin/api/collector?name=xxx` | 수집기 삭제 |
 | POST | `/cgi-bin/api/collector/start?name=xxx` | 수집기 시작 (데몬 연동 예정) |
 | POST | `/cgi-bin/api/collector/stop?name=xxx` | 수집기 종료 (데몬 연동 예정) |
+| POST | `/cgi-bin/api/node/children` | OPC UA 노드 자식 목록 조회 (body: `{ endpoint, node }`) |
 
 ## 테스트
 

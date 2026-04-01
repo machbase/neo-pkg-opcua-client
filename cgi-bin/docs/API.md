@@ -374,6 +374,65 @@ collector 종료를 요청합니다.
 
 ---
 
+---
+
+## POST /cgi-bin/api/node/children
+
+OPC UA 서버에 연결하여 지정한 노드의 직계 자식 노드 목록을 반환합니다.
+
+**요청 본문**
+
+```json
+{
+  "endpoint": "opc.tcp://192.168.1.100:53530/OPCUA/SimulationServer",
+  "node": "ns=0;i=85",
+  "nodeClassMask": 0
+}
+```
+
+| 필드 | 타입 | 필수 | 설명 |
+|------|------|------|------|
+| `endpoint` | string | Y | OPC UA 서버 주소 |
+| `node` | string | Y | 자식을 조회할 OPC UA 노드 ID |
+| `nodeClassMask` | number | N | 반환할 노드 클래스 비트마스크 (`opcua.NodeClass`) |
+
+**응답 (성공)**
+
+```json
+{
+  "ok": true,
+  "data": [
+    {
+      "nodeId": "ns=3;i=1001",
+      "browseName": "Simulation",
+      "displayName": "Simulation",
+      "nodeClass": 1,
+      "referenceTypeId": "ns=0;i=35",
+      "isForward": true,
+      "typeDefinition": "ns=0;i=61"
+    }
+  ]
+}
+```
+
+**응답 (실패)**
+
+| 조건 | reason |
+|------|--------|
+| `endpoint` 누락 | `"endpoint is required"` |
+| `node` 누락 | `"node is required"` |
+| 연결 실패 | `"connect failed"` |
+| 조회 실패 | `"children failed"` |
+
+**jsh 직접 실행 (테스트용)**
+
+```bash
+echo '{"endpoint": "opc.tcp://localhost:4840", "node": "ns=0;i=85"}' | \
+  ../machbase-neo/machbase-neo jsh -e REQUEST_METHOD=POST cgi-bin/api/node/children.js
+```
+
+---
+
 ## Config 필드 레퍼런스
 
 ### opcua

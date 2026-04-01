@@ -39,9 +39,11 @@ class Collector {
                 if (!this.db.isOpen()) return;
             }
 
+            if (!this.opcua.open()) {
+                logger.warn("opcua connect failed, will retry");
+                return;
+            }
             const results = this.opcua.read(this.nodeIds);
-            if (results === null) return;
-
             this.nodes.forEach((node, idx) => {
                 const r = results[idx];
                 const ts = r.sourceTimestamp ? new Date(r.sourceTimestamp) : new Date();
@@ -53,6 +55,7 @@ class Collector {
             logger.info("collected", { count: this.nodes.length });
         } catch (e) {
             logger.error("collect error", { error: e.message });
+            this.opcua.close();
         }
     }
 

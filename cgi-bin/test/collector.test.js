@@ -12,7 +12,7 @@ class MockOpcuaClient {
         ];
         this.readError = null;
     }
-    open() { this.opened = true; }
+    open() { this.opened = true; return true; }
     read() {
         if (this.readError) throw new Error(this.readError);
         return this.readResult;
@@ -126,24 +126,16 @@ runner.run("Collector", {
         clearInterval(c.timer);
     },
 
-    "collect() does nothing when read returns null": (t) => {
+    "collect() does nothing and closes opcua when read throws": (t) => {
         const c = makeCollector();
         c.start();
         c.db.appended = [];
         c.db.flushed = false;
-        c.opcua.readResult = null;
+        c.opcua.readError = "simulated read error";
         c.collect();
         t.assertEqual(c.db.appended.length, 0, "nothing should be appended");
         t.assert(!c.db.flushed, "flush should not be called");
-        clearInterval(c.timer);
-    },
-
-    "collect() does not throw on read error": (t) => {
-        const c = makeCollector();
-        c.start();
-        c.opcua.readError = "simulated read error";
-        c.collect();
-        t.assert(true, "no exception thrown");
+        t.assert(c.opcua.closed, "opcua should be closed on error");
         clearInterval(c.timer);
     },
 
@@ -168,12 +160,12 @@ runner.run("Collector", {
         clearInterval(c.timer);
     },
 
-    "collect() does not throw on append error": (t) => {
+    "collect() closes opcua on append error": (t) => {
         const c = makeCollector();
         c.start();
         c.db.appendError = "append failed";
         c.collect();
-        t.assert(true, "no exception thrown");
+        t.assert(c.opcua.closed, "opcua should be closed on error");
         clearInterval(c.timer);
     },
 });

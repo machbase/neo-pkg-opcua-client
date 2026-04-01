@@ -1,77 +1,78 @@
 const TestRunner = require("./runner.js");
 const OpcuaClient = require("../src/opcua/opcua-client.js");
 
-function makeMockInnerClient({ readResult, readError } = {}) {
-    return {
-        closed: false,
-        read: () => {
-            if (readError) throw new Error(readError);
-            return readResult || [];
-        },
-        close: function() { this.closed = true; },
-    };
+class MockOpcuaClient extends OpcuaClient {
+    constructor({ readResult, readError, connectError } = {}) {
+        super("opc.tcp://localhost:4840", 100);
+        this._readResult = readResult || [];
+        this._readError = readError || null;
+        this._connectError = connectError || null;
+        this.innerClosed = false;
+    }
+
+    open() {
+        if (this.client !== null) return true;
+        if (this._connectError) return false;
+        this.client = {
+            read: () => {
+                if (this._readError) throw new Error(this._readError);
+                return this._readResult;
+            },
+            close: () => { this.innerClosed = true; },
+        };
+        return true;
+    }
 }
 
 const runner = new TestRunner();
 
 runner.run("OpcuaClient", {
-    "open() sets client on success": (t) => {
-        const inner = makeMockInnerClient();
-        const client = new OpcuaClient("opc.tcp://localhost:4840", 100, {
-            clientFactory: () => inner,
-        });
-        client.open();
+    "open() returns true and sets client on success": (t) => {
+        const client = new MockOpcuaClient();
+        t.assert(client.open(), "open() should return true");
         t.assertNotNull(client.client, "client should be set");
     },
 
-    "open() sets client to null when factory throws": (t) => {
-        const client = new OpcuaClient("opc.tcp://bad:9999", 100, {
-            clientFactory: () => { throw new Error("connection refused"); },
-        });
-        client.open();
+    "open() returns false on connect error": (t) => {
+        const client = new MockOpcuaClient({ connectError: true });
+        t.assert(!client.open(), "open() should return false");
         t.assertNull(client.client, "client should be null on failure");
     },
 
-    "read() returns null when open fails": (t) => {
-        const client = new OpcuaClient("opc.tcp://bad:9999", 100, {
-            clientFactory: () => { throw new Error("connection refused"); },
-        });
-        const result = client.read(["ns=1;s=Tag1"]);
-        t.assertNull(result, "should return null");
+    "open() is no-op when already connected": (t) => {
+        const client = new MockOpcuaClient();
+        client.open();
+        const first = client.client;
+        client.open();
+        t.assert(client.client === first, "client reference should not change");
+    },
+
+    "read() throws when not connected": (t) => {
+        const client = new MockOpcuaClient();
+        t.assertThrows(() => client.read(["ns=1;s=Tag1"]), "not connected");
     },
 
     "read() returns results on success": (t) => {
         const fakeResults = [{ value: 42, sourceTimestamp: 1000 }];
-        const inner = makeMockInnerClient({ readResult: fakeResults });
-        const client = new OpcuaClient("opc.tcp://localhost:4840", 100, {
-            clientFactory: () => inner,
-        });
+        const client = new MockOpcuaClient({ readResult: fakeResults });
+        client.open();
         const result = client.read(["ns=1;s=Tag1"]);
         t.assertNotNull(result, "result should not be null");
         t.assertEqual(result[0].value, 42);
     },
 
-    "read() resets client to null on read error": (t) => {
-        const inner = makeMockInnerClient({ readError: "read error" });
-        const client = new OpcuaClient("opc.tcp://localhost:4840", 100, {
-            clientFactory: () => inner,
-        });
+    "read() throws on read error": (t) => {
+        const client = new MockOpcuaClient({ readError: "read error" });
         client.open();
-        const result = client.read(["ns=1;s=Tag1"]);
-        t.assertNull(result, "should return null on error");
-        t.assertNull(client.client, "client should be reset to null");
-        t.assert(inner.closed, "inner client.close() should have been called");
+        t.assertThrows(() => client.read(["ns=1;s=Tag1"]), "read error");
     },
 
     "close() clears client": (t) => {
-        const inner = makeMockInnerClient();
-        const client = new OpcuaClient("opc.tcp://localhost:4840", 100, {
-            clientFactory: () => inner,
-        });
+        const client = new MockOpcuaClient();
         client.open();
         client.close();
         t.assertNull(client.client, "client should be null after close");
-        t.assert(inner.closed, "inner close() should have been called");
+        t.assert(client.innerClosed, "inner close() should have been called");
     },
 });
 

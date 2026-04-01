@@ -30,6 +30,18 @@ class TestRunner {
         }
     }
 
+    assertThrows(fn, expectedMessage) {
+        try {
+            fn();
+            throw new Error("assertThrows => expected exception but none was thrown");
+        } catch (e) {
+            if (e.message === "assertThrows => expected exception but none was thrown") throw e;
+            if (expectedMessage && !e.message.includes(expectedMessage)) {
+                throw new Error("assertThrows => expected message to include " + JSON.stringify(expectedMessage) + ", got " + JSON.stringify(e.message));
+            }
+        }
+    }
+
     run(suiteName, tests) {
         console.log(JSON.stringify({ level: "INFO", suite: suiteName, message: "start" }));
         for (const [name, fn] of Object.entries(tests)) {

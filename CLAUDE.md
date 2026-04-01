@@ -17,10 +17,12 @@ cgi-bin/
 ├── neo-collector.js          # 데몬 진입점 (config 로드 → Collector 시작)
 ├── api/
 │   ├── collector.js          # CGI: POST/GET/PUT/DELETE /cgi-bin/api/collector
-│   └── collector/
-│       ├── list.js           # CGI: GET  /cgi-bin/api/collector/list
-│       ├── start.js          # CGI: POST /cgi-bin/api/collector/start?name=xxx
-│       └── stop.js           # CGI: POST /cgi-bin/api/collector/stop?name=xxx
+│   ├── collector/
+│   │   ├── list.js           # CGI: GET  /cgi-bin/api/collector/list
+│   │   ├── start.js          # CGI: POST /cgi-bin/api/collector/start?name=xxx
+│   │   └── stop.js           # CGI: POST /cgi-bin/api/collector/stop?name=xxx
+│   └── node/
+│       └── children.js       # CGI: POST /cgi-bin/api/node/children
 ├── conf.d/
 │   └── collector-a.json      # 수집기 설정 (opcua / db / log)
 ├── src/
@@ -48,7 +50,7 @@ setInterval(interval)
 ```
 
 - OPC-UA 읽기는 **구독(subscription) 방식이 아닌 폴링** 방식
-- 읽기 실패 시 OpcuaClient는 연결을 재시도하지 않고 null 반환 (다음 interval에 재연결)
+- OpcuaClient 메소드는 미연결 또는 작업 실패 시 예외를 던짐. 재연결·close 처리는 호출부(Collector) 책임
 - DB 연결 끊김 시 다음 collect() 호출 시 자동 재오픈 시도
 
 ## 설정 파일 구조 (conf.d/*.json)
