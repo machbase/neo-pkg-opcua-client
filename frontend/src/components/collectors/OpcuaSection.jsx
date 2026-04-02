@@ -51,6 +51,7 @@ export default function OpcuaSection({ form, update }) {
         <NodeListEditor
           nodes={form.opcua.nodes}
           onChange={nodes => update('opcua.nodes', nodes)}
+          endpoint={form.opcua.endpoint}
         />
       </div>
     </div>

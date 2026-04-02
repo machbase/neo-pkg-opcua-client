@@ -1,9 +1,15 @@
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import Icon from '../common/Icon'
+import NodeBrowserPanel from './NodeBrowserPanel'
 
-export default function NodeListEditor({ nodes, onChange }) {
+export default function NodeListEditor({ nodes, onChange, endpoint }) {
   const [nodeId, setNodeId] = useState('')
   const [name, setName] = useState('')
+  const [browserOpen, setBrowserOpen] = useState(false)
+  const [filter, setFilter] = useState('')
+  const containerRef = useRef(null)
+
+  const hasEndpoint = Boolean(endpoint?.trim())
 
   const addNode = () => {
     const trimmedId = nodeId.trim()
@@ -25,11 +31,63 @@ export default function NodeListEditor({ nodes, onChange }) {
     }
   }
 
+  const handleBrowseAdd = (newNodes) => {
+    onChange([...nodes, ...newNodes])
+  }
+
+  const handleClose = () => {
+    setBrowserOpen(false)
+    setFilter('')
+  }
+
   return (
     <div className="pt-2">
       <div className="form-label mb-5">Active Node Mapping</div>
 
-      {/* Add row */}
+      {/* Browse trigger — input that opens panel */}
+      <div className="relative mb-4" ref={containerRef}>
+        <div className="node-browser-trigger">
+          <Icon name="search" className="icon-sm text-on-surface-disabled" />
+          <input
+            type="text"
+            value={filter}
+            onChange={e => {
+              setFilter(e.target.value)
+              if (!browserOpen && hasEndpoint) setBrowserOpen(true)
+            }}
+            onKeyDown={e => { if (e.key === 'Enter') e.preventDefault() }}
+            onFocus={() => { if (hasEndpoint) setBrowserOpen(true) }}
+            disabled={!hasEndpoint}
+            className="node-browser-trigger-input"
+            placeholder={hasEndpoint ? 'Search or browse server nodes...' : 'Enter endpoint URL first'}
+          />
+          <button
+            type="button"
+            className="node-browser-trigger-icon"
+            disabled={!hasEndpoint}
+            onClick={() => {
+              if (browserOpen) handleClose()
+              else setBrowserOpen(true)
+            }}
+            title={hasEndpoint ? 'Browse OPC UA server nodes' : 'Enter endpoint URL first'}
+          >
+            <Icon name={browserOpen ? 'expand_less' : 'account_tree'} className="icon-sm" />
+          </button>
+        </div>
+
+        {browserOpen && hasEndpoint && (
+          <NodeBrowserPanel
+            endpoint={endpoint}
+            existingNodes={nodes}
+            filter={filter}
+            onAdd={handleBrowseAdd}
+            onClose={handleClose}
+            containerRef={containerRef}
+          />
+        )}
+      </div>
+
+      {/* Manual add row */}
       <div className="grid gap-2 mb-2" style={{ gridTemplateColumns: '1fr 1fr 48px' }}>
         <input
           type="text"
