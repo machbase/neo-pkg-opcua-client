@@ -56,16 +56,16 @@ export default function SideApp() {
                 <span className="truncate flex-1">OPC UA Collector</span>
                 <button
                     onClick={() => send("navigate", { path: "/collectors/new" })}
-                    className="btn btn-primary shrink-0 truncate"
+                    className="side-header-action"
+                    title="New Collector"
                 >
                     <Icon name="add" className="icon-sm" />
-                    <span>New</span>
                 </button>
             </div>
 
             <div className="side-body">
                 <div className="side-section-title">Collectors</div>
-                <nav className="flex-1 overflow-y-auto px-3 py-1.5">
+                <nav className="side-list">
                     {collectors.map((c) => (
                         <div
                             key={c.id}
@@ -84,7 +84,7 @@ export default function SideApp() {
                             </button>
                         </div>
                     ))}
-                    {collectors.length === 0 && <p className="px-2 py-3 text-sm text-on-surface-disabled">No collectors</p>}
+                    {collectors.length === 0 && <p className="side-empty">No collectors</p>}
                 </nav>
             </div>
         </div>

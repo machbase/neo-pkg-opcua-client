@@ -13,10 +13,10 @@ export default function ConfirmDialog({ title, message, onConfirm, onCancel }) {
         <div className="modal-title">{title}</div>
         <div className="modal-body">{message}</div>
         <div className="modal-footer">
-          <button onClick={onCancel} className="btn btn-content btn-ghost">
+          <button onClick={onCancel} className="btn btn-ghost">
             Cancel
           </button>
-          <button onClick={onConfirm} className="btn btn-content btn-danger">
+          <button onClick={onConfirm} className="btn btn-danger">
             Delete
           </button>
         </div>

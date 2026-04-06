@@ -12,7 +12,7 @@ export default function IndexApp() {
     <>
       <div className="flex max-lg:flex-col overflow-hidden bg-surface-alt text-on-surface antialiased">
         <Sidebar collectors={collectors} onToggleCollector={toggleCollector} />
-        <main className="ml-64 max-lg:ml-0 flex-1 h-screen overflow-y-auto bg-surface-alt">
+        <main className="ml-64 max-lg:ml-0 flex-1 h-screen overflow-hidden bg-surface-alt">
           <Routes>
             <Route path="/" element={
               <DashboardPage collectors={collectors} onDelete={removeCollector} />

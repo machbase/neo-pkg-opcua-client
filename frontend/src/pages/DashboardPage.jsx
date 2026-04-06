@@ -35,10 +35,10 @@ export default function DashboardPage({ collectors, onDelete }) {
 
     if (!collector) {
         return (
-            <div className="flex flex-col items-center justify-center h-full text-on-surface-tertiary">
+            <div className="empty-state flex flex-col items-center justify-center h-full">
                 <Icon name="inbox" className="icon-lg opacity-30 mb-3" />
-                <p className="text-md font-medium">{collectors.length === 0 ? "No collectors yet" : "Select a collector from the sidebar"}</p>
-                {collectors.length === 0 && <p className="text-sm mt-1 text-on-surface-disabled">Click "New" to get started</p>}
+                <p className="text-md font-medium text-on-surface-tertiary">{collectors.length === 0 ? "No collectors yet" : "Select a collector from the sidebar"}</p>
+                {collectors.length === 0 && <p className="text-sm mt-1">Click "New" to get started</p>}
             </div>
         );
     }
@@ -56,35 +56,38 @@ export default function DashboardPage({ collectors, onDelete }) {
     const nodes = opcua?.nodes || [];
 
     return (
-        <div className="p-24 pb-10">
-            {/* Header */}
-            <div className="flex justify-between items-start mb-10 gap-4">
-                <div className="min-w-0">
-                    <div className="flex items-center gap-3 mb-1">
-                        <h1 className="page-title truncate">{collector.id}</h1>
-                        <StatusBadge status={collector.status} />
+        <div className="page">
+            <div className="page-header">
+                <div className="page-header-inner">
+                    <div className="page-title-group min-w-0 !mb-0">
+                        <div className="flex items-center gap-3">
+                            <h1 className="page-title truncate">{collector.id}</h1>
+                            <StatusBadge status={collector.status} />
+                        </div>
+                        <p className="page-desc">
+                            {collector.status === "running"
+                                ? "Active session connected. Collecting data from OPC UA server."
+                                : "Collector is stopped. Configuration available for editing."}
+                        </p>
                     </div>
-                    <p className="text-sm text-on-surface-disabled">
-                        {collector.status === "running"
-                            ? "Active session connected. Collecting data from OPC UA server."
-                            : "Collector is stopped. Configuration available for editing."}
-                    </p>
-                </div>
-                <div className="flex gap-2 shrink-0">
-                    <button
-                        disabled={collector.status === "running"}
-                        onClick={() => navigate(`/collectors/${encodeURIComponent(collector.id)}/edit`)}
-                        className="btn btn-content btn-primary-outline"
-                    >
-                        <Icon name="edit" className="icon-sm" />
-                        <span>Edit</span>
-                    </button>
-                    <button disabled={collector.status === "running"} onClick={() => setConfirmDelete(true)} className="btn btn-content btn-danger">
-                        <Icon name="delete" className="icon-sm" />
-                        <span>Delete</span>
-                    </button>
+                    <div className="flex gap-2 shrink-0">
+                        <button
+                            disabled={collector.status === "running"}
+                            onClick={() => navigate(`/collectors/${encodeURIComponent(collector.id)}/edit`)}
+                            className="btn btn-primary-outline"
+                        >
+                            <Icon name="edit" className="icon-sm" />
+                            <span>Edit</span>
+                        </button>
+                        <button disabled={collector.status === "running"} onClick={() => setConfirmDelete(true)} className="btn btn-danger">
+                            <Icon name="delete" className="icon-sm" />
+                            <span>Delete</span>
+                        </button>
+                    </div>
                 </div>
             </div>
+            <div className="page-body">
+              <div className="page-body-inner">
             {config && (
                 <div className="space-y-4">
                     {/* Row 1: OPC UA + Database */}
@@ -227,6 +230,8 @@ export default function DashboardPage({ collectors, onDelete }) {
                     </div>
                 </div>
             )}
+              </div>
+            </div>
             {confirmDelete && (
                 <ConfirmDialog
                     title="Delete Collector"

@@ -62,7 +62,7 @@ export default function App() {
   return (
     <>
       <div className="bg-surface-alt text-on-surface antialiased">
-        <main className="h-screen overflow-y-auto bg-surface-alt">
+        <main className="h-screen overflow-hidden bg-surface-alt">
           <Routes>
             <Route path="/" element={
               <DashboardPage collectors={collectors} onDelete={removeCollector} />

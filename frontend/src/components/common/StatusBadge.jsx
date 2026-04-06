@@ -1,12 +1,12 @@
 const variants = {
   running: {
     dot: 'bg-success',
-    badge: 'border-success/30 bg-success-muted text-success',
+    badge: 'badge-success',
     label: 'Running',
     showDot: true,
   },
   stopped: {
-    badge: 'border-border bg-surface-elevated text-on-surface-disabled',
+    badge: 'badge-error',
     label: 'Stopped',
     showDot: false,
   },
@@ -15,7 +15,7 @@ const variants = {
 export default function StatusBadge({ status }) {
   const v = variants[status] || variants.stopped
   return (
-    <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-base border text-sm font-medium uppercase tracking-wide select-none ${v.badge}`}>
+    <span className={`badge ${v.badge} uppercase tracking-wide select-none`}>
       {v.showDot && <span className={`block w-1.5 h-1.5 rounded-full shrink-0 ${v.dot}`} />}
       {v.label}
     </span>

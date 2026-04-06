@@ -134,76 +134,81 @@ export default function CollectorFormPage({ onRefresh }) {
   }
 
   return (
-    <div className="p-24 pb-10">
-      {/* Header */}
-      <div className="flex justify-between items-start mb-6 gap-4">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2 mb-1">
-            <button onClick={() => navigate('/')} className="p-1 hover:bg-surface-hover rounded-base transition-colors shrink-0">
-              <Icon name="arrow_back" />
-            </button>
-            <h2 className="page-title truncate">
-              {isEdit ? 'Edit Collector' : 'New Collector Configuration'}
-            </h2>
+    <div className="page">
+      <div className="page-header">
+        <div className="page-header-inner">
+          <div className="page-title-group min-w-0 !mb-0">
+            <div className="flex items-center gap-2">
+              <button onClick={() => navigate('/')} className="p-1 hover:bg-surface-hover rounded-base transition-colors shrink-0">
+                <Icon name="arrow_back" />
+              </button>
+              <h2 className="page-title truncate">
+                {isEdit ? 'Edit Collector' : 'New Collector Configuration'}
+              </h2>
+            </div>
+            <p className="page-desc ml-8">
+              Define data acquisition parameters for OPC UA node telemetry.
+            </p>
           </div>
-          <p className="text-sm text-on-surface-disabled ml-8">
-            Define data acquisition parameters for OPC UA node telemetry.
-          </p>
-        </div>
-        <div className="flex gap-2 shrink-0">
-          <button
-            type="button"
-            onClick={() => navigate('/')}
-            className="btn btn-content btn-ghost"
-          >
-            Cancel
-          </button>
-          <button
-            type="submit"
-            form="collector-form"
-            disabled={saving}
-            className="btn btn-content btn-primary"
-          >
-            {saving ? 'Saving...' : (isEdit ? 'Update' : 'Create')}
-          </button>
+          <div className="flex gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => navigate('/')}
+              className="btn btn-ghost"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              form="collector-form"
+              disabled={saving}
+              className="btn btn-primary"
+            >
+              {saving ? 'Saving...' : (isEdit ? 'Update' : 'Create')}
+            </button>
+          </div>
         </div>
       </div>
 
-      <form id="collector-form" onSubmit={handleSubmit}>
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          {/* Left column */}
-          <div className="space-y-4">
-            {/* Collector Identity */}
-            <div className="form-card">
-              <div className="form-card-header">
-                <Icon name="badge" className="text-primary" />
-                Collector Identity
+      <div className="page-body">
+        <div className="page-body-inner">
+          <form id="collector-form" onSubmit={handleSubmit}>
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              {/* Left column */}
+              <div className="space-y-4">
+                {/* Collector Identity */}
+                <div className="form-card">
+                  <div className="form-card-header">
+                    <Icon name="badge" className="text-primary" />
+                    Collector Identity
+                  </div>
+                  <div>
+                    <label className="form-label">Collector Unique ID</label>
+                    <input
+                      type="text"
+                      required
+                      disabled={isEdit}
+                      value={form.name}
+                      onChange={e => update('name', e.target.value)}
+                      className="w-full disabled:opacity-50"
+                      placeholder="e.g. FLOW-WEST-001"
+                    />
+                  </div>
+                </div>
+
+                {/* OPC UA */}
+                <OpcuaSection form={form} update={update} />
               </div>
-              <div>
-                <label className="form-label">Collector Unique ID</label>
-                <input
-                  type="text"
-                  required
-                  disabled={isEdit}
-                  value={form.name}
-                  onChange={e => update('name', e.target.value)}
-                  className="w-full disabled:opacity-50"
-                  placeholder="e.g. FLOW-WEST-001"
-                />
+
+              {/* Right column */}
+              <div className="space-y-4">
+                <DbSection form={form} update={update} />
+                <LogSection form={form} update={update} />
               </div>
             </div>
-
-            {/* OPC UA */}
-            <OpcuaSection form={form} update={update} />
-          </div>
-
-          {/* Right column */}
-          <div className="space-y-4">
-            <DbSection form={form} update={update} />
-            <LogSection form={form} update={update} />
-          </div>
+          </form>
         </div>
-      </form>
+      </div>
     </div>
   )
 }

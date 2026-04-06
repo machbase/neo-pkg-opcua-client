@@ -109,7 +109,7 @@ export default function NodeListEditor({ nodes, onChange, endpoint }) {
           type="button"
           onClick={addNode}
           disabled={!nodeId.trim() || !name.trim()}
-          className="btn btn-content btn-primary shrink-0"
+          className="btn btn-icon btn-primary shrink-0"
         >
           <Icon name="add" className="icon-sm" />
         </button>
