@@ -33,7 +33,9 @@ function GET() {
   if (!config) {
     CGI.reply({ ok: false, reason: `collector '${name}' not found` });
   } else {
-    CGI.reply({ ok: true, data: { name, config } });
+    const safeConfig = { ...config, db: { ...config.db } };
+    delete safeConfig.db.password;
+    CGI.reply({ ok: true, data: { name, config: safeConfig } });
   }
 }
 

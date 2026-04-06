@@ -101,6 +101,10 @@ echo '{
 
 # POST 종료 (현재 미구현 — 수동 종료 안내 반환)
 ../machbase-neo/machbase-neo jsh -e REQUEST_METHOD=POST -e QUERY_STRING=name=collector-a cgi-bin/api/collector/stop.js
+
+# POST node children (OPC UA 노드 자식 목록 조회)
+echo '{"endpoint": "opc.tcp://localhost:4840", "node": "ns=0;i=85"}' | \
+  ../machbase-neo/machbase-neo jsh -e REQUEST_METHOD=POST cgi-bin/api/node/children.js
 ```
 
 ---
