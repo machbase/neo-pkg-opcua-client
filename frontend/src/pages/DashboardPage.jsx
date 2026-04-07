@@ -1,37 +1,16 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { useNavigate } from "react-router";
 import { useApp } from "../context/AppContext";
-import * as api from "../api/collectors";
 import StatusBadge from "../components/common/StatusBadge";
 import ConfirmDialog from "../components/common/ConfirmDialog";
 import Icon from "../components/common/Icon";
 
-export default function DashboardPage({ collectors, onDelete }) {
+export default function DashboardPage({ collectors, detail, onDelete }) {
     const navigate = useNavigate();
-    const { selectedCollectorId, setSelectedCollectorId, notify } = useApp();
+    const { selectedCollectorId, setSelectedCollectorId } = useApp();
     const [confirmDelete, setConfirmDelete] = useState(false);
-    const [detail, setDetail] = useState(null);
 
     const collector = collectors.find((c) => c.id === selectedCollectorId);
-
-    useEffect(() => {
-        if (!selectedCollectorId && collectors.length > 0) {
-            setSelectedCollectorId(collectors[0].id);
-        }
-    }, [collectors, selectedCollectorId, setSelectedCollectorId]);
-
-    useEffect(() => {
-        if (!selectedCollectorId) {
-            setDetail(null);
-            return;
-        }
-        api.getCollector(selectedCollectorId)
-            .then((data) => setDetail(data))
-            .catch((e) => {
-                notify(e.reason || e.message, "error");
-                setDetail(null);
-            });
-    }, [selectedCollectorId, notify]);
 
     if (!collector) {
         return (
@@ -52,7 +31,6 @@ export default function DashboardPage({ collectors, onDelete }) {
     const config = detail?.config;
     const opcua = config?.opcua;
     const db = config?.db;
-    const log = config?.log;
     const nodes = opcua?.nodes || [];
 
     return (
@@ -74,7 +52,7 @@ export default function DashboardPage({ collectors, onDelete }) {
                         <button
                             disabled={collector.status === "running"}
                             onClick={() => navigate(`/collectors/${encodeURIComponent(collector.id)}/edit`)}
-                            className="btn btn-primary-outline"
+                            className="btn btn-primary"
                         >
                             <Icon name="edit" className="icon-sm" />
                             <span>Edit</span>
@@ -168,9 +146,9 @@ export default function DashboardPage({ collectors, onDelete }) {
                         {nodes.length > 0 ? (
                             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-3">
                                 {nodes.map((node, i) => (
-                                    <div key={i} className="px-4 py-3 bg-surface-alt border border-border rounded-base">
-                                        <div className="font-semibold mb-1">{node.name}</div>
-                                        <div className="text-xs text-on-surface-disabled font-mono">{node.nodeId}</div>
+                                    <div key={i} className="px-4 py-3 bg-surface-alt border border-border rounded-base overflow-hidden">
+                                        <div className="font-semibold mb-1 truncate" title={node.name}>{node.name}</div>
+                                        <div className="text-xs text-on-surface-disabled font-mono truncate" title={node.nodeId}>{node.nodeId}</div>
                                     </div>
                                 ))}
                             </div>
@@ -179,55 +157,6 @@ export default function DashboardPage({ collectors, onDelete }) {
                         )}
                     </div>
 
-                    {/* Row 3: Logging — full width */}
-                    <div className="form-card">
-                        <div className="form-card-header">
-                            <Icon name="description" className="text-primary" />
-                            Logging & Diagnostics
-                        </div>
-                        <div className="space-y-6">
-                            {/* Row 1: Level / Format / Output + Rotation */}
-                            <div className="flex justify-between items-start">
-                                <div className="flex gap-10">
-                                    <div>
-                                        <div className="form-label">Level</div>
-                                        <span className="badge badge-primary">{log?.level || "INFO"}</span>
-                                    </div>
-                                    <div>
-                                        <div className="form-label">Format</div>
-                                        <span className="badge">{(log?.format || "json").toUpperCase()}</span>
-                                    </div>
-                                    <div>
-                                        <div className="form-label">Output</div>
-                                        <div className="font-semibold uppercase text-sm">
-                                            {log?.output || "console"}
-                                            {log?.output === "both" && <span className="text-on-surface-disabled font-normal"> (CLI + File)</span>}
-                                        </div>
-                                    </div>
-                                </div>
-
-                                {(log?.output === "file" || log?.output === "both") && log?.file && (
-                                    <div className="text-right">
-                                        <div className="form-label">Rotation Policy</div>
-                                        <div className="font-bold uppercase">
-                                            {log.file.rotate || "size"} / {log.file.maxSize || "10MB"}
-                                        </div>
-                                        <div className="text-xs text-on-surface-disabled mt-1">Max retention: {log.file.maxFiles || 7} files</div>
-                                    </div>
-                                )}
-                            </div>
-
-                            {/* Row 2: File Path */}
-                            {(log?.output === "file" || log?.output === "both") && log?.file && (
-                                <div>
-                                    <div className="form-label">File Path</div>
-                                    <div className="dash-field-box w-full font-mono">{log.file.path || "-"}</div>
-                                </div>
-                            )}
-
-                            {log?.output === "console" && <div className="text-sm text-on-surface-disabled">File logging disabled</div>}
-                        </div>
-                    </div>
                 </div>
             )}
               </div>

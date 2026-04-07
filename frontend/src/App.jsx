@@ -1,7 +1,8 @@
-import { useEffect, useRef } from 'react'
-import { Routes, Route, useNavigate } from 'react-router'
+import { useState, useEffect, useRef, useCallback } from 'react'
+import { Routes, Route, useNavigate, useLocation } from 'react-router'
 import useCollectors from './hooks/useCollectors'
 import { useApp } from './context/AppContext'
+import * as api from './api/collectors'
 import DashboardPage from './pages/DashboardPage'
 import CollectorFormPage from './pages/CollectorFormPage'
 import Toast from './components/common/Toast'
@@ -10,8 +11,24 @@ const CHANNEL_NAME = 'app:neo-opcua-collector'
 
 export default function App() {
   const navigate = useNavigate()
-  const { selectedCollectorId, setSelectedCollectorId } = useApp()
+  const location = useLocation()
+  const { selectedCollectorId, setSelectedCollectorId, notify } = useApp()
   const { collectors, toggleCollector, removeCollector, refreshCollectors } = useCollectors()
+  const [detail, setDetail] = useState(null)
+
+  const fetchDetail = useCallback((id) => {
+    if (!id) { setDetail(null); return Promise.resolve() }
+    return api.getCollector(id)
+      .then(setDetail)
+      .catch((e) => {
+        notify(e.reason || e.message, 'error')
+        setDetail(null)
+      })
+  }, [notify])
+
+  useEffect(() => {
+    fetchDetail(selectedCollectorId)
+  }, [selectedCollectorId, fetchDetail, location.pathname])
   const channelRef = useRef(null)
   const handlersRef = useRef({})
 
@@ -65,13 +82,13 @@ export default function App() {
         <main className="h-screen overflow-hidden bg-surface-alt">
           <Routes>
             <Route path="/" element={
-              <DashboardPage collectors={collectors} onDelete={removeCollector} />
+              <DashboardPage collectors={collectors} detail={detail} onDelete={removeCollector} />
             } />
             <Route path="/collectors/new" element={
               <CollectorFormPage onRefresh={refreshCollectors} />
             } />
             <Route path="/collectors/:id/edit" element={
-              <CollectorFormPage onRefresh={refreshCollectors} />
+              <CollectorFormPage detail={detail} onRefresh={refreshCollectors} />
             } />
           </Routes>
         </main>

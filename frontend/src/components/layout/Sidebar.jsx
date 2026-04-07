@@ -3,7 +3,7 @@ import { useApp } from "../../context/AppContext";
 import Icon from "../common/Icon";
 import CollectorListItem from "../collectors/CollectorListItem";
 
-export default function Sidebar({ collectors, onToggleCollector }) {
+export default function Sidebar({ collectors, onToggleCollector, onRefresh }) {
     const navigate = useNavigate();
     const location = useLocation();
     const { selectedCollectorId, setSelectedCollectorId } = useApp();
@@ -23,7 +23,16 @@ export default function Sidebar({ collectors, onToggleCollector }) {
             </div>
 
             <div className="side-body max-lg:flex-none">
-                <div className="side-section-title">Collectors</div>
+                <div className="side-section-title">
+                    Collectors
+                    <button
+                        onClick={onRefresh}
+                        className="side-section-action"
+                        title="Refresh"
+                    >
+                        <Icon name="refresh" className="icon-xs" />
+                    </button>
+                </div>
                 <nav className="side-list max-lg:flex max-lg:gap-1 max-lg:overflow-x-auto">
                     {collectors.map((c) => (
                         <CollectorListItem

@@ -64,7 +64,16 @@ export default function SideApp() {
             </div>
 
             <div className="side-body">
-                <div className="side-section-title">Collectors</div>
+                <div className="side-section-title">
+                    Collectors
+                    <button
+                        onClick={() => send("refreshCollectors")}
+                        className="side-section-action"
+                        title="Refresh"
+                    >
+                        <Icon name="refresh" className="icon-xs" />
+                    </button>
+                </div>
                 <nav className="side-list">
                     {collectors.map((c) => (
                         <div

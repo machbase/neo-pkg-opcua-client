@@ -9,7 +9,7 @@ export default function OpcuaSection({ form, update }) {
         OPC UA Configuration
       </div>
 
-      <div className="space-y-6">
+      <div className="space-y-20">
         <div>
           <label className="form-label">Endpoint URL</label>
           <input
@@ -22,7 +22,7 @@ export default function OpcuaSection({ form, update }) {
           />
         </div>
 
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-2 gap-12">
           <div>
             <label className="form-label">Sampling Interval (ms)</label>
             <input

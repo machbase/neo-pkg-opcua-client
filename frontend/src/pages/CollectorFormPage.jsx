@@ -20,7 +20,7 @@ const DEFAULTS = {
     host: '127.0.0.1',
     port: 5656,
     user: 'sys',
-    password: 'manager',
+    password: '',
   },
   log: {
     level: 'INFO',
@@ -35,35 +35,36 @@ const DEFAULTS = {
   },
 }
 
-export default function CollectorFormPage({ onRefresh }) {
+export default function CollectorFormPage({ detail, onRefresh }) {
   const { id } = useParams()
   const navigate = useNavigate()
-  const { notify } = useApp()
+  const { notify, setSelectedCollectorId } = useApp()
   const isEdit = Boolean(id)
 
   const [form, setForm] = useState(DEFAULTS)
   const [saving, setSaving] = useState(false)
 
   useEffect(() => {
-    if (isEdit) {
-      api.getCollector(id).then(data => {
-        const c = data.config || {}
-        setForm({
-          name: data.name || id,
-          opcua: { ...DEFAULTS.opcua, ...c.opcua, nodes: c.opcua?.nodes || [] },
-          db: { ...DEFAULTS.db, ...c.db },
-          log: {
-            ...DEFAULTS.log,
-            ...c.log,
-            file: { ...DEFAULTS.log.file, ...c.log?.file },
-          },
-        })
-      }).catch(e => {
-        notify(e.reason || e.message, 'error')
-        navigate('/')
+    if (!isEdit) setSelectedCollectorId(null)
+  }, [isEdit, setSelectedCollectorId])
+
+  useEffect(() => {
+    if (isEdit && detail?.config) {
+      const c = detail.config
+      setForm({
+        name: detail.name || id,
+        opcua: { ...DEFAULTS.opcua, ...c.opcua, nodes: c.opcua?.nodes || [] },
+        db: { ...DEFAULTS.db, ...c.db },
+        log: {
+          ...DEFAULTS.log,
+          ...c.log,
+          file: { ...DEFAULTS.log.file, ...c.log?.file },
+        },
       })
+    } else if (!isEdit) {
+      setForm(DEFAULTS)
     }
-  }, [id, isEdit, navigate, notify])
+  }, [id, isEdit, detail])
 
   const update = (path, value) => {
     setForm(prev => {
@@ -81,10 +82,6 @@ export default function CollectorFormPage({ onRefresh }) {
 
   const handleSubmit = async (e) => {
     e.preventDefault()
-    if (form.opcua.nodes.length === 0) {
-      notify('Add at least one node', 'error')
-      return
-    }
     setSaving(true)
     try {
       const config = {
@@ -125,6 +122,7 @@ export default function CollectorFormPage({ onRefresh }) {
         notify(`Collector created`, 'success')
       }
       if (onRefresh) await onRefresh()
+      setSelectedCollectorId(isEdit ? id : form.name)
       navigate('/')
     } catch (e) {
       notify(e.reason || e.message, 'error')
@@ -173,9 +171,9 @@ export default function CollectorFormPage({ onRefresh }) {
       <div className="page-body">
         <div className="page-body-inner">
           <form id="collector-form" onSubmit={handleSubmit}>
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-16">
               {/* Left column */}
-              <div className="space-y-4">
+              <div className="space-y-16">
                 {/* Collector Identity */}
                 <div className="form-card">
                   <div className="form-card-header">
@@ -201,7 +199,7 @@ export default function CollectorFormPage({ onRefresh }) {
               </div>
 
               {/* Right column */}
-              <div className="space-y-4">
+              <div className="space-y-16">
                 <DbSection form={form} update={update} />
                 <LogSection form={form} update={update} />
               </div>
