@@ -10,7 +10,7 @@ export default function LogSection({ form, update }) {
         Logging Controls
       </div>
 
-      <div className="space-y-6">
+      <div className="space-y-20">
         <div>
           <label className="form-label">Log Verbosity</label>
           <select
@@ -51,7 +51,7 @@ export default function LogSection({ form, update }) {
         </div>
 
         {showFile && (
-          <div className="space-y-4 pt-3 border-t border-border">
+          <div className="space-y-20 pt-5 border-t border-border">
             <div>
               <label className="form-label">File Path</label>
               <input
@@ -63,7 +63,7 @@ export default function LogSection({ form, update }) {
                 placeholder="./logs/collector-a.log"
               />
             </div>
-            <div className="grid grid-cols-3 gap-4">
+            <div className="grid grid-cols-3 gap-12">
               <div>
                 <label className="form-label">Max Size</label>
                 <input

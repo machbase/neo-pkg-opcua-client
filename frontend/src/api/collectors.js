@@ -30,3 +30,6 @@ export const startCollector = (name) =>
 
 export const stopCollector = (name) =>
   request('POST', `${BASE}/stop?name=${encodeURIComponent(name)}`)
+
+export const browseNodeChildren = (endpoint, nodeId, nodeClassMask = 0) =>
+  request('POST', '/cgi-bin/api/node/children', { endpoint, node: nodeId, nodeClassMask })

@@ -3,7 +3,7 @@ import { useApp } from "../../context/AppContext";
 import Icon from "../common/Icon";
 import CollectorListItem from "../collectors/CollectorListItem";
 
-export default function Sidebar({ collectors, onToggleCollector }) {
+export default function Sidebar({ collectors, onToggleCollector, onRefresh }) {
     const navigate = useNavigate();
     const location = useLocation();
     const { selectedCollectorId, setSelectedCollectorId } = useApp();
@@ -15,16 +15,25 @@ export default function Sidebar({ collectors, onToggleCollector }) {
                 <span className="truncate flex-1">OPC UA Collector</span>
                 <button
                     onClick={() => navigate("/collectors/new")}
-                    className="btn btn-primary shrink-0 truncate"
+                    className="side-header-action"
+                    title="New Collector"
                 >
                     <Icon name="add" className="icon-sm" />
-                    <span>New</span>
                 </button>
             </div>
 
             <div className="side-body max-lg:flex-none">
-                <div className="side-section-title">Collectors</div>
-                <nav className="flex-1 overflow-y-auto px-3 py-1.5 max-lg:flex max-lg:gap-1 max-lg:overflow-x-auto">
+                <div className="side-section-title">
+                    Collectors
+                    <button
+                        onClick={onRefresh}
+                        className="side-section-action"
+                        title="Refresh"
+                    >
+                        <Icon name="refresh" className="icon-xs" />
+                    </button>
+                </div>
+                <nav className="side-list max-lg:flex max-lg:gap-1 max-lg:overflow-x-auto">
                     {collectors.map((c) => (
                         <CollectorListItem
                             key={c.id}
@@ -37,7 +46,7 @@ export default function Sidebar({ collectors, onToggleCollector }) {
                             onToggle={() => onToggleCollector(c)}
                         />
                     ))}
-                    {collectors.length === 0 && <p className="px-2 py-3 text-on-surface-disabled text-sm">No collectors</p>}
+                    {collectors.length === 0 && <p className="side-empty">No collectors</p>}
                 </nav>
             </div>
         </aside>
