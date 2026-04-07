@@ -1,5 +1,5 @@
 /**
- * POST /cgi-bin/api/collector/stop?name=xxx  -- collector 종료 (데몬 연동 예정)
+ * POST /cgi-bin/api/collector/stop?name=xxx  -- collector service 종료
  */
 
 const path = require('path');
@@ -10,13 +10,27 @@ const CGI = require(path.join(ROOT, 'src', 'cgi', 'cgi_util.js'));
 
 const { name } = CGI.parseQuery();
 
+function errorMessage(err) {
+  return err && err.message ? err.message : String(err);
+}
+
 function POST() {
   if (!name) return CGI.reply({ ok: false, reason: 'name is required' });
   if (!CGI.readConfig(name)) return CGI.reply({ ok: false, reason: `collector '${name}' not found` });
-  // TODO: jsh 비동기 exec 지원 시 PID 파일 기반 SIGTERM으로 구현 예정
-  CGI.reply({ ok: false, reason: `daemon not supported yet. stop manually: kill $(cat cgi-bin/run/${name}.pid)` });
+  CGI.stopService(name, (err) => {
+    if (err) {
+      CGI.reply({ ok: false, reason: errorMessage(err) });
+    } else {
+      CGI.deletePid(name);
+      CGI.reply({ ok: true, data: { name } });
+    }
+  });
 }
 
 const handlers = { POST };
 const method = (process.env.get('REQUEST_METHOD') || 'GET').toUpperCase();
-(handlers[method] || (() => CGI.reply({ ok: false, reason: 'method not allowed' })))();
+try {
+  (handlers[method] || (() => CGI.reply({ ok: false, reason: 'method not allowed' })))();
+} catch (err) {
+  CGI.reply({ ok: false, reason: errorMessage(err) });
+}

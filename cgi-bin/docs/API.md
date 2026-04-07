@@ -3,6 +3,8 @@
 `cgi-bin/api/` 하위의 CGI 스크립트가 제공하는 HTTP API 명세입니다.
 모든 요청/응답 본문은 `application/json`입니다.
 
+collector service 이름은 다른 패키지와 충돌하지 않도록 항상 `_opc_{name}` 형식을 사용합니다.
+
 ## 동작 방식
 
 이 API는 **CGI(Common Gateway Interface)** 방식으로 동작합니다.
@@ -96,10 +98,10 @@ echo '{
 # DELETE 삭제
 ../machbase-neo/machbase-neo jsh -e REQUEST_METHOD=DELETE -e QUERY_STRING=name=collector-a cgi-bin/api/collector.js
 
-# POST 시작 (현재 미구현 — 수동 실행 안내 반환)
+# POST 시작
 ../machbase-neo/machbase-neo jsh -e REQUEST_METHOD=POST -e QUERY_STRING=name=collector-a cgi-bin/api/collector/start.js
 
-# POST 종료 (현재 미구현 — 수동 종료 안내 반환)
+# POST 종료
 ../machbase-neo/machbase-neo jsh -e REQUEST_METHOD=POST -e QUERY_STRING=name=collector-a cgi-bin/api/collector/stop.js
 
 # POST node children (OPC UA 노드 자식 목록 조회)
@@ -127,7 +129,7 @@ echo '{"endpoint": "opc.tcp://localhost:4840", "node": "ns=0;i=85"}' | \
 
 ## GET /cgi-bin/api/collector/list
 
-전체 collector 목록과 각 config, 실행 상태를 반환합니다.
+전체 collector 목록과 각 service 설치 여부, 실행 상태를 반환합니다.
 
 **응답**
 
@@ -137,19 +139,21 @@ echo '{"endpoint": "opc.tcp://localhost:4840", "node": "ns=0;i=85"}' | \
   "data": [
     {
       "name": "collector-a",
+      "installed": true,
       "running": false
     }
   ]
 }
 ```
 
-> `running`은 `cgi-bin/run/{name}.pid` 파일 존재 여부로 판단합니다.
+> `installed` 는 `_opc_{name}` service definition 존재 여부를 기준으로 판단합니다.
+> `running` 은 service status를 우선 사용하고, 필요 시 pid 파일 상태를 fallback으로 사용합니다.
 
 ---
 
 ## POST /cgi-bin/api/collector
 
-새 collector를 등록합니다.
+새 collector를 등록합니다. config 저장 후 `_opc_{name}` service를 install 합니다.
 
 **요청 본문**
 
@@ -263,7 +267,7 @@ echo '{"endpoint": "opc.tcp://localhost:4840", "node": "ns=0;i=85"}' | \
 
 ## PUT /cgi-bin/api/collector?name={name}
 
-특정 collector의 config를 수정합니다. 요청 본문 전체가 새 config로 덮어씌워집니다.
+특정 collector의 config를 수정합니다. 요청 본문 전체가 새 config로 덮어씌워집니다. collector service가 현재 실행 중이면 config 저장 후 `stop -> start` 를 수행합니다. 실행 중이 아니면 config만 갱신합니다.
 
 **쿼리 파라미터**
 
@@ -321,7 +325,7 @@ echo '{"endpoint": "opc.tcp://localhost:4840", "node": "ns=0;i=85"}' | \
 
 ## DELETE /cgi-bin/api/collector?name={name}
 
-특정 collector의 config 파일을 삭제합니다.
+특정 collector를 삭제합니다. 실행 중이면 먼저 service를 stop 하고, 이후 service uninstall, pid 삭제, config 삭제를 수행합니다.
 
 **쿼리 파라미터**
 
@@ -346,10 +350,13 @@ echo '{"endpoint": "opc.tcp://localhost:4840", "node": "ns=0;i=85"}' | \
 
 ## POST /cgi-bin/api/collector/start?name={name}
 
-collector 실행을 요청합니다.
+등록된 collector service를 시작합니다.
 
-> **현재 미구현.** 데몬 연동이 구현되기 전까지는 `ok: false`를 반환합니다.
-> 수동 실행: `machbase-neo jsh cgi-bin/neo-collector.js cgi-bin/conf.d/{name}.json`
+**응답 (성공)**
+
+```json
+{ "ok": true, "data": { "name": "collector-a" } }
+```
 
 **응답 (실패)**
 
@@ -357,16 +364,19 @@ collector 실행을 요청합니다.
 |------|--------|
 | `name` 누락 | `"name is required"` |
 | 해당 collector 없음 | `"collector 'xxx' not found"` |
-| 데몬 미지원 (현재 항상) | `"daemon not supported yet. run manually: ..."` |
+| service 시작 실패 | service controller 오류 메시지 |
 
 ---
 
 ## POST /cgi-bin/api/collector/stop?name={name}
 
-collector 종료를 요청합니다.
+등록된 collector service를 종료합니다. 성공 시 pid 파일도 함께 정리합니다.
 
-> **현재 미구현.** 데몬 연동이 구현되기 전까지는 `ok: false`를 반환합니다.
-> 수동 종료: `kill $(cat cgi-bin/run/{name}.pid)`
+**응답 (성공)**
+
+```json
+{ "ok": true, "data": { "name": "collector-a" } }
+```
 
 **응답 (실패)**
 
@@ -374,7 +384,7 @@ collector 종료를 요청합니다.
 |------|--------|
 | `name` 누락 | `"name is required"` |
 | 해당 collector 없음 | `"collector 'xxx' not found"` |
-| 데몬 미지원 (현재 항상) | `"daemon not supported yet. stop manually: ..."` |
+| service 종료 실패 | service controller 오류 메시지 |
 
 ---
 

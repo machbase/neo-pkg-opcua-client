@@ -132,13 +132,13 @@ machbase-neo jsh -v /app=/path/to/neo-tools /app/cgi-bin/neo-collector.js /app/c
 
 | 메서드 | 경로 | 설명 |
 |--------|------|------|
-| GET | `/cgi-bin/api/collector/list` | 수집기 목록 조회 (running 상태 포함) |
-| POST | `/cgi-bin/api/collector` | 수집기 등록 (body: `{ name, config }`) |
+| GET | `/cgi-bin/api/collector/list` | 수집기 목록 조회 (`installed`, `running` 상태 포함) |
+| POST | `/cgi-bin/api/collector` | 수집기 등록 + service install (body: `{ name, config }`) |
 | GET | `/cgi-bin/api/collector?name=xxx` | 수집기 단건 조회 |
-| PUT | `/cgi-bin/api/collector?name=xxx` | 수집기 설정 수정 (body: config) |
-| DELETE | `/cgi-bin/api/collector?name=xxx` | 수집기 삭제 |
-| POST | `/cgi-bin/api/collector/start?name=xxx` | 수집기 시작 (데몬 연동 예정) |
-| POST | `/cgi-bin/api/collector/stop?name=xxx` | 수집기 종료 (데몬 연동 예정) |
+| PUT | `/cgi-bin/api/collector?name=xxx` | 수집기 설정 수정. 실행 중이면 service stop -> start (body: config) |
+| DELETE | `/cgi-bin/api/collector?name=xxx` | 수집기 삭제 + service uninstall |
+| POST | `/cgi-bin/api/collector/start?name=xxx` | 등록된 service 시작 |
+| POST | `/cgi-bin/api/collector/stop?name=xxx` | 등록된 service 종료 |
 | POST | `/cgi-bin/api/node/children` | OPC UA 노드 자식 목록 조회 (body: `{ endpoint, node }`) |
 
 ## 테스트

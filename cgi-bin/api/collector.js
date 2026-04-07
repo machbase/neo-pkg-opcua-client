@@ -13,6 +13,10 @@ const CGI = require(path.join(ROOT, 'src', 'cgi', 'cgi_util.js'));
 
 const { name } = CGI.parseQuery();
 
+function errorMessage(err) {
+  return err && err.message ? err.message : String(err);
+}
+
 function POST() {
   const body = CGI.readBody();
   if (!body.name) {
@@ -23,7 +27,14 @@ function POST() {
     CGI.reply({ ok: false, reason: `collector '${body.name}' already exists` });
   } else {
     CGI.writeConfig(body.name, body.config);
-    CGI.reply({ ok: true, data: { name: body.name } });
+    CGI.installService(body.name, (err) => {
+      if (err) {
+        CGI.deleteConfig(body.name);
+        CGI.reply({ ok: false, reason: errorMessage(err) });
+      } else {
+        CGI.reply({ ok: true, data: { name: body.name } });
+      }
+    });
   }
 }
 
@@ -45,7 +56,13 @@ function PUT() {
     CGI.reply({ ok: false, reason: `collector '${name}' not found` });
   } else {
     CGI.writeConfig(name, CGI.readBody());
-    CGI.reply({ ok: true, data: { name } });
+    CGI.restartServiceIfRunning(name, (err) => {
+      if (err) {
+        CGI.reply({ ok: false, reason: errorMessage(err) });
+      } else {
+        CGI.reply({ ok: true, data: { name } });
+      }
+    });
   }
 }
 
@@ -54,11 +71,29 @@ function DELETE() {
   if (!CGI.readConfig(name)) {
     CGI.reply({ ok: false, reason: `collector '${name}' not found` });
   } else {
-    CGI.deleteConfig(name);
-    CGI.reply({ ok: true });
+    CGI.stopServiceIfRunning(name, (stopErr) => {
+      if (stopErr) {
+        CGI.reply({ ok: false, reason: errorMessage(stopErr) });
+        return;
+      }
+      CGI.uninstallService(name, (err) => {
+        if (err && !CGI.isMissingServiceError(err)) {
+          CGI.reply({ ok: false, reason: errorMessage(err) });
+        } else {
+          CGI.deleteServiceDefinition(name);
+          CGI.deletePid(name);
+          CGI.deleteConfig(name);
+          CGI.reply({ ok: true });
+        }
+      });
+    });
   }
 }
 
 const handlers = { POST, GET, PUT, DELETE };
 const method = (process.env.get('REQUEST_METHOD') || 'GET').toUpperCase();
-(handlers[method] || (() => CGI.reply({ ok: false, reason: 'method not allowed' })))();
+try {
+  (handlers[method] || (() => CGI.reply({ ok: false, reason: 'method not allowed' })))();
+} catch (err) {
+  CGI.reply({ ok: false, reason: errorMessage(err) });
+}
