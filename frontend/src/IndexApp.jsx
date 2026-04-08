@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Routes, Route, useLocation } from 'react-router'
+import { Routes, Route } from 'react-router'
 import useCollectors from './hooks/useCollectors'
 import { useApp } from './context/AppContext'
 import * as api from './api/collectors'
@@ -9,7 +9,6 @@ import CollectorFormPage from './pages/CollectorFormPage'
 import Toast from './components/common/Toast'
 
 export default function IndexApp() {
-  const location = useLocation()
   const { collectors, toggleCollector, installCollector, removeCollector, refreshCollectors } = useCollectors()
   const { selectedCollectorId, notify } = useApp()
   const [detail, setDetail] = useState(null)
@@ -26,7 +25,7 @@ export default function IndexApp() {
 
   useEffect(() => {
     fetchDetail(selectedCollectorId)
-  }, [selectedCollectorId, fetchDetail, location.pathname])
+  }, [selectedCollectorId, fetchDetail])
 
   return (
     <>
@@ -41,7 +40,7 @@ export default function IndexApp() {
               <CollectorFormPage onRefresh={refreshCollectors} />
             } />
             <Route path="/collectors/:id/edit" element={
-              <CollectorFormPage detail={detail} onRefresh={refreshCollectors} />
+              <CollectorFormPage detail={detail} onRefresh={refreshCollectors} onRefreshDetail={() => fetchDetail(selectedCollectorId)} />
             } />
           </Routes>
         </main>

@@ -40,5 +40,10 @@ export const testDbConnection = (db) =>
 export const createDbTable = (db) =>
   request('POST', '/cgi-bin/api/db/table/create', db)
 
+export const getLastCollectedTime = async (name) => {
+  const data = await request('GET', `${BASE}/last-time?name=${encodeURIComponent(name)}`)
+  return data.lastCollectedAt
+}
+
 export const browseNodeChildren = (endpoint, nodeId, nodeClassMask = 0) =>
   request('POST', '/cgi-bin/api/node/children', { endpoint, node: nodeId, nodeClassMask })

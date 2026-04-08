@@ -36,7 +36,7 @@ const DEFAULTS = {
   },
 }
 
-export default function CollectorFormPage({ detail, onRefresh }) {
+export default function CollectorFormPage({ detail, onRefresh, onRefreshDetail }) {
   const { id } = useParams()
   const navigate = useNavigate()
   const { notify, setSelectedCollectorId } = useApp()
@@ -123,6 +123,7 @@ export default function CollectorFormPage({ detail, onRefresh }) {
         notify(`Collector created`, 'success')
       }
       if (onRefresh) await onRefresh()
+      if (isEdit && onRefreshDetail) await onRefreshDetail()
       setSelectedCollectorId(isEdit ? id : form.name)
       navigate('/')
     } catch (e) {

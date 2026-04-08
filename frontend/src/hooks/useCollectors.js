@@ -27,7 +27,7 @@ export default function useCollectors() {
 
     useEffect(() => {
         fetchCollectors();
-        intervalRef.current = setInterval(fetchCollectors, 5000);
+        intervalRef.current = setInterval(fetchCollectors, 10000);
         return () => clearInterval(intervalRef.current);
     }, [fetchCollectors]);
 

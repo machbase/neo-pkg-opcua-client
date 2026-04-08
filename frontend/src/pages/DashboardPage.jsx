@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useNavigate } from "react-router";
 import { useApp } from "../context/AppContext";
+import * as api from "../api/collectors";
 import StatusBadge from "../components/common/StatusBadge";
 import ConfirmDialog from "../components/common/ConfirmDialog";
 import Icon from "../components/common/Icon";
@@ -9,8 +10,28 @@ export default function DashboardPage({ collectors, detail, onDelete }) {
     const navigate = useNavigate();
     const { selectedCollectorId, setSelectedCollectorId } = useApp();
     const [confirmDelete, setConfirmDelete] = useState(false);
+    const [lastCollectedAt, setLastCollectedAt] = useState(null);
+    const intervalRef = useRef(null);
 
     const collector = collectors.find((c) => c.id === selectedCollectorId);
+
+    const fetchLastTime = useCallback(async (name) => {
+        try {
+            const ts = await api.getLastCollectedTime(name);
+            setLastCollectedAt(ts);
+        } catch {
+            setLastCollectedAt(null);
+        }
+    }, []);
+
+    useEffect(() => {
+        clearInterval(intervalRef.current);
+        setLastCollectedAt(null);
+        if (!collector) return;
+        fetchLastTime(collector.id);
+        intervalRef.current = setInterval(() => fetchLastTime(collector.id), 10000);
+        return () => clearInterval(intervalRef.current);
+    }, [collector?.id, fetchLastTime]);
 
     if (!collector) {
         return (
@@ -130,10 +151,17 @@ export default function DashboardPage({ collectors, detail, onDelete }) {
 
                     {/* Row 2: Monitored Nodes — full width */}
                     <div className="form-card">
-                        <div className="form-card-header">
-                            <Icon name="account_tree" className="text-primary" />
-                            Monitored Nodes
-                            <span className="badge badge-primary ml-2">{nodes.length} Nodes</span>
+                        <div className="form-card-header justify-between">
+                            <div className="flex items-center gap-2">
+                                <Icon name="account_tree" className="text-primary" />
+                                Monitored Nodes
+                                <span className="badge badge-primary ml-2">{nodes.length} Nodes</span>
+                            </div>
+                            {lastCollectedAt != null && (
+                                <span className="text-xs text-on-surface-disabled font-normal">
+                                    Last collected: {new Date(lastCollectedAt).toLocaleString()}
+                                </span>
+                            )}
                         </div>
                         {nodes.length > 0 ? (
                             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-3">
