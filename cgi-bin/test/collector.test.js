@@ -59,7 +59,17 @@ const testConfig = {
 function makeCollector() {
     const opcuaClient = new MockOpcuaClient();
     const machbaseAppender = new MockMachbaseAppender();
-    const c = new Collector(testConfig, { opcuaClient, machbaseAppender });
+    const detailWrites = [];
+    const c = new Collector(testConfig, {
+        opcuaClient,
+        machbaseAppender,
+        collectorName: "collector-a",
+        lastCollectedAtWriter: (name, value, callback) => {
+            detailWrites.push({ name, value });
+            if (callback) callback(null);
+        },
+    });
+    c._detailWrites = detailWrites;
     return c;
 }
 
@@ -110,6 +120,9 @@ runner.run("Collector", {
         t.assertEqual(c.db.appended[0].name, "sensor.tag1");
         t.assertEqual(c.db.appended[1].name, "sensor.tag2");
         t.assert(c.db.flushed, "flush should have been called");
+        t.assertEqual(c._detailWrites.length, 1, "lastCollectedAt should be updated once");
+        t.assertEqual(c._detailWrites[0].name, "collector-a");
+        t.assert(typeof c._detailWrites[0].value === "number", "lastCollectedAt should be stored as epoch milliseconds");
         clearInterval(c.timer);
     },
 
@@ -126,6 +139,22 @@ runner.run("Collector", {
         clearInterval(c.timer);
     },
 
+    "collect() converts boolean values to 1 or 0": (t) => {
+        const c = makeCollector();
+        c.start();
+        c.opcua.readResult = [
+            { value: true, sourceTimestamp: Date.now() },
+            { value: false, sourceTimestamp: Date.now() },
+        ];
+        c.collect();
+        t.assertEqual(c.db.appended.length, 2, "two rows should be appended");
+        t.assertEqual(c.db.appended[0].value, 1, "true should be stored as 1");
+        t.assertEqual(c.db.appended[1].value, 0, "false should be stored as 0");
+        t.assert(c.db.flushed, "flush should be called for converted boolean values");
+        t.assertEqual(c._detailWrites.length, 1, "lastCollectedAt should be updated on successful boolean conversion");
+        clearInterval(c.timer);
+    },
+
     "collect() does nothing and closes opcua when read throws": (t) => {
         const c = makeCollector();
         c.start();
@@ -136,6 +165,7 @@ runner.run("Collector", {
         t.assertEqual(c.db.appended.length, 0, "nothing should be appended");
         t.assert(!c.db.flushed, "flush should not be called");
         t.assert(c.opcua.closed, "opcua should be closed on error");
+        t.assertEqual(c._detailWrites.length, 0, "lastCollectedAt should not be updated on failure");
         clearInterval(c.timer);
     },
 
@@ -157,6 +187,7 @@ runner.run("Collector", {
         c.db.openError = "db unavailable";
         c.collect();
         t.assertEqual(c.db.appended.length, 0, "nothing should be appended");
+        t.assertEqual(c._detailWrites.length, 0, "lastCollectedAt should not be updated when db reopen fails");
         clearInterval(c.timer);
     },
 
@@ -166,6 +197,7 @@ runner.run("Collector", {
         c.db.appendError = "append failed";
         c.collect();
         t.assert(c.opcua.closed, "opcua should be closed on error");
+        t.assertEqual(c._detailWrites.length, 0, "lastCollectedAt should not be updated on append failure");
         clearInterval(c.timer);
     },
 });

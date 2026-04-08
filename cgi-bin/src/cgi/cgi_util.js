@@ -287,12 +287,63 @@ class CGI {
     CGI.callService('stop', [CGI.serviceName(name)], callback);
   }
 
+  static getServiceDetail(name, key, callback) {
+    const client = CGI.createServiceClient();
+    if (!client || !client.details || typeof client.details.get !== 'function') {
+      callback(new Error('service.details.get() is not available'));
+      return;
+    }
+    try {
+      client.details.get(CGI.serviceName(name), key, callback);
+    } catch (err) {
+      callback(err);
+    }
+  }
+
+  static setServiceDetail(name, key, value, callback) {
+    const client = CGI.createServiceClient();
+    if (!client || !client.details || typeof client.details.set !== 'function') {
+      callback(new Error('service.details.set() is not available'));
+      return;
+    }
+    try {
+      client.details.set(CGI.serviceName(name), key, value, callback);
+    } catch (err) {
+      callback(err);
+    }
+  }
+
+  static deleteServiceDetail(name, key, callback) {
+    const client = CGI.createServiceClient();
+    if (!client || !client.details || typeof client.details.delete !== 'function') {
+      callback(new Error('service.details.delete() is not available'));
+      return;
+    }
+    try {
+      client.details.delete(CGI.serviceName(name), key, callback);
+    } catch (err) {
+      callback(err);
+    }
+  }
+
   static isMissingServiceError(err) {
     const message = err && err.message ? String(err.message).toLowerCase() : '';
     return message.indexOf('does not exist') >= 0
       || message.indexOf('not found') >= 0
       || message.indexOf('no such service') >= 0
       || message.indexOf('unknown service') >= 0;
+  }
+
+  static isMissingServiceDetailError(err) {
+    const message = err && err.message ? String(err.message).toLowerCase() : '';
+    return message.indexOf("detail '") >= 0 && message.indexOf('not found') >= 0;
+  }
+
+  static serviceDetailValue(result, key) {
+    if (!result || !result.details) return null;
+    return Object.prototype.hasOwnProperty.call(result.details, key)
+      ? result.details[key]
+      : null;
   }
 
   static isServiceRunningStatus(serviceInfo) {

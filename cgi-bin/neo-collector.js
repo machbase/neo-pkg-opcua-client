@@ -23,7 +23,7 @@ try {
   fs.mkdirSync(path.dirname(pidFile), { recursive: true });
   fs.writeFileSync(pidFile, String(process.pid), 'utf-8');
 
-  const collector = new Collector(config);
+  const collector = new Collector(config, { collectorName: configName });
 
   process.addShutdownHook(() => {
     logger.info('shutdown requested');

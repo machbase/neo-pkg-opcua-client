@@ -46,6 +46,7 @@ cgi-bin/
 │   ├── collector/
 │   │   ├── list.js               # GET    /cgi-bin/api/collector/list
 │   │   ├── install.js            # POST   /cgi-bin/api/collector/install?name=xxx
+│   │   ├── last-time.js          # GET    /cgi-bin/api/collector/last-time?name=xxx
 │   │   ├── start.js              # POST   /cgi-bin/api/collector/start?name=xxx
 │   │   └── stop.js               # POST   /cgi-bin/api/collector/stop?name=xxx
 │   ├── db/
@@ -89,6 +90,7 @@ cgi-bin/
 - 설정 파일 수정
 - service가 현재 `RUNNING` 일 때만 `stop -> start`
 - install되지 않았거나 running이 아니면 config만 수정
+- `db.password` 가 없거나 `""` 이면 기존 password 유지
 
 ### DELETE `/cgi-bin/api/collector?name=xxx`
 
@@ -103,6 +105,12 @@ cgi-bin/
 - config-only collector에 대해 service만 install
 - config가 없으면 실패
 - 이미 install되어 있으면 실패
+
+### GET `/cgi-bin/api/collector/last-time?name=xxx`
+
+- service details의 `lastCollectedAt` 조회 (epoch milliseconds)
+- 값이 없거나 service가 install되지 않았으면 `null`
+- collector 수집 성공 시에만 갱신되고, 실패 시에는 갱신하지 않음
 
 ### POST `/cgi-bin/api/collector/start?name=xxx`
 

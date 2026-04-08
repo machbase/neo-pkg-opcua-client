@@ -47,6 +47,9 @@
 | `nodes[].nodeId` | string | - | OPC UA 노드 ID |
 | `nodes[].name` | string | - | Machbase TAG 이름 |
 
+참고:
+- 현재 collector는 `VALUE DOUBLE` 컬럼에 저장하므로, OPC UA 값이 boolean이면 `true -> 1`, `false -> 0` 으로 변환해 저장합니다.
+
 ## db
 
 | 항목 | 타입 | 기본값 | 설명 |

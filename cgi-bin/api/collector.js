@@ -17,6 +17,20 @@ function errorMessage(err) {
   return err && err.message ? err.message : String(err);
 }
 
+function mergeConfigForUpdate(currentConfig, nextConfig) {
+  const merged = { ...nextConfig };
+
+  if (currentConfig && currentConfig.db) {
+    merged.db = { ...(nextConfig.db || {}) };
+    if (currentConfig.db.password !== undefined &&
+        (merged.db.password === undefined || merged.db.password === '')) {
+      merged.db.password = currentConfig.db.password;
+    }
+  }
+
+  return merged;
+}
+
 function POST() {
   const body = CGI.readBody();
   if (!body.name) {
@@ -52,10 +66,12 @@ function GET() {
 
 function PUT() {
   if (!name) return CGI.reply({ ok: false, reason: 'name is required' });
-  if (!CGI.readConfig(name)) {
+  const currentConfig = CGI.readConfig(name);
+  if (!currentConfig) {
     CGI.reply({ ok: false, reason: `collector '${name}' not found` });
   } else {
-    CGI.writeConfig(name, CGI.readBody());
+    const nextConfig = mergeConfigForUpdate(currentConfig, CGI.readBody());
+    CGI.writeConfig(name, nextConfig);
     CGI.restartServiceIfRunning(name, (err) => {
       if (err) {
         CGI.reply({ ok: false, reason: errorMessage(err) });

@@ -93,6 +93,7 @@ neo-tools/
     │   ├── collector/
     │   │   ├── list.js         # GET    /cgi-bin/api/collector/list
     │   │   ├── install.js      # POST   /cgi-bin/api/collector/install?name=xxx
+    │   │   ├── last-time.js    # GET    /cgi-bin/api/collector/last-time?name=xxx
     │   │   ├── start.js        # POST   /cgi-bin/api/collector/start?name=xxx
     │   │   └── stop.js         # POST   /cgi-bin/api/collector/stop?name=xxx
     │   ├── db/
@@ -144,9 +145,10 @@ machbase-neo jsh -v /app=/path/to/neo-tools /app/cgi-bin/neo-collector.js /app/c
 | GET | `/cgi-bin/api/collector/list` | 수집기 목록 조회 (`installed`, `running` 상태 포함) |
 | POST | `/cgi-bin/api/collector` | 수집기 등록 + service install (body: `{ name, config }`) |
 | GET | `/cgi-bin/api/collector?name=xxx` | 수집기 단건 조회 |
-| PUT | `/cgi-bin/api/collector?name=xxx` | 수집기 설정 수정. 실행 중이면 service stop -> start (body: config) |
+| PUT | `/cgi-bin/api/collector?name=xxx` | 수집기 설정 수정. 실행 중이면 service stop -> start. `db.password` 가 없거나 `""` 이면 기존 값을 유지 (body: config) |
 | DELETE | `/cgi-bin/api/collector?name=xxx` | 수집기 삭제 + service uninstall |
 | POST | `/cgi-bin/api/collector/install?name=xxx` | config-only 수집기의 service 설치 |
+| GET | `/cgi-bin/api/collector/last-time?name=xxx` | 마지막 성공 수집 시간 조회 (`service.details.lastCollectedAt`, epoch ms) |
 | POST | `/cgi-bin/api/collector/start?name=xxx` | 등록된 service 시작 |
 | POST | `/cgi-bin/api/collector/stop?name=xxx` | 등록된 service 종료 |
 | POST | `/cgi-bin/api/db/connect/test` | DB 접속 정보 유효성 검사 (body는 `config.db` 와 동일, `table` 제외 가능) |

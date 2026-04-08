@@ -101,6 +101,9 @@ echo '{
 # POST service install
 ../machbase-neo/machbase-neo jsh -e REQUEST_METHOD=POST -e QUERY_STRING=name=collector-a cgi-bin/api/collector/install.js
 
+# GET 마지막 성공 수집 시간
+../machbase-neo/machbase-neo jsh -e REQUEST_METHOD=GET -e QUERY_STRING=name=collector-a cgi-bin/api/collector/last-time.js
+
 # POST 시작
 ../machbase-neo/machbase-neo jsh -e REQUEST_METHOD=POST -e QUERY_STRING=name=collector-a cgi-bin/api/collector/start.js
 
@@ -290,6 +293,7 @@ echo '{"endpoint": "opc.tcp://localhost:4840", "node": "ns=0;i=85"}' | \
 ## PUT /cgi-bin/api/collector?name={name}
 
 특정 collector의 config를 수정합니다. 요청 본문 전체가 새 config로 덮어씌워집니다. collector service가 현재 실행 중이면 config 저장 후 `stop -> start` 를 수행합니다. 실행 중이 아니면 config만 갱신합니다.
+`GET /cgi-bin/api/collector` 응답에서는 `db.password` 가 제거되므로, `PUT` 요청에서 `db.password` 키가 없거나 값이 `""` 이면 기존 password를 유지합니다.
 
 **쿼리 파라미터**
 
@@ -408,6 +412,49 @@ config는 있지만 `_opc_{name}` service가 아직 없는 collector에 대해 s
 | 해당 collector 없음 | `"collector 'xxx' not found"` |
 | service 이미 설치됨 | `"collector 'xxx' service already installed"` |
 | service 설치 실패 | service controller 오류 메시지 |
+
+---
+
+## GET /cgi-bin/api/collector/last-time?name={name}
+
+collector service details에 저장된 마지막 성공 수집 시간을 반환합니다.
+
+- service details key: `lastCollectedAt`
+- 수집 성공 시에만 갱신됩니다.
+- collect 실패 시에는 이전 값이 유지됩니다.
+- details가 아직 없거나 service가 install되지 않은 경우 `null` 을 반환합니다.
+
+**응답 (성공)**
+
+```json
+{
+  "ok": true,
+  "data": {
+    "name": "collector-a",
+    "lastCollectedAt": 1775645400000
+  }
+}
+```
+
+details가 아직 없으면:
+
+```json
+{
+  "ok": true,
+  "data": {
+    "name": "collector-a",
+    "lastCollectedAt": null
+  }
+}
+```
+
+**응답 (실패)**
+
+| 조건 | reason |
+|------|--------|
+| `name` 누락 | `"name is required"` |
+| 해당 collector 없음 | `"collector 'xxx' not found"` |
+| details 조회 실패 | service controller 오류 메시지 |
 
 ---
 
