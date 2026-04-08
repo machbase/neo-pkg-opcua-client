@@ -45,7 +45,7 @@ const logger = new Logger("MyModule", {
     output: "both",
     format: "json",
     file: {
-        path: "./logs/app.log",
+        path: "./logs",
         maxSize: "10MB",
         maxFiles: 7,
         rotate: "daily",
@@ -97,13 +97,19 @@ const child = logger.child("SubModule");
 
 ## 파일 로테이션
 
+collector에서는 `file.path` 를 로그 디렉토리 경로로 해석하며 실제 파일명은 `{설정이름}.log` 입니다.
+예: collector 설정 이름이 `collector-a` 이고 `${CWD}/log` 를 입력하면 `<package_root>/log/collector-a.log` 가 생성됩니다.
+
+기존 설정과의 호환을 위해 `file.path` 가 `.../name.log` 형태면 파일 경로로 그대로 사용합니다.
+collector 외 일반 Logger 초기화에서는 별도 파일명이 주어지지 않으면 기본값 `opcua.log` 를 사용합니다.
+
 ### size 방식
 
 쓴 바이트를 누적하여 `maxSize`를 초과하면 현재 파일에 타임스탬프 접미사를 붙여 보관하고 새 파일을 생성합니다. 프로세스 시작 시 기존 파일이 있어도 새로 쓴 바이트부터 카운트합니다.
 
 ```
-app.log                          # 현재 파일
-app.log.2026-03-09T05-35-03-588Z # 로테이션된 파일
+collector-a.log                          # 현재 파일
+collector-a.2026-03-09T05-35-03-588Z.log # 로테이션된 파일
 ```
 
 ### daily 방식
@@ -111,8 +117,8 @@ app.log.2026-03-09T05-35-03-588Z # 로테이션된 파일
 날짜가 바뀌면 현재 파일에 날짜 접미사를 붙여 보관하고 새 파일을 생성합니다.
 
 ```
-app.log            # 현재 파일
-app.log.2026-03-08 # 전날 파일
+collector-a.log            # 현재 파일
+collector-a.2026-03-08.log # 전날 파일
 ```
 
 `maxFiles`를 초과하는 오래된 파일은 자동으로 삭제됩니다.

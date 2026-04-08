@@ -16,10 +16,9 @@ if (!configPath) {
 
 try {
   const config = JSON.parse(fs.readFile(configPath, 'utf-8'));
-  init(config.log);
-  const logger = getLogger('app');
-
   const configName = path.basename(configPath, '.json');
+  init(config.log, { defaultFileName: `${configName}.log` });
+  const logger = getLogger('app');
   const pidFile = path.join(ROOT, 'run', `${configName}.pid`);
   fs.mkdirSync(path.dirname(pidFile), { recursive: true });
   fs.writeFileSync(pidFile, String(process.pid), 'utf-8');

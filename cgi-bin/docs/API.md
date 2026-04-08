@@ -569,7 +569,7 @@ echo '{"endpoint": "opc.tcp://localhost:4840", "node": "ns=0;i=85"}' | \
 | `level` | string | `"INFO"` | N | 최소 로그 레벨. `DEBUG` \| `INFO` \| `WARN` \| `ERROR` |
 | `output` | string | `"console"` | N | 출력 대상. `console` \| `file` \| `both` |
 | `format` | string | `"json"` | N | 출력 형식. `json` \| `text` |
-| `file.path` | string | — | `output`이 `file`/`both`일 때 Y | 로그 파일 경로 |
+| `file.path` | string | — | `output`이 `file`/`both`일 때 Y | 로그 디렉토리 경로. collector 실행 시 실제 파일명은 `{설정이름}.log` |
 | `file.maxSize` | string | `"10MB"` | N | 파일 최대 크기. 단위: `B` \| `KB` \| `MB` \| `GB` |
 | `file.maxFiles` | number | `7` | N | 보관할 로그 파일 최대 개수 |
 | `file.rotate` | string | `"size"` | N | 로테이션 방식. `size` \| `daily` |

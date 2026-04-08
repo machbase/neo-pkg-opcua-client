@@ -1,6 +1,8 @@
 const fs = require("fs");
+const path = require("path");
 
 const LEVELS = { DEBUG: 0, INFO: 1, WARN: 2, ERROR: 3 };
+const DEFAULT_LOG_FILE_NAME = "opcua.log";
 
 // Parse size string like "10MB", "1GB", "500KB" to bytes
 function parseSize(str) {
@@ -15,6 +17,56 @@ function dateTag(date) {
     return d.getFullYear() + "-" +
         String(d.getMonth() + 1).padStart(2, "0") + "-" +
         String(d.getDate()).padStart(2, "0");
+}
+
+function getAppRoot() {
+    const scriptPath = process.argv[1] || "";
+    const marker = `${path.sep}cgi-bin${path.sep}`;
+    const idx = scriptPath.lastIndexOf(marker);
+    if (idx >= 0) {
+        return scriptPath.slice(0, idx);
+    }
+    return process.cwd ? process.cwd() : ".";
+}
+
+function resolveLogFilePath(filePath) {
+    if (typeof filePath !== "string" || filePath.indexOf("${CWD}") < 0) {
+        return filePath;
+    }
+    return path.normalize(filePath.split("${CWD}").join(getAppRoot()));
+}
+
+function looksLikeLegacyFilePath(filePath) {
+    if (typeof filePath !== "string" || filePath.length === 0) {
+        return false;
+    }
+    const base = path.basename(filePath);
+    return base.indexOf(".") >= 0;
+}
+
+function resolveLogOutputPath(filePath, defaultFileName) {
+    const resolved = resolveLogFilePath(filePath);
+    if (typeof resolved !== "string" || resolved.length === 0) {
+        return resolved;
+    }
+    if (looksLikeLegacyFilePath(resolved)) {
+        return resolved;
+    }
+    return path.join(resolved, defaultFileName || DEFAULT_LOG_FILE_NAME);
+}
+
+function normalizeLoggerConfig(config, options) {
+    if (!config || typeof config !== "object") {
+        return {};
+    }
+
+    const opts = options || {};
+    const normalized = { ...config };
+    if (config.file && typeof config.file === "object") {
+        normalized.file = { ...config.file };
+        normalized.file.path = resolveLogOutputPath(config.file.path, opts.defaultFileName);
+    }
+    return normalized;
 }
 
 class LogRotator {
@@ -42,6 +94,21 @@ class LogRotator {
         return p.slice(p.lastIndexOf("/") + 1);
     }
 
+    _splitBaseName() {
+        const base = this._basename(this.filePath);
+        const idx = base.lastIndexOf(".");
+        if (idx > 0) {
+            return {
+                stem: base.slice(0, idx),
+                ext: base.slice(idx),
+            };
+        }
+        return {
+            stem: base,
+            ext: "",
+        };
+    }
+
     _needsRotate() {
         if (this.rotate === "daily") {
             return dateTag() !== this._currentDate;
@@ -55,12 +122,25 @@ class LogRotator {
         return "." + new Date().toISOString().replace(/[:.]/g, "-");
     }
 
+    _rotatedFilePath() {
+        const dir = this._dirname(this.filePath);
+        const parts = this._splitBaseName();
+        const rotated = parts.stem + this._rotateSuffix() + parts.ext;
+        return dir ? dir + "/" + rotated : rotated;
+    }
+
     _purgeOldFiles() {
         const dir = this._dirname(this.filePath) || ".";
         const base = this._basename(this.filePath);
+        const parts = this._splitBaseName();
         try {
             const files = fs.readdir(dir)
-                .filter(f => f !== base && f.startsWith(base + "."))
+                .filter(f => {
+                    if (f === "." || f === ".." || f === base) return false;
+                    if (!f.startsWith(parts.stem + ".")) return false;
+                    if (parts.ext && !f.endsWith(parts.ext)) return false;
+                    return true;
+                })
                 .sort();
             while (files.length >= this.maxFiles) {
                 const oldest = files.shift();
@@ -70,8 +150,7 @@ class LogRotator {
     }
 
     rotate_() {
-        const suffix = this._rotateSuffix();
-        try { fs.rename(this.filePath, this.filePath + suffix); } catch (_) {}
+        try { fs.rename(this.filePath, this._rotatedFilePath()); } catch (_) {}
         this._purgeOldFiles();
         this._currentDate = dateTag();
     }
@@ -146,8 +225,8 @@ class Logger {
 // 동일 객체를 in-place로 갱신하여 기존 Logger 인스턴스에도 즉시 반영
 const _rootConfig = {};
 
-function init(config) {
-    const cfg = config || {};
+function init(config, options) {
+    const cfg = normalizeLoggerConfig(config, options);
     Object.keys(_rootConfig).forEach(k => delete _rootConfig[k]);
     Object.assign(_rootConfig, cfg);
 }

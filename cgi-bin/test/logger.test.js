@@ -79,58 +79,96 @@ runner.run("Logger", {
         init({});
     },
 
-    "file output writes to file": (t) => {
+    "init() resolves ${CWD} in file path to cgi-bin parent": (t) => {
+        init({
+            output: "file",
+            file: { path: "${CWD}/logs", maxSize: "1MB", maxFiles: 3, rotate: "size" },
+        });
+        const logger = getLogger("root-test");
+        const resolved = logger._config.file.path;
+        t.assert(resolved.indexOf("${CWD}") < 0, "placeholder should be resolved");
+        t.assert(resolved.indexOf("/cgi-bin/") < 0, "resolved path should point to app root, not cgi-bin");
+        t.assert(resolved.indexOf("/logs/opcua.log") >= 0, "resolved path should append default file name");
+        init({});
+    },
+
+    "legacy file path is still preserved": (t) => {
+        init({
+            output: "file",
+            file: { path: "${CWD}/logs/legacy.log", maxSize: "1MB", maxFiles: 3, rotate: "size" },
+        });
+        const logger = getLogger("root-test");
+        t.assert(logger._config.file.path.indexOf("/logs/legacy.log") >= 0, "legacy file path should be preserved");
+        init({});
+    },
+
+    "init() can use collector-specific default file name": (t) => {
+        init({
+            output: "file",
+            file: { path: "${CWD}/logs", maxSize: "1MB", maxFiles: 3, rotate: "size" },
+        }, {
+            defaultFileName: "collector-a.log",
+        });
+        const logger = getLogger("root-test");
+        t.assert(logger._config.file.path.indexOf("/logs/collector-a.log") >= 0, "collector-specific file name should be used");
+        init({});
+    },
+
+    "file output writes to default log file under directory": (t) => {
         const fs = require("fs");
-        const path = "/app/logs/test-logger.log";
-        try { fs.unlink(path); } catch (_) {}
+        const dir = "/app/logs/test-logger-dir";
+        const logPath = dir + "/opcua.log";
+        try { fs.unlink(logPath); } catch (_) {}
 
         const logger = new Logger("test", {
             level: "INFO",
             output: "file",
             format: "json",
-            file: { path, maxSize: "1MB", maxFiles: 3, rotate: "size" },
+            file: { path: dir, maxSize: "1MB", maxFiles: 3, rotate: "size" },
         });
         logger.info("file test");
 
-        const content = fs.readFile(path, "utf-8");
+        const content = fs.readFile(logPath, "utf-8");
         const entry = JSON.parse(content.trim());
         t.assertEqual(entry.level, "INFO");
         t.assertEqual(entry.message, "file test");
 
-        try { fs.unlink(path); } catch (_) {}
+        try { fs.unlink(logPath); } catch (_) {}
     },
 
-    "both output writes to console and file": (t) => {
+    "both output writes to console and default log file": (t) => {
         const fs = require("fs");
-        const path = "/app/logs/test-logger-both.log";
-        try { fs.unlink(path); } catch (_) {}
+        const dir = "/app/logs/test-logger-both";
+        const logPath = dir + "/opcua.log";
+        try { fs.unlink(logPath); } catch (_) {}
 
         const logger = new Logger("test", {
             level: "INFO",
             output: "both",
             format: "json",
-            file: { path, maxSize: "1MB", maxFiles: 3, rotate: "size" },
+            file: { path: dir, maxSize: "1MB", maxFiles: 3, rotate: "size" },
         });
         const lines = capture(() => logger.info("both test"));
         t.assertEqual(lines.length, 1, "should output to console");
 
-        const content = fs.readFile(path, "utf-8");
+        const content = fs.readFile(logPath, "utf-8");
         t.assert(content.indexOf("both test") >= 0, "should write to file");
 
-        try { fs.unlink(path); } catch (_) {}
+        try { fs.unlink(logPath); } catch (_) {}
     },
 
-    "size rotate triggers based on written bytes": (t) => {
+    "size rotate triggers on default log file under directory": (t) => {
         const fs = require("fs");
-        const path = "/app/logs/test-size-rotate.log";
-        try { fs.unlink(path); } catch (_) {}
+        const dir = "/app/logs/test-size-rotate";
+        const logPath = dir + "/opcua.log";
+        try { fs.unlink(logPath); } catch (_) {}
 
         // maxSize 100 bytes — small enough to trigger rotation after a few writes
         const logger = new Logger("test", {
             level: "INFO",
             output: "file",
             format: "json",
-            file: { path, maxSize: "100B", maxFiles: 3, rotate: "size" },
+            file: { path: dir, maxSize: "100B", maxFiles: 3, rotate: "size" },
         });
 
         // Write enough to exceed 100 bytes
@@ -139,14 +177,15 @@ runner.run("Logger", {
         logger.info("line three");
 
         // After rotation, original path should exist (new file after rotate)
-        const content = fs.readFile(path, "utf-8");
+        const content = fs.readFile(logPath, "utf-8");
         t.assert(typeof content === "string", "log file should exist after rotation");
+        const rotated = fs.readdir(dir).filter(f => /^opcua\.\d{4}-\d{2}-\d{2}T.*\.log$/.test(f));
+        t.assert(rotated.length >= 1, "rotated file should use stem.timestamp.ext format");
 
         // Cleanup
-        try { fs.unlink(path); } catch (_) {}
-        const dir = "/app/logs";
+        try { fs.unlink(logPath); } catch (_) {}
         try {
-            const files = fs.readdir(dir).filter(f => f.startsWith("test-size-rotate.log."));
+            const files = fs.readdir(dir).filter(f => /^opcua\..*\.log$/.test(f));
             files.forEach(f => { try { fs.unlink(dir + "/" + f); } catch (_) {} });
         } catch (_) {}
     },
