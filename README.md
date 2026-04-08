@@ -137,6 +137,7 @@ machbase-neo jsh -v /app=/path/to/neo-tools /app/cgi-bin/neo-collector.js /app/c
 | GET | `/cgi-bin/api/collector?name=xxx` | 수집기 단건 조회 |
 | PUT | `/cgi-bin/api/collector?name=xxx` | 수집기 설정 수정. 실행 중이면 service stop -> start (body: config) |
 | DELETE | `/cgi-bin/api/collector?name=xxx` | 수집기 삭제 + service uninstall |
+| POST | `/cgi-bin/api/collector/install?name=xxx` | config-only 수집기의 service 설치 |
 | POST | `/cgi-bin/api/collector/start?name=xxx` | 등록된 service 시작 |
 | POST | `/cgi-bin/api/collector/stop?name=xxx` | 등록된 service 종료 |
 | POST | `/cgi-bin/api/node/children` | OPC UA 노드 자식 목록 조회 (body: `{ endpoint, node }`) |

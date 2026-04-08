@@ -24,24 +24,6 @@ function uniqueNames() {
   return result.sort();
 }
 
-function mergeNames(configNames, serviceInfos) {
-  const names = configNames.slice();
-  const seen = {};
-
-  names.forEach((name) => {
-    seen[name] = true;
-  });
-
-  (serviceInfos || []).forEach((serviceInfo) => {
-    const name = CGI.serviceInfoName(serviceInfo);
-    if (!name || seen[name]) return;
-    seen[name] = true;
-    names.push(name);
-  });
-
-  return names.sort();
-}
-
 function serviceInfoMap(serviceInfos) {
   const result = {};
   (serviceInfos || []).forEach((serviceInfo) => {
@@ -53,7 +35,7 @@ function serviceInfoMap(serviceInfos) {
   return result;
 }
 
-function replyStatuses(names, index, data, servicesByName) {
+function replyStatuses(names, index, data, servicesByName, hasServiceSnapshot) {
   if (index >= names.length) {
     CGI.reply({ ok: true, data });
     return;
@@ -67,7 +49,17 @@ function replyStatuses(names, index, data, servicesByName) {
       installed: true,
       running: CGI.isServiceRunningStatus(listedService),
     });
-    replyStatuses(names, index + 1, data, servicesByName);
+    replyStatuses(names, index + 1, data, servicesByName, hasServiceSnapshot);
+    return;
+  }
+
+  if (hasServiceSnapshot) {
+    data.push({
+      name,
+      installed: false,
+      running: CGI.isRunning(name),
+    });
+    replyStatuses(names, index + 1, data, servicesByName, hasServiceSnapshot);
     return;
   }
 
@@ -80,7 +72,7 @@ function replyStatuses(names, index, data, servicesByName) {
           installed: false,
           running: CGI.isRunning(name),
         });
-        replyStatuses(names, index + 1, data, servicesByName);
+        replyStatuses(names, index + 1, data, servicesByName, hasServiceSnapshot);
         return;
       }
 
@@ -89,7 +81,7 @@ function replyStatuses(names, index, data, servicesByName) {
         installed: true,
         running: CGI.isRunning(name),
       });
-      replyStatuses(names, index + 1, data, servicesByName);
+      replyStatuses(names, index + 1, data, servicesByName, hasServiceSnapshot);
       return;
     }
 
@@ -98,18 +90,17 @@ function replyStatuses(names, index, data, servicesByName) {
       installed: true,
       running: CGI.isServiceRunningStatus(serviceInfo),
     });
-    replyStatuses(names, index + 1, data, servicesByName);
+    replyStatuses(names, index + 1, data, servicesByName, hasServiceSnapshot);
   });
 }
 
 function GET() {
   CGI.listServices((err, serviceInfos) => {
     if (err) {
-      replyStatuses(uniqueNames(), 0, [], {});
+      replyStatuses(uniqueNames(), 0, [], {}, false);
       return;
     }
-    const names = mergeNames(uniqueNames(), serviceInfos);
-    replyStatuses(names, 0, [], serviceInfoMap(serviceInfos));
+    replyStatuses(uniqueNames(), 0, [], serviceInfoMap(serviceInfos), true);
   });
 }
 

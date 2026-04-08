@@ -98,6 +98,9 @@ echo '{
 # DELETE 삭제
 ../machbase-neo/machbase-neo jsh -e REQUEST_METHOD=DELETE -e QUERY_STRING=name=collector-a cgi-bin/api/collector.js
 
+# POST service install
+../machbase-neo/machbase-neo jsh -e REQUEST_METHOD=POST -e QUERY_STRING=name=collector-a cgi-bin/api/collector/install.js
+
 # POST 시작
 ../machbase-neo/machbase-neo jsh -e REQUEST_METHOD=POST -e QUERY_STRING=name=collector-a cgi-bin/api/collector/start.js
 
@@ -129,7 +132,7 @@ echo '{"endpoint": "opc.tcp://localhost:4840", "node": "ns=0;i=85"}' | \
 
 ## GET /cgi-bin/api/collector/list
 
-전체 collector 목록과 각 service 설치 여부, 실행 상태를 반환합니다.
+`conf.d/{name}.json` 이 존재하는 collector 목록을 반환합니다. `_opc_{name}` service에 등록되어 있지 않은 항목도 포함되며, 이 경우 `installed` 는 `false` 입니다.
 
 **응답**
 
@@ -146,7 +149,7 @@ echo '{"endpoint": "opc.tcp://localhost:4840", "node": "ns=0;i=85"}' | \
 }
 ```
 
-> `installed` 는 `_opc_{name}` service definition 존재 여부를 기준으로 판단합니다.
+> config만 있고 service에 등록되지 않은 항목은 `installed: false` 로 반환됩니다.
 > `running` 은 service status를 우선 사용하고, 필요 시 pid 파일 상태를 fallback으로 사용합니다.
 
 ---
@@ -365,6 +368,27 @@ echo '{"endpoint": "opc.tcp://localhost:4840", "node": "ns=0;i=85"}' | \
 | `name` 누락 | `"name is required"` |
 | 해당 collector 없음 | `"collector 'xxx' not found"` |
 | service 시작 실패 | service controller 오류 메시지 |
+
+---
+
+## POST /cgi-bin/api/collector/install?name={name}
+
+config는 있지만 `_opc_{name}` service가 아직 없는 collector에 대해 service install만 수행합니다.
+
+**응답 (성공)**
+
+```json
+{ "ok": true, "data": { "name": "collector-a" } }
+```
+
+**응답 (실패)**
+
+| 조건 | reason |
+|------|--------|
+| `name` 누락 | `"name is required"` |
+| 해당 collector 없음 | `"collector 'xxx' not found"` |
+| service 이미 설치됨 | `"collector 'xxx' service already installed"` |
+| service 설치 실패 | service controller 오류 메시지 |
 
 ---
 
