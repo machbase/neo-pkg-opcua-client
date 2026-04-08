@@ -10,7 +10,7 @@ import Toast from './components/common/Toast'
 
 export default function IndexApp() {
   const location = useLocation()
-  const { collectors, toggleCollector, removeCollector, refreshCollectors } = useCollectors()
+  const { collectors, toggleCollector, installCollector, removeCollector, refreshCollectors } = useCollectors()
   const { selectedCollectorId, notify } = useApp()
   const [detail, setDetail] = useState(null)
 
@@ -31,7 +31,7 @@ export default function IndexApp() {
   return (
     <>
       <div className="flex max-lg:flex-col overflow-hidden bg-surface-alt text-on-surface antialiased">
-        <Sidebar collectors={collectors} onToggleCollector={toggleCollector} onRefresh={refreshCollectors} />
+        <Sidebar collectors={collectors} onToggleCollector={toggleCollector} onInstallCollector={installCollector} onRefresh={refreshCollectors} />
         <main className="ml-64 max-lg:ml-0 flex-1 h-screen overflow-hidden bg-surface-alt">
           <Routes>
             <Route path="/" element={

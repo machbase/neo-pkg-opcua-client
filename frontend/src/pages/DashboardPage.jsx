@@ -134,14 +134,6 @@ export default function DashboardPage({ collectors, detail, onDelete }) {
                             <Icon name="account_tree" className="text-primary" />
                             Monitored Nodes
                             <span className="badge badge-primary ml-2">{nodes.length} Nodes</span>
-                            <button
-                                type="button"
-                                disabled={collector.status === "running"}
-                                onClick={() => navigate(`/collectors/${encodeURIComponent(collector.id)}/edit`)}
-                                className="ml-auto text-primary text-xs font-semibold uppercase tracking-wide hover:text-primary-hover transition-colors"
-                            >
-                                Manage All
-                            </button>
                         </div>
                         {nodes.length > 0 ? (
                             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-3">

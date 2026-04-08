@@ -82,15 +82,28 @@ export default function SideApp() {
                             className={`side-item ${selectedCollectorId === c.id ? "active" : ""}`}
                         >
                             <span className="flex-1 truncate min-w-0">{c.id}</span>
-                            <button
-                                onClick={(e) => {
-                                    e.stopPropagation();
-                                    send("toggleCollector", { collectorId: c.id });
-                                }}
-                                className={`switch shrink-0 ml-1 ${c.status === "running" ? "active" : ""}`}
-                            >
-                                <div className="switch-thumb" />
-                            </button>
+                            {c.installed === false ? (
+                                <button
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        send("installCollector", { collectorId: c.id });
+                                    }}
+                                    className="btn-icon-sm shrink-0 ml-1 tooltip"
+                                    data-tooltip="Install"
+                                >
+                                    <Icon name="download" className="icon-sm" />
+                                </button>
+                            ) : (
+                                <button
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        send("toggleCollector", { collectorId: c.id });
+                                    }}
+                                    className={`switch shrink-0 ml-1 ${c.status === "running" ? "active" : ""}`}
+                                >
+                                    <div className="switch-thumb" />
+                                </button>
+                            )}
                         </div>
                     ))}
                     {collectors.length === 0 && <p className="side-empty">No collectors</p>}

@@ -3,7 +3,7 @@ import { request } from './client'
 const BASE = '/cgi-bin/api/collector'
 
 function mapListItem(item) {
-  return { ...item, id: item.name, status: item.running ? 'running' : 'stopped' }
+  return { ...item, id: item.name, installed: item.installed, status: item.running ? 'running' : 'stopped' }
 }
 
 export const listCollectors = async () => {
@@ -30,6 +30,15 @@ export const startCollector = (name) =>
 
 export const stopCollector = (name) =>
   request('POST', `${BASE}/stop?name=${encodeURIComponent(name)}`)
+
+export const installCollector = (name) =>
+  request('POST', `${BASE}/install?name=${encodeURIComponent(name)}`)
+
+export const testDbConnection = (db) =>
+  request('POST', '/cgi-bin/api/db/connect/test', db)
+
+export const createDbTable = (db) =>
+  request('POST', '/cgi-bin/api/db/table/create', db)
 
 export const browseNodeChildren = (endpoint, nodeId, nodeClassMask = 0) =>
   request('POST', '/cgi-bin/api/node/children', { endpoint, node: nodeId, nodeClassMask })

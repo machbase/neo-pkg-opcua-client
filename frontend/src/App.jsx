@@ -13,7 +13,7 @@ export default function App() {
   const navigate = useNavigate()
   const location = useLocation()
   const { selectedCollectorId, setSelectedCollectorId, notify } = useApp()
-  const { collectors, toggleCollector, removeCollector, refreshCollectors } = useCollectors()
+  const { collectors, toggleCollector, installCollector, removeCollector, refreshCollectors } = useCollectors()
   const [detail, setDetail] = useState(null)
 
   const fetchDetail = useCallback((id) => {
@@ -43,6 +43,10 @@ export default function App() {
     toggleCollector: (payload) => {
       const c = collectors.find(c => c.id === payload.collectorId)
       if (c) toggleCollector(c)
+    },
+    installCollector: (payload) => {
+      const c = collectors.find(c => c.id === payload.collectorId)
+      if (c) installCollector(c)
     },
     requestReady: () => {
       const ch = channelRef.current

@@ -62,5 +62,18 @@ export default function useCollectors() {
         [fetchCollectors, notify]
     );
 
-    return { collectors, loading, toggleCollector, removeCollector, refreshCollectors: fetchCollectors };
+    const installCollector = useCallback(
+        async (collector) => {
+            try {
+                await api.installCollector(collector.id);
+                notify(`Collector '${collector.id}' installed`, "success");
+                await fetchCollectors();
+            } catch (e) {
+                notify(e.reason || e.message, "error");
+            }
+        },
+        [fetchCollectors, notify]
+    );
+
+    return { collectors, loading, toggleCollector, installCollector, removeCollector, refreshCollectors: fetchCollectors };
 }

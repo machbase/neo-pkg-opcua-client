@@ -6,6 +6,7 @@ import Icon from '../components/common/Icon'
 import OpcuaSection from '../components/collectors/OpcuaSection'
 import DbSection from '../components/collectors/DbSection'
 import LogSection from '../components/collectors/LogSection'
+import { koToEn } from '../utils/korean'
 
 const DEFAULTS = {
   name: '',
@@ -27,7 +28,7 @@ const DEFAULTS = {
     output: 'console',
     format: 'json',
     file: {
-      path: '',
+      path: '${CWD}/logs',
       maxSize: '10MB',
       maxFiles: 7,
       rotate: 'size',
@@ -187,7 +188,7 @@ export default function CollectorFormPage({ detail, onRefresh }) {
                       required
                       disabled={isEdit}
                       value={form.name}
-                      onChange={e => update('name', e.target.value)}
+                      onChange={e => update('name', koToEn(e.target.value).replace(/[^a-zA-Z0-9_-]/g, ''))}
                       className="w-full disabled:opacity-50"
                       placeholder="e.g. FLOW-WEST-001"
                     />
