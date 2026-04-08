@@ -92,8 +92,14 @@ neo-tools/
     │   ├── collector.js        # POST/GET/PUT/DELETE  /cgi-bin/api/collector
     │   ├── collector/
     │   │   ├── list.js         # GET    /cgi-bin/api/collector/list
+    │   │   ├── install.js      # POST   /cgi-bin/api/collector/install?name=xxx
     │   │   ├── start.js        # POST   /cgi-bin/api/collector/start?name=xxx
     │   │   └── stop.js         # POST   /cgi-bin/api/collector/stop?name=xxx
+    │   ├── db/
+    │   │   ├── connect/
+    │   │   │   └── test.js     # POST   /cgi-bin/api/db/connect/test
+    │   │   └── table/
+    │   │       └── create.js   # POST   /cgi-bin/api/db/table/create
     │   └── node/
     │       ├── children.js     # POST   /cgi-bin/api/node/children
     │       └── children-native.js # POST /cgi-bin/api/node/children-native
@@ -105,7 +111,8 @@ neo-tools/
     │   ├── collector.js            # Collector 클래스
     │   ├── logger.js               # Logger / LogRotator 클래스
     │   ├── db/
-    │   │   └── machbase-appender.js  # MachbaseAppender 클래스
+    │   │   ├── machbase-appender.js  # MachbaseAppender 클래스
+    │   │   └── machbase-client.js    # DB connect / exec helper
     │   └── opcua/
     │       └── opcua-client.js       # OpcuaClient 클래스 (read/write/browse/browseNext/children)
     ├── test/
@@ -113,6 +120,7 @@ neo-tools/
     │   ├── runner.js             # 테스트 러너
     │   ├── logger.test.js
     │   ├── opcua-client.test.js
+    │   ├── machbase-client.test.js
     │   ├── machbase-appender.test.js
     │   └── collector.test.js
     └── docs/
@@ -141,6 +149,8 @@ machbase-neo jsh -v /app=/path/to/neo-tools /app/cgi-bin/neo-collector.js /app/c
 | POST | `/cgi-bin/api/collector/install?name=xxx` | config-only 수집기의 service 설치 |
 | POST | `/cgi-bin/api/collector/start?name=xxx` | 등록된 service 시작 |
 | POST | `/cgi-bin/api/collector/stop?name=xxx` | 등록된 service 종료 |
+| POST | `/cgi-bin/api/db/connect/test` | DB 접속 정보 유효성 검사 (body는 `config.db` 와 동일, `table` 제외 가능) |
+| POST | `/cgi-bin/api/db/table/create` | TAG 테이블 생성 (body는 `config.db` 와 동일) |
 | POST | `/cgi-bin/api/node/children` | OPC UA 노드 browse reference 목록 조회. UI 탐색용 endpoint (body: `{ endpoint, node }`) |
 | POST | `/cgi-bin/api/node/children-native` | JSH `opcua.children()` 원형 결과 조회용 endpoint (body: `{ endpoint, node }`) |
 

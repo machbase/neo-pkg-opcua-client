@@ -34,6 +34,13 @@ export default function DbSection({ form, update }) {
                     <label className="form-label">Password</label>
                     <input type="password" value={form.db.password} onChange={(e) => update("db.password", e.target.value)} className="w-full" placeholder="Enter password" />
                 </div>
+
+                <div className="help-text pt-5 border-t border-border">
+                    <div>DB utility APIs</div>
+                    <div><code>POST /cgi-bin/api/db/connect/test</code> : validate DB connection</div>
+                    <div><code>POST /cgi-bin/api/db/table/create</code> : create TAG table using the current DB fields</div>
+                    <div>Request body uses the same fields as this section.</div>
+                </div>
             </div>
         </div>
     );

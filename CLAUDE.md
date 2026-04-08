@@ -9,6 +9,7 @@ Machbase Neo JSH 환경에서 OPC UA 서버 데이터를 주기적으로 읽어 
 1. collector 설정 CRUD
 2. Machbase Neo `service` 기반 lifecycle 제어
 3. OPC UA node browse / read 와 Machbase append
+4. DB connection test / TAG table create utility API
 
 ## 현재 상태 요약
 
@@ -47,6 +48,11 @@ cgi-bin/
 │   │   ├── install.js            # POST   /cgi-bin/api/collector/install?name=xxx
 │   │   ├── start.js              # POST   /cgi-bin/api/collector/start?name=xxx
 │   │   └── stop.js               # POST   /cgi-bin/api/collector/stop?name=xxx
+│   ├── db/
+│   │   ├── connect/
+│   │   │   └── test.js           # POST   /cgi-bin/api/db/connect/test
+│   │   └── table/
+│   │       └── create.js         # POST   /cgi-bin/api/db/table/create
 │   └── node/
 │       ├── children.js           # POST   /cgi-bin/api/node/children
 │       └── children-native.js    # POST   /cgi-bin/api/node/children-native
@@ -54,11 +60,13 @@ cgi-bin/
 │   ├── collector.js              # polling loop
 │   ├── logger.js                 # logger / rotator
 │   ├── cgi/cgi_util.js           # config, pid, service helper
+│   ├── db/machbase-client.js     # DB connect / query / create helper
 │   ├── db/machbase-appender.js   # Machbase append wrapper
 │   └── opcua/opcua-client.js     # opcua wrapper
 └── test/
     ├── index.js
     ├── runner.js
+    ├── machbase-client.test.js
     └── *.test.js
 ```
 
@@ -103,6 +111,28 @@ cgi-bin/
 ### POST `/cgi-bin/api/collector/stop?name=xxx`
 
 - install된 service stop
+
+### POST `/cgi-bin/api/db/connect/test`
+
+- body는 `config.db` 와 같은 구조
+- `table` 없이 DB 연결만 확인
+- 성공 시 `{ connected: true, host, port, user }`
+
+### POST `/cgi-bin/api/db/table/create`
+
+- body는 `config.db` 와 같은 구조
+- 지정한 DB에 연결해 TAG 테이블 생성
+- 생성 SQL은 아래 구조로 고정
+
+```sql
+CREATE TAG TABLE ${table} (
+  NAME VARCHAR(100) PRIMARY KEY,
+  TIME DATETIME BASETIME,
+  VALUE DOUBLE SUMMARIZED
+);
+```
+
+- 같은 이름의 테이블이 이미 있으면 에러 반환
 
 ### GET `/cgi-bin/api/collector/list`
 
