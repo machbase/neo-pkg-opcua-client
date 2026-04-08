@@ -95,7 +95,8 @@ neo-tools/
     │   │   ├── start.js        # POST   /cgi-bin/api/collector/start?name=xxx
     │   │   └── stop.js         # POST   /cgi-bin/api/collector/stop?name=xxx
     │   └── node/
-    │       └── children.js     # POST   /cgi-bin/api/node/children
+    │       ├── children.js     # POST   /cgi-bin/api/node/children
+    │       └── children-native.js # POST /cgi-bin/api/node/children-native
     ├── conf.d/
     │   └── collector-a.json    # 수집기 설정 파일
     ├── src/
@@ -140,7 +141,8 @@ machbase-neo jsh -v /app=/path/to/neo-tools /app/cgi-bin/neo-collector.js /app/c
 | POST | `/cgi-bin/api/collector/install?name=xxx` | config-only 수집기의 service 설치 |
 | POST | `/cgi-bin/api/collector/start?name=xxx` | 등록된 service 시작 |
 | POST | `/cgi-bin/api/collector/stop?name=xxx` | 등록된 service 종료 |
-| POST | `/cgi-bin/api/node/children` | OPC UA 노드 자식 목록 조회 (body: `{ endpoint, node }`) |
+| POST | `/cgi-bin/api/node/children` | OPC UA 노드 browse reference 목록 조회. UI 탐색용 endpoint (body: `{ endpoint, node }`) |
+| POST | `/cgi-bin/api/node/children-native` | JSH `opcua.children()` 원형 결과 조회용 endpoint (body: `{ endpoint, node }`) |
 
 ## 테스트
 

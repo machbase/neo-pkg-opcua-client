@@ -1,8 +1,8 @@
 /**
- * POST /cgi-bin/api/node/children
+ * POST /cgi-bin/api/node/children-native
  *
- * Temporary frontend test route.
- * Returns raw browse references for a single node.
+ * Legacy/native children route.
+ * Calls opcua.Client#children() directly.
  *
  * body: {
  *   endpoint: string,          // OPC UA 서버 주소 (예: opc.tcp://localhost:4840)
@@ -35,16 +35,8 @@ function POST() {
         return;
     }
     try {
-        const request = {
-            nodes: [body.node],
-        };
-        if (typeof body.nodeClassMask === 'number') {
-            request.nodeClassMask = body.nodeClassMask;
-        }
-
-        const results = client.browse(request);
-        const data = results && results[0] && results[0].references ? results[0].references : [];
-        CGI.reply({ ok: true, data: data });
+        const results = client.children(body);
+        CGI.reply({ ok: true, data: results });
     } catch (e) {
         CGI.reply({ ok: false, reason: e.message });
     } finally {

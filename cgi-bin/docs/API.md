@@ -416,7 +416,73 @@ config는 있지만 `_opc_{name}` service가 아직 없는 collector에 대해 s
 
 ## POST /cgi-bin/api/node/children
 
-OPC UA 서버에 연결하여 지정한 노드의 직계 자식 노드 목록을 반환합니다.
+OPC UA 서버에 연결하여 지정한 노드의 browse reference 목록을 반환합니다.
+현재 프론트엔드 node browser는 이 endpoint를 사용합니다.
+
+`opcua.children()` 는 일부 서버/노드 조합에서 Variable 노드를 누락할 수 있어, UI 탐색용 endpoint는 `opcua.browse()` 기반으로 구현되어 있습니다.
+예를 들어 `ns=1;s=Plant1.Line1` 노드에서는 `browse()` 에서 `Temperature`, `Pressure`, `Counter` 가 보이지만, `children()` 에서는 누락되는 현상을 확인했습니다.
+
+**요청 본문**
+
+```json
+{
+  "endpoint": "opc.tcp://192.168.1.100:53530/OPCUA/SimulationServer",
+  "node": "ns=0;i=85",
+  "nodeClassMask": 0
+}
+```
+
+| 필드 | 타입 | 필수 | 설명 |
+|------|------|------|------|
+| `endpoint` | string | Y | OPC UA 서버 주소 |
+| `node` | string | Y | browse reference를 조회할 OPC UA 노드 ID |
+| `nodeClassMask` | number | N | 반환할 노드 클래스 비트마스크 (`opcua.NodeClass`) |
+
+**응답 (성공)**
+
+```json
+{
+  "ok": true,
+  "data": [
+    {
+      "nodeId": "ns=3;i=1001",
+      "browseName": "Simulation",
+      "displayName": "Simulation",
+      "nodeClass": 1,
+      "referenceTypeId": "ns=0;i=35",
+      "isForward": true,
+      "typeDefinition": "ns=0;i=61"
+    }
+  ]
+}
+```
+
+**응답 (실패)**
+
+| 조건 | reason |
+|------|--------|
+| `endpoint` 누락 | `"endpoint is required"` |
+| `node` 누락 | `"node is required"` |
+| 연결 실패 | `"connect failed"` |
+| 조회 실패 | browse 오류 메시지 |
+
+**jsh 직접 실행 (테스트용)**
+
+```bash
+echo '{"endpoint": "opc.tcp://localhost:4840", "node": "ns=0;i=85"}' | \
+  ../machbase-neo/machbase-neo jsh -e REQUEST_METHOD=POST cgi-bin/api/node/children.js
+```
+
+---
+
+## POST /cgi-bin/api/node/children-native
+
+OPC UA 서버에 연결하여 JSH `opcua.Client#children()` 결과를 그대로 반환합니다.
+JSH native 동작을 확인하거나 `browse()` 결과와 비교할 때 사용합니다.
+
+주의:
+- 일부 서버/노드 조합에서는 `browse()` 에 비해 Variable 노드가 누락될 수 있습니다.
+- `ns=1;s=Plant1.Line1` 테스트 서버에서는 `children-native` 가 `Line1` 만 반환하고, `Temperature`, `Pressure`, `Counter` 는 반환하지 않았습니다.
 
 **요청 본문**
 
@@ -460,13 +526,13 @@ OPC UA 서버에 연결하여 지정한 노드의 직계 자식 노드 목록을
 | `endpoint` 누락 | `"endpoint is required"` |
 | `node` 누락 | `"node is required"` |
 | 연결 실패 | `"connect failed"` |
-| 조회 실패 | `"children failed"` |
+| 조회 실패 | native children 오류 메시지 |
 
 **jsh 직접 실행 (테스트용)**
 
 ```bash
 echo '{"endpoint": "opc.tcp://localhost:4840", "node": "ns=0;i=85"}' | \
-  ../machbase-neo/machbase-neo jsh -e REQUEST_METHOD=POST cgi-bin/api/node/children.js
+  ../machbase-neo/machbase-neo jsh -e REQUEST_METHOD=POST cgi-bin/api/node/children-native.js
 ```
 
 ---
