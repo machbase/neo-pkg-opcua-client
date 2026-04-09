@@ -117,7 +117,7 @@ echo '{
   "user": "sys",
   "password": "manager"
 }' | \
-  ../machbase-neo/machbase-neo jsh -e REQUEST_METHOD=POST cgi-bin/api/db/connect/test.js
+  ../machbase-neo/machbase-neo jsh -e REQUEST_METHOD=POST cgi-bin/api/db/connect.js
 
 # POST DB table create
 echo '{
@@ -603,7 +603,7 @@ echo '{"endpoint": "opc.tcp://localhost:4840", "node": "ns=0;i=85"}' | \
 
 ---
 
-## POST /cgi-bin/api/db/connect/test
+## POST /cgi-bin/api/db/connect
 
 입력된 DB 접속 정보로 Machbase 연결을 한 번 시도해 유효성을 검사합니다.
 
@@ -654,7 +654,7 @@ echo '{
   "user": "sys",
   "password": "manager"
 }' | \
-  ../machbase-neo/machbase-neo jsh -e REQUEST_METHOD=POST cgi-bin/api/db/connect/test.js
+  ../machbase-neo/machbase-neo jsh -e REQUEST_METHOD=POST cgi-bin/api/db/connect.js
 ```
 
 ---

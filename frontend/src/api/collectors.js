@@ -35,7 +35,7 @@ export const installCollector = (name) =>
   request('POST', `${BASE}/install?name=${encodeURIComponent(name)}`)
 
 export const testDbConnection = (db) =>
-  request('POST', '/cgi-bin/api/db/connect/test', db)
+  request('POST', '/cgi-bin/api/db/connect', db)
 
 export const createDbTable = (db) =>
   request('POST', '/cgi-bin/api/db/table/create', db)

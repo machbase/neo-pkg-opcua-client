@@ -97,8 +97,7 @@ neo-tools/
     │   │   ├── start.js        # POST   /cgi-bin/api/collector/start?name=xxx
     │   │   └── stop.js         # POST   /cgi-bin/api/collector/stop?name=xxx
     │   ├── db/
-    │   │   ├── connect/
-    │   │   │   └── test.js     # POST   /cgi-bin/api/db/connect/test
+    │   │   ├── connect.js      # POST   /cgi-bin/api/db/connect
     │   │   └── table/
     │   │       └── create.js   # POST   /cgi-bin/api/db/table/create
     │   └── node/
@@ -151,7 +150,7 @@ machbase-neo jsh -v /app=/path/to/neo-tools /app/cgi-bin/neo-collector.js /app/c
 | GET | `/cgi-bin/api/collector/last-time?name=xxx` | 마지막 성공 수집 시간 조회 (`service.details.lastCollectedAt`, epoch ms) |
 | POST | `/cgi-bin/api/collector/start?name=xxx` | 등록된 service 시작 |
 | POST | `/cgi-bin/api/collector/stop?name=xxx` | 등록된 service 종료 |
-| POST | `/cgi-bin/api/db/connect/test` | DB 접속 정보 유효성 검사 (body는 `config.db` 와 동일, `table` 제외 가능) |
+| POST | `/cgi-bin/api/db/connect` | DB 접속 정보 유효성 검사 (body는 `config.db` 와 동일, `table` 제외 가능) |
 | POST | `/cgi-bin/api/db/table/create` | TAG 테이블 생성 (body는 `config.db` 와 동일) |
 | POST | `/cgi-bin/api/node/children` | OPC UA 노드 browse reference 목록 조회. UI 탐색용 endpoint (body: `{ endpoint, node }`) |
 | POST | `/cgi-bin/api/node/children-native` | JSH `opcua.children()` 원형 결과 조회용 endpoint (body: `{ endpoint, node }`) |

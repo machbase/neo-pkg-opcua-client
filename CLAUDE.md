@@ -50,8 +50,7 @@ cgi-bin/
 │   │   ├── start.js              # POST   /cgi-bin/api/collector/start?name=xxx
 │   │   └── stop.js               # POST   /cgi-bin/api/collector/stop?name=xxx
 │   ├── db/
-│   │   ├── connect/
-│   │   │   └── test.js           # POST   /cgi-bin/api/db/connect/test
+│   │   ├── connect.js            # POST   /cgi-bin/api/db/connect
 │   │   └── table/
 │   │       └── create.js         # POST   /cgi-bin/api/db/table/create
 │   └── node/
@@ -120,7 +119,7 @@ cgi-bin/
 
 - install된 service stop
 
-### POST `/cgi-bin/api/db/connect/test`
+### POST `/cgi-bin/api/db/connect`
 
 - body는 `config.db` 와 같은 구조
 - `table` 없이 DB 연결만 확인

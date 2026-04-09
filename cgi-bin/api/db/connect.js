@@ -1,5 +1,5 @@
 /**
- * POST /cgi-bin/api/db/connect/test
+ * POST /cgi-bin/api/db/connect
  *
  * body: {
  *   host: string,
