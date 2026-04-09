@@ -1,7 +1,7 @@
 const machcli = require("machcli");
-const { getLogger } = require("../logger.js");
+const { getInstance } = require("../lib/logger.js");
 
-const logger = getLogger("MachbaseAppender");
+const logger = getInstance();
 
 class MachbaseAppender {
     constructor(dbConf, table, { clientFactory } = {}) {

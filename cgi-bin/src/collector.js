@@ -1,9 +1,9 @@
 const OpcuaClient = require("./opcua/opcua-client.js");
 const MachbaseAppender = require("./db/machbase-appender.js");
 const CGI = require("./cgi/cgi_util.js");
-const { getLogger } = require("./logger.js");
+const { getInstance } = require("./lib/logger.js");
 
-const logger = getLogger("Collector");
+const logger = getInstance();
 
 class Collector {
     constructor(config, { opcuaClient, machbaseAppender, collectorName, lastCollectedAtWriter } = {}) {
