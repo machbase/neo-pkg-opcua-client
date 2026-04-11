@@ -9,107 +9,20 @@ const path = require('path');
 const process = require('process');
 const _argv = process.argv[1];
 const ROOT = _argv.slice(0, _argv.lastIndexOf('/cgi-bin/') + '/cgi-bin'.length);
-const CGI = require(path.join(ROOT, 'src', 'cgi', 'cgi_util.js'));
+const { CGI } = require(path.join(ROOT, 'src', 'cgi', 'cgi_util.js'));
+const Handler = require(path.join(ROOT, 'src', 'cgi', 'handler.js'));
 
 const { name } = CGI.parseQuery();
 
-function errorMessage(err) {
-  return err && err.message ? err.message : String(err);
-}
-
-function mergeConfigForUpdate(currentConfig, nextConfig) {
-  const merged = { ...nextConfig };
-
-  if (currentConfig && currentConfig.db) {
-    merged.db = { ...(nextConfig.db || {}) };
-    if (currentConfig.db.password !== undefined &&
-        (merged.db.password === undefined || merged.db.password === '')) {
-      merged.db.password = currentConfig.db.password;
-    }
-  }
-
-  return merged;
-}
-
-function POST() {
-  const body = CGI.readBody();
-  if (!body.name) {
-    CGI.reply({ ok: false, reason: 'name is required' });
-  } else if (!body.config) {
-    CGI.reply({ ok: false, reason: 'config is required' });
-  } else if (CGI.readConfig(body.name)) {
-    CGI.reply({ ok: false, reason: `collector '${body.name}' already exists` });
-  } else {
-    CGI.writeConfig(body.name, body.config);
-    CGI.installService(body.name, (err) => {
-      if (err) {
-        CGI.deleteConfig(body.name);
-        CGI.reply({ ok: false, reason: errorMessage(err) });
-      } else {
-        CGI.reply({ ok: true, data: { name: body.name } });
-      }
-    });
-  }
-}
-
-function GET() {
-  if (!name) return CGI.reply({ ok: false, reason: 'name is required' });
-  const config = CGI.readConfig(name);
-  if (!config) {
-    CGI.reply({ ok: false, reason: `collector '${name}' not found` });
-  } else {
-    const safeConfig = { ...config, db: { ...config.db } };
-    delete safeConfig.db.password;
-    CGI.reply({ ok: true, data: { name, config: safeConfig } });
-  }
-}
-
-function PUT() {
-  if (!name) return CGI.reply({ ok: false, reason: 'name is required' });
-  const currentConfig = CGI.readConfig(name);
-  if (!currentConfig) {
-    CGI.reply({ ok: false, reason: `collector '${name}' not found` });
-  } else {
-    const nextConfig = mergeConfigForUpdate(currentConfig, CGI.readBody());
-    CGI.writeConfig(name, nextConfig);
-    CGI.restartServiceIfRunning(name, (err) => {
-      if (err) {
-        CGI.reply({ ok: false, reason: errorMessage(err) });
-      } else {
-        CGI.reply({ ok: true, data: { name } });
-      }
-    });
-  }
-}
-
-function DELETE() {
-  if (!name) return CGI.reply({ ok: false, reason: 'name is required' });
-  if (!CGI.readConfig(name)) {
-    CGI.reply({ ok: false, reason: `collector '${name}' not found` });
-  } else {
-    CGI.stopServiceIfRunning(name, (stopErr) => {
-      if (stopErr) {
-        CGI.reply({ ok: false, reason: errorMessage(stopErr) });
-        return;
-      }
-      CGI.uninstallService(name, (err) => {
-        if (err && !CGI.isMissingServiceError(err)) {
-          CGI.reply({ ok: false, reason: errorMessage(err) });
-        } else {
-          CGI.deleteServiceDefinition(name);
-          CGI.deletePid(name);
-          CGI.deleteConfig(name);
-          CGI.reply({ ok: true });
-        }
-      });
-    });
-  }
-}
-
-const handlers = { POST, GET, PUT, DELETE };
+const handlers = {
+  POST:   () => Handler.collectorPost(CGI.readBody()),
+  GET:    () => Handler.collectorGet(name),
+  PUT:    () => Handler.collectorPut(name, CGI.readBody()),
+  DELETE: () => Handler.collectorDelete(name),
+};
 const method = (process.env.get('REQUEST_METHOD') || 'GET').toUpperCase();
 try {
   (handlers[method] || (() => CGI.reply({ ok: false, reason: 'method not allowed' })))();
 } catch (err) {
-  CGI.reply({ ok: false, reason: errorMessage(err) });
+  CGI.reply({ ok: false, reason: err && err.message ? err.message : String(err) });
 }

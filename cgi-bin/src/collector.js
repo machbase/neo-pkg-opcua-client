@@ -1,6 +1,6 @@
 const OpcuaClient = require("./opcua/opcua-client.js");
 const MachbaseAppender = require("./db/machbase-appender.js");
-const CGI = require("./cgi/cgi_util.js");
+const Service = require("./cgi/service.js");
 const { getInstance } = require("./lib/logger.js");
 
 const logger = getInstance();
@@ -15,7 +15,7 @@ class Collector {
         this.db = machbaseAppender || new MachbaseAppender(dbConf, config.db.table);
         this.collectorName = collectorName || config.name || "";
         this._lastCollectedAtWriter = lastCollectedAtWriter || ((name, value, callback) => {
-            CGI.setServiceDetail(name, "lastCollectedAt", value, callback);
+            Service.setValue(name, "lastCollectedAt", value, callback);
         });
         this.timer = null;
     }

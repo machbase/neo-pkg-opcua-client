@@ -1,57 +1,22 @@
 /**
- * POST /cgi-bin/api/node/children
+ * POST /cgi-bin/api/node/children  -- OPC UA 노드 browse (프론트엔드용)
  *
- * Temporary frontend test route.
- * Returns raw browse references for a single node.
- *
- * body: {
- *   endpoint: string,          // OPC UA 서버 주소 (예: opc.tcp://localhost:4840)
- *   node: string,
- *   nodeClassMask?: number,    // opcua.NodeClass 비트마스크
- * }
+ * body: { endpoint, node, nodeClassMask? }
  */
 
 const path = require('path');
 const process = require('process');
 const _argv = process.argv[1];
 const ROOT = _argv.slice(0, _argv.lastIndexOf('/cgi-bin/') + '/cgi-bin'.length);
-const CGI = require(path.join(ROOT, 'src', 'cgi', 'cgi_util.js'));
-const OpcuaClient = require(path.join(ROOT, 'src', 'opcua', 'opcua-client.js'));
+const { CGI } = require(path.join(ROOT, 'src', 'cgi', 'cgi_util.js'));
+const Handler = require(path.join(ROOT, 'src', 'cgi', 'handler.js'));
 
-function POST() {
-    const body = CGI.readBody();
-    if (!body.endpoint) {
-        CGI.reply({ ok: false, reason: 'endpoint is required' });
-        return;
-    }
-    if (!body.node) {
-        CGI.reply({ ok: false, reason: 'node is required' });
-        return;
-    }
-
-    const client = new OpcuaClient(body.endpoint);
-    if (!client.open()) {
-        CGI.reply({ ok: false, reason: 'connect failed: ' + body.endpoint });
-        return;
-    }
-    try {
-        const request = {
-            nodes: [body.node],
-        };
-        if (typeof body.nodeClassMask === 'number') {
-            request.nodeClassMask = body.nodeClassMask;
-        }
-
-        const results = client.browse(request);
-        const data = results && results[0] && results[0].references ? results[0].references : [];
-        CGI.reply({ ok: true, data: data });
-    } catch (e) {
-        CGI.reply({ ok: false, reason: e.message });
-    } finally {
-        client.close();
-    }
-}
-
-const handlers = { POST };
+const handlers = {
+  POST: () => Handler.nodeChildren(CGI.readBody()),
+};
 const method = (process.env.get('REQUEST_METHOD') || 'GET').toUpperCase();
-(handlers[method] || (() => CGI.reply({ ok: false, reason: 'method not allowed' })))();
+try {
+  (handlers[method] || (() => CGI.reply({ ok: false, reason: 'method not allowed' })))();
+} catch (err) {
+  CGI.reply({ ok: false, reason: err && err.message ? err.message : String(err) });
+}

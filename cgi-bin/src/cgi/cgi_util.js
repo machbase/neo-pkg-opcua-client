@@ -3,24 +3,78 @@
 const fs = require('fs');
 const path = require('path');
 const process = require('process');
-const service = require('service');
 
-const _argv = process.argv[1];
-const ROOT = _argv.slice(0, _argv.lastIndexOf('/cgi-bin/') + '/cgi-bin'.length);
-const APP_ROOT = path.dirname(ROOT);
-const CONF_DIR = path.join(ROOT, 'conf.d');
-const RUN_DIR  = path.join(ROOT, 'run');
-const SERVICE_PREFIX = '_opc_';
+const APP_DIR = process.argv[1].slice(0, process.argv[1].lastIndexOf('/cgi-bin/') + '/cgi-bin'.length);
+const CONF_DIR = path.join(APP_DIR, 'conf.d');
 
 class CGI {
 
-  // ── conf.d CRUD ─────────────────────────────────────────────────────────────
+  // ── 파일 유틸 ──────────────────────────────────────────────────────────────
 
-  static configPath(name) {
-    return path.join(CONF_DIR, `${name}.json`);
+  /**
+   * 파일이 존재하는지 확인한다.
+   * @param {string} filePath
+   * @returns {boolean}
+   */
+  static exists(filePath) {
+    try {
+      return fs.statSync(filePath).isFile();
+    } catch (_) {
+      return false;
+    }
   }
 
-  static listConfigs() {
+  /**
+   * JSON 파일을 읽어 파싱한다. 실패하면 null을 반환한다.
+   * @param {string} filePath
+   * @returns {object|null}
+   */
+  static _read(filePath) {
+    try {
+      const raw = fs.readFileSync(filePath, 'utf8');
+      return JSON.parse(raw);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /**
+   * tmp 파일에 먼저 쓴 뒤 rename으로 교체한다 (atomic write).
+   * @param {string} filePath
+   * @param {string} data
+   */
+  static _write(filePath, data) {
+    const tmpPath = `${filePath}.${Date.now()}.tmp`;
+    fs.writeFileSync(tmpPath, data, 'utf8');
+    fs.renameSync(tmpPath, filePath);
+  }
+
+  /**
+   * 파일을 삭제한다. 삭제 성공 또는 파일이 이미 없으면 null, 그 외 오류는 err를 반환한다.
+   * @param {string} filePath
+   * @returns {Error|null}
+   */
+  static _delete(filePath) {
+    try {
+      fs.unlinkSync(filePath);
+      return null;
+    } catch (err) {
+      const message = err && err.message ? String(err.message) : String(err || '');
+      const isMissing = (err && err.code === 'ENOENT')
+        || message.indexOf('no such file') >= 0
+        || message.indexOf('cannot find the file') >= 0
+        || message.indexOf('cannot find the path') >= 0;
+      return isMissing ? null : err;
+    }
+  }
+
+  // ── conf.d CRUD ─────────────────────────────────────────────────────────────
+
+  /**
+   * conf.d/ 디렉토리의 JSON 설정 파일 이름 목록을 반환한다.
+   * @returns {string[]}
+   */
+  static getConfigList() {
     try {
       return fs.readdirSync(CONF_DIR)
         .filter(f => f.endsWith('.json'))
@@ -30,32 +84,53 @@ class CGI {
     }
   }
 
-  static readConfig(name) {
-    try {
-      const raw = fs.readFileSync(CGI.configPath(name), 'utf8');
-      return JSON.parse(raw);
-    } catch (_) {
-      return null;
-    }
+  /**
+   * 이름으로 설정 파일을 읽어 반환한다. 없으면 null을 반환한다.
+   * @param {string} name
+   * @returns {object|null}
+   */
+  static getConfig(name) {
+    const filePath = path.join(CONF_DIR, `${name}.json`);
+    return CGI._read(filePath);
   }
 
+  /**
+   * 설정을 파일에 저장한다.
+   * @param {string} name
+   * @param {object} config
+   */
   static writeConfig(name, config) {
-    const filePath = CGI.configPath(name);
-    const tmpPath = `${filePath}.${Date.now()}.tmp`;
-    fs.writeFileSync(tmpPath, JSON.stringify(config, null, 2), 'utf8');
-    fs.renameSync(tmpPath, filePath);
+    const filePath = path.join(CONF_DIR, `${name}.json`);
+    const data = JSON.stringify(config, null, 2);
+    CGI._write(filePath, data);
   }
 
-  static deleteConfig(name) {
-    try { fs.unlinkSync(CGI.configPath(name)); } catch (_) {}
+  /**
+   * 설정 파일을 삭제한다.
+   * @param {string} name
+   * @returns {Error|null}
+   */
+  static removeConfig(name) {
+    const filePath = path.join(CONF_DIR, `${name}.json`);
+    return CGI._delete(filePath);
   }
 
-  static deletePid(name) {
-    try { fs.unlinkSync(path.join(RUN_DIR, `${name}.pid`)); } catch (_) {}
+  /**
+   * 설정 파일이 존재하는지 확인한다.
+   * @param {string} name
+   * @returns {boolean}
+   */
+  static existsConfig(name) {
+    const filePath = path.join(CONF_DIR, `${name}.json`);
+    return CGI.exists(filePath);
   }
 
-  // ── CGI 헬퍼 ──────────────────────────────────────────────────────────────
+  // ── CGI I/O ──────────────────────────────────────────────────────────────
 
+  /**
+   * QUERY_STRING 환경변수를 파싱하여 키-값 객체로 반환한다.
+   * @returns {Record<string, string>}
+   */
   static parseQuery() {
     const qs = process.env.get('QUERY_STRING') || '';
     const result = {};
@@ -66,8 +141,16 @@ class CGI {
     return result;
   }
 
+  /**
+   * stdin에서 요청 바디를 읽어 JSON으로 파싱한다. 실패 시 빈 객체를 반환한다.
+   * @returns {object}
+   */
   static readBody() {
     try {
+      // TODO : enable, neo-regress pass를 위해 disalbe 처리함.
+      //const len = parseInt(process.env.get('CONTENT_LENGTH') || '0', 10);
+      //if (!len) return {};
+      //const raw = process.stdin.read(len);
       const raw = process.stdin.read();
       return raw ? JSON.parse(raw) : {};
     } catch (_) {
@@ -75,350 +158,16 @@ class CGI {
     }
   }
 
+  /**
+   * CGI 응답을 JSON으로 stdout에 출력한다.
+   * @param {object} data
+   */
   static reply(data) {
     const body = JSON.stringify(data);
     process.stdout.write('Content-Type: application/json\r\n');
     process.stdout.write('\r\n');
     process.stdout.write(body);
   }
-
-  // ── service 제어 ────────────────────────────────────────────────────────────
-
-  static serviceName(name) {
-    return `${SERVICE_PREFIX}${name}`;
-  }
-
-  static collectorNameFromServiceName(serviceName) {
-    if (typeof serviceName !== 'string' || !serviceName.startsWith(SERVICE_PREFIX)) {
-      return '';
-    }
-    return serviceName.slice(SERVICE_PREFIX.length);
-  }
-
-  static getNeoHome() {
-    const execPath = process.execPath || process.argv[0] || '';
-    if (!execPath || !path.isAbsolute(execPath)) {
-      return '';
-    }
-    return path.dirname(execPath);
-  }
-
-  static inferNeoHomeFromAppRoot() {
-    const marker = `${path.sep}public${path.sep}`;
-    const idx = APP_ROOT.lastIndexOf(marker);
-    if (idx < 0) {
-      return '';
-    }
-    return APP_ROOT.slice(0, idx);
-  }
-
-  static getServiceDirectoryCandidates() {
-    const result = [];
-    const seen = {};
-    const push = (value) => {
-      if (typeof value !== 'string') return;
-      const dirPath = value.trim();
-      if (!dirPath || seen[dirPath]) return;
-      seen[dirPath] = true;
-      result.push(dirPath);
-    };
-
-    push('/etc/services');
-
-    const neoHome = CGI.getNeoHome();
-    if (neoHome) {
-      push(path.join(neoHome, 'etc', 'services'));
-    }
-
-    const inferredNeoHome = CGI.inferNeoHomeFromAppRoot();
-    if (inferredNeoHome) {
-      push(path.join(inferredNeoHome, 'etc', 'services'));
-    }
-
-    return result;
-  }
-
-  static getServiceDefinitionPaths(name) {
-    const result = [];
-    const seen = {};
-    for (const serviceDir of CGI.getServiceDirectoryCandidates()) {
-      const filePath = path.join(serviceDir, `${CGI.serviceName(name)}.json`);
-      if (!seen[filePath]) {
-        seen[filePath] = true;
-        result.push(filePath);
-      }
-    }
-    return result;
-  }
-
-  static hasInstalledService(name) {
-    for (const filePath of CGI.getServiceDefinitionPaths(name)) {
-      try {
-        const stat = fs.statSync(filePath);
-        if (stat.isFile()) {
-          return true;
-        }
-      } catch (_) {}
-    }
-    return false;
-  }
-
-  static listInstalledServiceNames() {
-    const result = [];
-    const seen = {};
-
-    for (const serviceDir of CGI.getServiceDirectoryCandidates()) {
-      let stat;
-      try {
-        stat = fs.statSync(serviceDir);
-      } catch (_) {
-        stat = null;
-      }
-      if (!stat || !stat.isDirectory()) {
-        continue;
-      }
-
-      let entries = [];
-      try {
-        entries = fs.readdirSync(serviceDir);
-      } catch (_) {
-        entries = [];
-      }
-
-      entries.forEach((entry) => {
-        if (!entry.endsWith('.json') || !entry.startsWith(SERVICE_PREFIX)) {
-          return;
-        }
-        const name = CGI.collectorNameFromServiceName(entry.replace(/\.json$/, ''));
-        if (!name || seen[name]) {
-          return;
-        }
-        seen[name] = true;
-        result.push(name);
-      });
-    }
-
-    return result;
-  }
-
-  static deleteServiceDefinition(name) {
-    CGI.getServiceDefinitionPaths(name).forEach((filePath) => {
-      try { fs.unlinkSync(filePath); } catch (_) {}
-    });
-  }
-
-  static getCollectorScriptPath() {
-    return path.join(ROOT, 'neo-collector.js');
-  }
-
-  static getServiceWorkingDir() {
-    return APP_ROOT;
-  }
-
-  static buildServiceInstallConfig(name) {
-    const executable = CGI.getCollectorScriptPath();
-    if (!executable) {
-      throw new Error('neo-collector.js path is not available');
-    }
-    return {
-      name: CGI.serviceName(name),
-      enable: false,
-      working_dir: CGI.getServiceWorkingDir(),
-      executable,
-      args: [CGI.configPath(name)],
-    };
-  }
-
-  static createServiceClient() {
-    if (service && typeof service.Client === 'function') {
-      try {
-        return new service.Client();
-      } catch (_) {}
-    }
-    return service;
-  }
-
-  static callService(method, args, callback) {
-    const client = CGI.createServiceClient();
-    if (!client || typeof client[method] !== 'function') {
-      callback(new Error(`service.${method}() is not available`));
-      return;
-    }
-    try {
-      const callArgs = Array.isArray(args) ? args.slice() : [];
-      callArgs.push(callback);
-      client[method].apply(client, callArgs);
-    } catch (err) {
-      callback(err);
-    }
-  }
-
-  static installService(name, callback) {
-    CGI.callService('install', [CGI.buildServiceInstallConfig(name)], callback);
-  }
-
-  static getServiceStatus(name, callback) {
-    CGI.callService('status', [CGI.serviceName(name)], callback);
-  }
-
-  static listServices(callback) {
-    CGI.callService('status', [], (err, serviceInfos) => {
-      if (err) {
-        callback(err);
-      } else if (Array.isArray(serviceInfos)) {
-        callback(null, serviceInfos);
-      } else if (serviceInfos) {
-        callback(null, [serviceInfos]);
-      } else {
-        callback(null, []);
-      }
-    });
-  }
-
-  static uninstallService(name, callback) {
-    CGI.callService('uninstall', [CGI.serviceName(name)], callback);
-  }
-
-  static startService(name, callback) {
-    CGI.callService('start', [CGI.serviceName(name)], callback);
-  }
-
-  static stopService(name, callback) {
-    CGI.callService('stop', [CGI.serviceName(name)], callback);
-  }
-
-  static getServiceDetail(name, key, callback) {
-    const client = CGI.createServiceClient();
-    if (!client || !client.details || typeof client.details.get !== 'function') {
-      callback(new Error('service.details.get() is not available'));
-      return;
-    }
-    try {
-      client.details.get(CGI.serviceName(name), key, callback);
-    } catch (err) {
-      callback(err);
-    }
-  }
-
-  static setServiceDetail(name, key, value, callback) {
-    const client = CGI.createServiceClient();
-    if (!client || !client.details || typeof client.details.set !== 'function') {
-      callback(new Error('service.details.set() is not available'));
-      return;
-    }
-    try {
-      client.details.set(CGI.serviceName(name), key, value, callback);
-    } catch (err) {
-      callback(err);
-    }
-  }
-
-  static deleteServiceDetail(name, key, callback) {
-    const client = CGI.createServiceClient();
-    if (!client || !client.details || typeof client.details.delete !== 'function') {
-      callback(new Error('service.details.delete() is not available'));
-      return;
-    }
-    try {
-      client.details.delete(CGI.serviceName(name), key, callback);
-    } catch (err) {
-      callback(err);
-    }
-  }
-
-  static isMissingServiceError(err) {
-    const message = err && err.message ? String(err.message).toLowerCase() : '';
-    return message.indexOf('does not exist') >= 0
-      || message.indexOf('not found') >= 0
-      || message.indexOf('no such service') >= 0
-      || message.indexOf('unknown service') >= 0;
-  }
-
-  static isMissingServiceDetailError(err) {
-    const message = err && err.message ? String(err.message).toLowerCase() : '';
-    return message.indexOf("detail '") >= 0 && message.indexOf('not found') >= 0;
-  }
-
-  static serviceDetailValue(result, key) {
-    if (!result || !result.details) return null;
-    return Object.prototype.hasOwnProperty.call(result.details, key)
-      ? result.details[key]
-      : null;
-  }
-
-  static isServiceRunningStatus(serviceInfo) {
-    const status = serviceInfo && serviceInfo.status ? String(serviceInfo.status).toUpperCase() : '';
-    return status === 'RUNNING';
-  }
-
-  static serviceInfoName(serviceInfo) {
-    const rawName = serviceInfo && serviceInfo.config && serviceInfo.config.name
-      ? serviceInfo.config.name
-      : serviceInfo && serviceInfo.name
-        ? serviceInfo.name
-        : '';
-    return CGI.collectorNameFromServiceName(rawName);
-  }
-
-  static restartServiceIfRunning(name, callback) {
-    CGI.getServiceStatus(name, (err, serviceInfo) => {
-      if (err) {
-        if (CGI.isMissingServiceError(err)) {
-          callback(null, false);
-        } else {
-          callback(err);
-        }
-        return;
-      }
-      if (!CGI.isServiceRunningStatus(serviceInfo)) {
-        callback(null, false);
-        return;
-      }
-      CGI.stopService(name, (stopErr) => {
-        if (stopErr) {
-          callback(stopErr);
-          return;
-        }
-        CGI.startService(name, (startErr) => {
-          if (startErr) {
-            callback(startErr);
-          } else {
-            callback(null, true);
-          }
-        });
-      });
-    });
-  }
-
-  static stopServiceIfRunning(name, callback) {
-    CGI.getServiceStatus(name, (err, serviceInfo) => {
-      if (err) {
-        if (CGI.isMissingServiceError(err)) {
-          callback(null, false);
-        } else {
-          callback(err);
-        }
-        return;
-      }
-      if (!CGI.isServiceRunningStatus(serviceInfo)) {
-        callback(null, false);
-        return;
-      }
-      CGI.stopService(name, (stopErr) => {
-        if (stopErr) {
-          callback(stopErr);
-        } else {
-          callback(null, true);
-        }
-      });
-    });
-  }
-
-  // ── 실행 상태 ──────────────────────────────────────────────────────────────
-
-  static isRunning(name) {
-    return fs.existsSync(path.join(RUN_DIR, `${name}.pid`));
-  }
 }
 
-module.exports = CGI;
+module.exports = { CGI };
