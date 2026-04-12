@@ -12,7 +12,9 @@ class OpcuaClient {
     }
 
     open() {
-        if (this.client !== null) return true;
+        if (this.client !== null) {
+            return true;
+        }
         try {
             this.client = new opcua.Client({
                 endpoint: this.endpoint,
@@ -31,7 +33,9 @@ class OpcuaClient {
      * @throws {Error} 미연결 또는 읽기 실패 시
      */
     read(nodeIds) {
-        if (this.client === null) throw new Error("not connected");
+        if (this.client === null) {
+            throw new Error("not connected");
+        }
         return this.client.read({
             nodes: nodeIds,
             timestampsToReturn: opcua.TimestampsToReturn.Both,
@@ -44,7 +48,9 @@ class OpcuaClient {
      * @throws {Error} 미연결 또는 쓰기 실패 시
      */
     write(...writes) {
-        if (this.client === null) throw new Error("not connected");
+        if (this.client === null) {
+            throw new Error("not connected");
+        }
         return this.client.write(...writes);
     }
 
@@ -56,7 +62,9 @@ class OpcuaClient {
      * @throws {Error} 미연결 또는 조회 실패 시
      */
     children(request) {
-        if (this.client === null) throw new Error("not connected");
+        if (this.client === null) {
+            throw new Error("not connected");
+        }
         return this.client.children(request);
     }
 
@@ -73,7 +81,9 @@ class OpcuaClient {
      * @throws {Error} 미연결 또는 조회 실패 시
      */
     browse(request) {
-        if (this.client === null) throw new Error("not connected");
+        if (this.client === null) {
+            throw new Error("not connected");
+        }
         return this.client.browse(request);
     }
 
@@ -85,13 +95,17 @@ class OpcuaClient {
      * @throws {Error} 미연결 또는 조회 실패 시
      */
     browseNext(request) {
-        if (this.client === null) throw new Error("not connected");
+        if (this.client === null) {
+            throw new Error("not connected");
+        }
         return this.client.browseNext(request);
     }
 
     close() {
         if (this.client !== null) {
-            try { this.client.close(); } catch (_) {}
+            try {
+                this.client.close();
+            } catch (_) {}
             this.client = null;
         }
     }

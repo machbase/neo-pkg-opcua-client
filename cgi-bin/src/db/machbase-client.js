@@ -38,7 +38,9 @@ class MachbaseClient {
                 result.push(row);
             }
         } finally {
-            try { rows && rows.close && rows.close(); } catch (_) {}
+            try {
+                rows && rows.close && rows.close();
+            } catch (_) {}
         }
         return result;
     }
@@ -63,8 +65,12 @@ class MachbaseClient {
     }
 
     close() {
-        try { this.conn && this.conn.close(); } catch (_) {}
-        try { this.dbClient && this.dbClient.close(); } catch (_) {}
+        try {
+            this.conn && this.conn.close();
+        } catch (_) {}
+        try {
+            this.dbClient && this.dbClient.close();
+        } catch (_) {}
         this.conn = null;
         this.dbClient = null;
     }

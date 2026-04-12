@@ -14,7 +14,16 @@ const handlers = {
 };
 const method = (process.env.get('REQUEST_METHOD') || 'GET').toUpperCase();
 try {
-  (handlers[method] || (() => CGI.reply({ ok: false, reason: 'method not allowed' })))();
+  const handler = handlers[method] || (() => {
+    CGI.reply({
+      ok: false,
+      reason: 'method not allowed',
+    });
+  });
+  handler();
 } catch (err) {
-  CGI.reply({ ok: false, reason: err && err.message ? err.message : String(err) });
+  CGI.reply({
+    ok: false,
+    reason: err && err.message ? err.message : String(err),
+  });
 }

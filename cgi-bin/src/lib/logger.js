@@ -9,8 +9,20 @@ const LOG_DIR = path.join(HOME, 'public', 'logs');
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
 
-const LEVELS = { trace: -1, debug: 0, info: 1, warn: 2, error: 3 };
-const LEVEL_LABEL = { trace: 'TRACE', debug: 'DEBUG', info: 'INFO', warn: 'WARN', error: 'ERROR' };
+const LEVELS = {
+  trace: -1,
+  debug: 0,
+  info: 1,
+  warn: 2,
+  error: 3,
+};
+const LEVEL_LABEL = {
+  trace: 'TRACE',
+  debug: 'DEBUG',
+  info: 'INFO',
+  warn: 'WARN',
+  error: 'ERROR',
+};
 
 /**
  * Logger — 크기 기반 로테이션, file 출력
@@ -53,7 +65,9 @@ class Logger {
   error(stage, fields) { this._write('error', stage, fields); }
 
   banner(msg) {
-    if (this._disabled) return;
+    if (this._disabled) {
+      return;
+    }
     const ts = new Date().toISOString().replace('T', ' ').slice(0, 23);
     const line = '-'.repeat(72);
     const text = `${line}\n  ${ts}  ${msg}\n${line}`;
@@ -63,8 +77,12 @@ class Logger {
   close() {}
 
   _write(level, stage, fields = {}) {
-    if (this._disabled) return;
-    if (LEVELS[level] < this._minLevel) return;
+    if (this._disabled) {
+      return;
+    }
+    if (LEVELS[level] < this._minLevel) {
+      return;
+    }
     this._appendToFile(this._format(level, stage, fields) + '\n');
   }
 
@@ -89,14 +107,18 @@ class Logger {
   }
 
   _ensurePath() {
-    if (this._filePath) return;
+    if (this._filePath) {
+      return;
+    }
 
     try {
       // 10 MB 미만인 첫 번째 파일을 찾아 이어씀
       while (this._fileIndex < this._maxFiles) {
         const candidate = this._resolveFilePath(this._fileIndex);
         let size = 0;
-        try { size = fs.statSync(candidate).size; } catch (_) {}
+        try {
+          size = fs.statSync(candidate).size;
+        } catch (_) {}
         if (size < MAX_FILE_SIZE) {
           this._filePath = candidate;
           this._fileSize = size;
@@ -111,11 +133,15 @@ class Logger {
 
   _appendToFile(text) {
     this._ensurePath();
-    if (!this._filePath) return;
+    if (!this._filePath) {
+      return;
+    }
 
     // 파일 크기 초과 시 다음 인덱스 파일로 전환
     if (this._fileSize + text.length > MAX_FILE_SIZE) {
-      if (this._fileIndex + 1 >= this._maxFiles) return; // 최대 파일 개수 도달, 쓰기 중단
+      if (this._fileIndex + 1 >= this._maxFiles) {
+        return; // 최대 파일 개수 도달, 쓰기 중단
+      }
       this._fileIndex++;
       this._filePath = this._resolveFilePath(this._fileIndex);
       this._fileSize = 0;

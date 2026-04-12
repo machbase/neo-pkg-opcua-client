@@ -19,8 +19,12 @@ class MachbaseAppender {
             this.conn = this.dbClient.connect();
             this.appender = this.conn.append(this.table);
         } catch (e) {
-            try { this.conn && this.conn.close(); } catch (_) {}
-            try { this.dbClient.close(); } catch (_) {}
+            try {
+                this.conn && this.conn.close();
+            } catch (_) {}
+            try {
+                this.dbClient.close();
+            } catch (_) {}
             this.conn = null;
             this.dbClient = null;
             throw e;
@@ -51,9 +55,15 @@ class MachbaseAppender {
     }
 
     close() {
-        try { this.appender && this.appender.close(); } catch (_) {}
-        try { this.conn && this.conn.close(); } catch (_) {}
-        try { this.dbClient && this.dbClient.close(); } catch (_) {}
+        try {
+            this.appender && this.appender.close();
+        } catch (_) {}
+        try {
+            this.conn && this.conn.close();
+        } catch (_) {}
+        try {
+            this.dbClient && this.dbClient.close();
+        } catch (_) {}
         this.appender = null;
         this.conn = null;
         this.dbClient = null;

@@ -7,7 +7,12 @@ const logger = getInstance();
 
 class Collector {
     constructor(config, { opcuaClient, machbaseAppender, collectorName, lastCollectedAtWriter } = {}) {
-        const dbConf = config.db || { host: '127.0.0.1', port: 5656, user: 'sys', password: 'manager' };
+        const dbConf = config.db || {
+            host: '127.0.0.1',
+            port: 5656,
+            user: 'sys',
+            password: 'manager',
+        };
         this.nodes = config.opcua.nodes;
         this.nodeIds = this.nodes.map(n => n.nodeId);
         this.interval = config.opcua.interval;
@@ -40,12 +45,18 @@ class Collector {
             clearInterval(this.timer);
             this.timer = null;
         }
-        try { this.opcua.close(); } catch (_) {}
-        try { this.db.close(); } catch (_) {}
+        try {
+            this.opcua.close();
+        } catch (_) {}
+        try {
+            this.db.close();
+        } catch (_) {}
     }
 
     _recordLastCollectedAt(ts) {
-        if (!this.collectorName || !ts) return;
+        if (!this.collectorName || !ts) {
+            return;
+        }
         try {
             this._lastCollectedAtWriter(this.collectorName, ts.getTime(), (err) => {
                 if (err) {
@@ -67,7 +78,9 @@ class Collector {
         try {
             if (!this.db.isOpen()) {
                 this._openDb();
-                if (!this.db.isOpen()) return;
+                if (!this.db.isOpen()) {
+                    return;
+                }
             }
 
             if (!this.opcua.open()) {
@@ -83,9 +96,18 @@ class Collector {
                 if (lastTs === null || ts.getTime() > lastTs.getTime()) {
                     lastTs = ts;
                 }
-                logger.debug("read", { nodeId: node.nodeId, name: node.name, value, ts: ts.toISOString() });
+                logger.debug("read", {
+                    nodeId: node.nodeId,
+                    name: node.name,
+                    value,
+                    ts: ts.toISOString(),
+                });
                 this.db.append(node.name, ts, value);
-                logger.debug("appended", { name: node.name, value, ts: ts.toISOString() });
+                logger.debug("appended", {
+                    name: node.name,
+                    value,
+                    ts: ts.toISOString(),
+                });
             });
             this.db.flush();
             this._recordLastCollectedAt(lastTs);
@@ -97,7 +119,9 @@ class Collector {
     }
 
     start() {
-        if (this.timer !== null) return;
+        if (this.timer !== null) {
+            return;
+        }
         this.opcua.open();
         this._openDb();
         this.timer = setInterval(() => {

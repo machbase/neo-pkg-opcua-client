@@ -27,7 +27,9 @@ try {
 
   process.addShutdownHook(() => {
     logger.info('shutdown requested');
-    try { fs.unlinkSync(pidFile); } catch (_) {}
+    try {
+      fs.unlinkSync(pidFile);
+    } catch (_) {}
     collector.close();
   });
 

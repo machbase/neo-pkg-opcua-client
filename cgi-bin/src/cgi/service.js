@@ -21,6 +21,19 @@ const _nameMatch = _appName.match(/^neo-pkg-(.+)$/);
 const SERVICE_PREFIX = _nameMatch ? `_${_nameMatch[1].slice(0, 3)}_` : '__';
 
 /**
+ * service 오류 메시지가 "존재하지 않음" 계열인지 확인한다.
+ * install되지 않은 service를 조회하거나 details가 없을 때 발생하는 오류를 정상 케이스로 처리할 때 사용한다.
+ * @param {Error|null} err
+ * @returns {boolean}
+ */
+function isMissingServiceError(err) {
+  const m = err && err.message ? String(err.message).toLowerCase() : '';
+  return m.includes('does not exist') || m.includes('not found')
+    || m.includes('no such service') || m.includes('unknown service')
+    || (m.includes("detail '") && m.includes('not found'));
+}
+
+/**
  * 지정한 collector의 service definition 파일이 존재하는지 확인한다.
  * @param {string} name - collector 이름
  * @returns {boolean}
@@ -53,27 +66,27 @@ function status(name, callback) {
 }
 
 /**
- * 이 패키지에 속한 service 목록을 조회한다.
- * SERVICE_PREFIX 로 시작하는 service만 필터링해서 반환한다.
- * @param {function(Error|null, object[]=): void} callback
+ * 이 패키지에 속한 service 목록을 collector 이름 기준의 맵으로 반환한다.
+ * service 이름에서 SERVICE_PREFIX를 제거한 이름을 키로 사용한다.
+ * @param {function(Error|null, Record<string, object>=): void} callback
  */
-function listServices(callback) {
+function getServiceMap(callback) {
   service.status((err, serviceInfos) => {
     if (err) {
       callback(err);
       return;
     }
-    if (Array.isArray(serviceInfos)) {
-      callback(null, serviceInfos.filter(s => {
-        const n = (s && s.config && s.config.name) || (s && s.name) || '';
-        return n.startsWith(SERVICE_PREFIX);
-      }));
-    } else if (serviceInfos) {
-      const n = (serviceInfos.config && serviceInfos.config.name) || serviceInfos.name || '';
-      callback(null, n.startsWith(SERVICE_PREFIX) ? [serviceInfos] : []);
-    } else {
-      callback(null, []);
-    }
+    const list = Array.isArray(serviceInfos)
+      ? serviceInfos
+      : (serviceInfos ? [serviceInfos] : []);
+    const result = {};
+    list.forEach((s) => {
+      const rawName = (s && s.config && s.config.name) || (s && s.name) || '';
+      if (rawName.startsWith(SERVICE_PREFIX)) {
+        result[rawName.slice(SERVICE_PREFIX.length)] = s;
+      }
+    });
+    callback(null, result);
   });
 }
 
@@ -128,7 +141,10 @@ function stop(name, callback) {
 function getValue(name, key, callback) {
   try {
     service.details.get(`${SERVICE_PREFIX}${name}`, key, (err, result) => {
-      if (err) { callback(err); return; }
+      if (err) {
+        callback(err);
+        return;
+      }
       const value = result && result.details ? (result.details[key] ?? null) : null;
       callback(null, value);
     });
@@ -168,10 +184,11 @@ function deleteValue(name, key, callback) {
 
 module.exports = {
   SERVICE_PREFIX,
+  isMissingServiceError,
   installed,
   remove,
   status,
-  listServices,
+  getServiceMap,
   install,
   uninstall,
   start,

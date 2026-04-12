@@ -9,65 +9,6 @@ const CONF_DIR = path.join(APP_DIR, 'conf.d');
 
 class CGI {
 
-  // ── 파일 유틸 ──────────────────────────────────────────────────────────────
-
-  /**
-   * 파일이 존재하는지 확인한다.
-   * @param {string} filePath
-   * @returns {boolean}
-   */
-  static exists(filePath) {
-    try {
-      return fs.statSync(filePath).isFile();
-    } catch (_) {
-      return false;
-    }
-  }
-
-  /**
-   * JSON 파일을 읽어 파싱한다. 실패하면 null을 반환한다.
-   * @param {string} filePath
-   * @returns {object|null}
-   */
-  static _read(filePath) {
-    try {
-      const raw = fs.readFileSync(filePath, 'utf8');
-      return JSON.parse(raw);
-    } catch (_) {
-      return null;
-    }
-  }
-
-  /**
-   * tmp 파일에 먼저 쓴 뒤 rename으로 교체한다 (atomic write).
-   * @param {string} filePath
-   * @param {string} data
-   */
-  static _write(filePath, data) {
-    const tmpPath = `${filePath}.${Date.now()}.tmp`;
-    fs.writeFileSync(tmpPath, data, 'utf8');
-    fs.renameSync(tmpPath, filePath);
-  }
-
-  /**
-   * 파일을 삭제한다. 삭제 성공 또는 파일이 이미 없으면 null, 그 외 오류는 err를 반환한다.
-   * @param {string} filePath
-   * @returns {Error|null}
-   */
-  static _delete(filePath) {
-    try {
-      fs.unlinkSync(filePath);
-      return null;
-    } catch (err) {
-      const message = err && err.message ? String(err.message) : String(err || '');
-      const isMissing = (err && err.code === 'ENOENT')
-        || message.indexOf('no such file') >= 0
-        || message.indexOf('cannot find the file') >= 0
-        || message.indexOf('cannot find the path') >= 0;
-      return isMissing ? null : err;
-    }
-  }
-
   // ── conf.d CRUD ─────────────────────────────────────────────────────────────
 
   /**
@@ -90,29 +31,43 @@ class CGI {
    * @returns {object|null}
    */
   static getConfig(name) {
-    const filePath = path.join(CONF_DIR, `${name}.json`);
-    return CGI._read(filePath);
+    try {
+      const raw = fs.readFileSync(path.join(CONF_DIR, `${name}.json`), 'utf8');
+      return JSON.parse(raw);
+    } catch (_) {
+      return null;
+    }
   }
 
   /**
-   * 설정을 파일에 저장한다.
+   * 설정을 파일에 저장한다. tmp 파일에 먼저 쓴 뒤 rename으로 교체한다 (atomic write).
    * @param {string} name
    * @param {object} config
    */
   static writeConfig(name, config) {
     const filePath = path.join(CONF_DIR, `${name}.json`);
-    const data = JSON.stringify(config, null, 2);
-    CGI._write(filePath, data);
+    const tmpPath = `${filePath}.${Date.now()}.tmp`;
+    fs.writeFileSync(tmpPath, JSON.stringify(config, null, 2), 'utf8');
+    fs.renameSync(tmpPath, filePath);
   }
 
   /**
-   * 설정 파일을 삭제한다.
+   * 설정 파일을 삭제한다. 파일이 이미 없으면 null, 그 외 오류는 err를 반환한다.
    * @param {string} name
    * @returns {Error|null}
    */
   static removeConfig(name) {
-    const filePath = path.join(CONF_DIR, `${name}.json`);
-    return CGI._delete(filePath);
+    try {
+      fs.unlinkSync(path.join(CONF_DIR, `${name}.json`));
+      return null;
+    } catch (err) {
+      const message = err && err.message ? String(err.message) : String(err || '');
+      const isMissing = (err && err.code === 'ENOENT')
+        || message.indexOf('no such file') >= 0
+        || message.indexOf('cannot find the file') >= 0
+        || message.indexOf('cannot find the path') >= 0;
+      return isMissing ? null : err;
+    }
   }
 
   /**
@@ -121,8 +76,11 @@ class CGI {
    * @returns {boolean}
    */
   static existsConfig(name) {
-    const filePath = path.join(CONF_DIR, `${name}.json`);
-    return CGI.exists(filePath);
+    try {
+      return fs.statSync(path.join(CONF_DIR, `${name}.json`)).isFile();
+    } catch (_) {
+      return false;
+    }
   }
 
   // ── CGI I/O ──────────────────────────────────────────────────────────────
