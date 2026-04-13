@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Routes, Route, useLocation } from 'react-router'
+import { Routes, Route } from 'react-router'
 import useCollectors from './hooks/useCollectors'
 import { useApp } from './context/AppContext'
 import * as api from './api/collectors'
@@ -9,8 +9,7 @@ import CollectorFormPage from './pages/CollectorFormPage'
 import Toast from './components/common/Toast'
 
 export default function IndexApp() {
-  const location = useLocation()
-  const { collectors, toggleCollector, removeCollector, refreshCollectors } = useCollectors()
+  const { collectors, toggleCollector, installCollector, removeCollector, refreshCollectors } = useCollectors()
   const { selectedCollectorId, notify } = useApp()
   const [detail, setDetail] = useState(null)
 
@@ -26,12 +25,12 @@ export default function IndexApp() {
 
   useEffect(() => {
     fetchDetail(selectedCollectorId)
-  }, [selectedCollectorId, fetchDetail, location.pathname])
+  }, [selectedCollectorId, fetchDetail])
 
   return (
     <>
       <div className="flex max-lg:flex-col overflow-hidden bg-surface-alt text-on-surface antialiased">
-        <Sidebar collectors={collectors} onToggleCollector={toggleCollector} onRefresh={refreshCollectors} />
+        <Sidebar collectors={collectors} onToggleCollector={toggleCollector} onInstallCollector={installCollector} onRefresh={refreshCollectors} />
         <main className="ml-64 max-lg:ml-0 flex-1 h-screen overflow-hidden bg-surface-alt">
           <Routes>
             <Route path="/" element={
@@ -41,7 +40,7 @@ export default function IndexApp() {
               <CollectorFormPage onRefresh={refreshCollectors} />
             } />
             <Route path="/collectors/:id/edit" element={
-              <CollectorFormPage detail={detail} onRefresh={refreshCollectors} />
+              <CollectorFormPage detail={detail} onRefresh={refreshCollectors} onRefreshDetail={() => fetchDetail(selectedCollectorId)} />
             } />
           </Routes>
         </main>

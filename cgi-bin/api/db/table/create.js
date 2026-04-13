@@ -1,7 +1,7 @@
 /**
- * POST /cgi-bin/api/node/children  -- OPC UA 노드 browse (프론트엔드용)
+ * POST /cgi-bin/api/db/table/create  -- TAG 테이블 생성
  *
- * body: { endpoint, node, nodeClassMask? }
+ * body: { host, port, user, password, table }
  */
 
 const path = require('path');
@@ -12,7 +12,7 @@ const { CGI } = require(path.join(ROOT, 'src', 'cgi', 'cgi_util.js'));
 const Handler = require(path.join(ROOT, 'src', 'cgi', 'handler.js'));
 
 const handlers = {
-  POST: () => Handler.nodeChildren(CGI.readBody()),
+  POST: () => Handler.dbTableCreate(CGI.readBody()),
 };
 const method = (process.env.get('REQUEST_METHOD') || 'GET').toUpperCase();
 try {

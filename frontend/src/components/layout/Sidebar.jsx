@@ -3,7 +3,7 @@ import { useApp } from "../../context/AppContext";
 import Icon from "../common/Icon";
 import CollectorListItem from "../collectors/CollectorListItem";
 
-export default function Sidebar({ collectors, onToggleCollector, onRefresh }) {
+export default function Sidebar({ collectors, onToggleCollector, onInstallCollector, onRefresh }) {
     const navigate = useNavigate();
     const location = useLocation();
     const { selectedCollectorId, setSelectedCollectorId } = useApp();
@@ -44,6 +44,7 @@ export default function Sidebar({ collectors, onToggleCollector, onRefresh }) {
                                 if (location.pathname !== "/") navigate("/");
                             }}
                             onToggle={() => onToggleCollector(c)}
+                            onInstall={() => onInstallCollector(c)}
                         />
                     ))}
                     {collectors.length === 0 && <p className="side-empty">No collectors</p>}

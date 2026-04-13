@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { Routes, Route, useNavigate, useLocation } from 'react-router'
+import { Routes, Route, useNavigate } from 'react-router'
 import useCollectors from './hooks/useCollectors'
 import { useApp } from './context/AppContext'
 import * as api from './api/collectors'
@@ -11,9 +11,8 @@ const CHANNEL_NAME = 'app:neo-opcua-collector'
 
 export default function App() {
   const navigate = useNavigate()
-  const location = useLocation()
   const { selectedCollectorId, setSelectedCollectorId, notify } = useApp()
-  const { collectors, toggleCollector, removeCollector, refreshCollectors } = useCollectors()
+  const { collectors, toggleCollector, installCollector, removeCollector, refreshCollectors } = useCollectors()
   const [detail, setDetail] = useState(null)
 
   const fetchDetail = useCallback((id) => {
@@ -28,7 +27,7 @@ export default function App() {
 
   useEffect(() => {
     fetchDetail(selectedCollectorId)
-  }, [selectedCollectorId, fetchDetail, location.pathname])
+  }, [selectedCollectorId, fetchDetail])
   const channelRef = useRef(null)
   const handlersRef = useRef({})
 
@@ -43,6 +42,10 @@ export default function App() {
     toggleCollector: (payload) => {
       const c = collectors.find(c => c.id === payload.collectorId)
       if (c) toggleCollector(c)
+    },
+    installCollector: (payload) => {
+      const c = collectors.find(c => c.id === payload.collectorId)
+      if (c) installCollector(c)
     },
     requestReady: () => {
       const ch = channelRef.current
@@ -88,7 +91,7 @@ export default function App() {
               <CollectorFormPage onRefresh={refreshCollectors} />
             } />
             <Route path="/collectors/:id/edit" element={
-              <CollectorFormPage detail={detail} onRefresh={refreshCollectors} />
+              <CollectorFormPage detail={detail} onRefresh={refreshCollectors} onRefreshDetail={() => fetchDetail(selectedCollectorId)} />
             } />
           </Routes>
         </main>

@@ -1,154 +1,111 @@
+'use strict';
+
 const TestRunner = require("./runner.js");
-const { Logger, init, getLogger } = require("../src/logger.js");
+const { Logger, init, getInstance } = require("../src/lib/logger.js");
 
 const runner = new TestRunner();
 
-function capture(fn) {
-    let lines = [];
-    const orig = console.log;
-    console.log = (s) => lines.push(s);
-    fn();
-    console.log = orig;
-    return lines.map(l => JSON.parse(l));
-}
-
 runner.run("Logger", {
-    "info() outputs JSON with correct fields": (t) => {
-        const logger = new Logger("test", { level: "INFO", output: "console", format: "json" });
-        const [entry] = capture(() => logger.info("hello"));
-        t.assertEqual(entry.level, "INFO");
-        t.assertEqual(entry.module, "test");
-        t.assertEqual(entry.message, "hello");
-        t.assert(typeof entry.ts === "string", "ts is string");
+    "_format contains level label": (t) => {
+        const logger = new Logger({ level: "debug" });
+        const line = logger._format("info", "test-stage", {});
+        t.assert(line.indexOf("[INFO]") >= 0, "should contain [INFO]");
     },
 
-    "error() outputs level ERROR with detail": (t) => {
-        const logger = new Logger("test", { level: "INFO", output: "console", format: "json" });
-        const [entry] = capture(() => logger.error("oops", { code: 42 }));
-        t.assertEqual(entry.level, "ERROR");
-        t.assertEqual(entry.message, "oops");
-        t.assertEqual(entry.detail.code, 42);
+    "_format contains stage": (t) => {
+        const logger = new Logger({ level: "debug" });
+        const line = logger._format("warn", "my-stage", {});
+        t.assert(line.indexOf("my-stage") >= 0, "should contain stage");
     },
 
-    "warn() outputs level WARN": (t) => {
-        const logger = new Logger("test", { level: "INFO", output: "console", format: "json" });
-        const [entry] = capture(() => logger.warn("careful"));
-        t.assertEqual(entry.level, "WARN");
-        t.assertEqual(entry.message, "careful");
+    "_format contains msg from fields": (t) => {
+        const logger = new Logger({ level: "debug" });
+        const line = logger._format("info", "stage", { msg: "hello world" });
+        t.assert(line.indexOf("hello world") >= 0, "should contain msg");
     },
 
-    "debug() is suppressed when level is INFO": (t) => {
-        const logger = new Logger("test", { level: "INFO", output: "console", format: "json" });
-        const lines = capture(() => logger.debug("hidden"));
-        t.assertEqual(lines.length, 0, "debug should be suppressed");
+    "_format contains key=value pairs": (t) => {
+        const logger = new Logger({ level: "debug" });
+        const line = logger._format("error", "stage", { error: "bad input" });
+        t.assert(line.indexOf("error=bad input") >= 0, "should contain key=value");
     },
 
-    "debug() is shown when level is DEBUG": (t) => {
-        const logger = new Logger("test", { level: "DEBUG", output: "console", format: "json" });
-        const lines = capture(() => logger.debug("visible"));
-        t.assertEqual(lines.length, 1, "debug should appear");
-        t.assertEqual(lines[0].level, "DEBUG");
+    "_format quotes values with spaces": (t) => {
+        const logger = new Logger({ level: "debug" });
+        const line = logger._format("info", "stage", { msg: "the message", key: "hello world" });
+        t.assert(line.indexOf('key="hello world"') >= 0, "value with space should be quoted");
     },
 
-    "no detail field when extra is undefined": (t) => {
-        const logger = new Logger("test", { level: "INFO", output: "console", format: "json" });
-        const [entry] = capture(() => logger.info("no detail"));
-        t.assert(!("detail" in entry), "detail should not exist");
+    "_format omits null/undefined fields": (t) => {
+        const logger = new Logger({ level: "debug" });
+        const line = logger._format("info", "stage", { key: null, other: undefined });
+        t.assert(line.indexOf("key=") < 0, "null value should be omitted");
+        t.assert(line.indexOf("other=") < 0, "undefined value should be omitted");
     },
 
-    "text format outputs plain string": (t) => {
-        const logger = new Logger("test", { level: "INFO", output: "console", format: "text" });
-        let line = null;
-        const orig = console.log;
-        console.log = (s) => { line = s; };
-        logger.info("hello text");
-        console.log = orig;
-        t.assert(typeof line === "string", "output should be string");
-        t.assert(line.indexOf("INFO") >= 0, "should contain INFO");
-        t.assert(line.indexOf("hello text") >= 0, "should contain message");
+    "debug is suppressed when level is info": (t) => {
+        const logger = new Logger({ level: "info" });
+        t.assertEqual(logger._minLevel, 1, "minLevel should be 1 (info)");
+        // debug level is 0, which is < 1, so it is suppressed
+        t.assert(0 < logger._minLevel, "debug (0) should be below minLevel (1)");
     },
 
-    "getLogger() returns logger with root config": (t) => {
-        init({ level: "WARN", output: "console", format: "json" });
-        const logger = getLogger("root-test");
-        const lines = capture(() => logger.info("suppressed"));
-        t.assertEqual(lines.length, 0, "INFO should be suppressed when level is WARN");
-        const [entry] = capture(() => logger.error("visible"));
-        t.assertEqual(entry.level, "ERROR");
-        // Reset
+    "debug is enabled when level is debug": (t) => {
+        const logger = new Logger({ level: "debug" });
+        t.assertEqual(logger._minLevel, 0, "minLevel should be 0 (debug)");
+    },
+
+    "trace level is below debug": (t) => {
+        const logger = new Logger({ level: "debug" });
+        // LEVELS.trace = -1
+        t.assert(-1 < logger._minLevel === false, "trace (-1) is below debug (0)");
+    },
+
+    "disabled logger sets _disabled flag": (t) => {
+        const logger = new Logger({ disable: true });
+        t.assertEqual(logger._disabled, true, "_disabled should be true");
+    },
+
+    "maxFiles defaults to 10": (t) => {
+        const logger = new Logger({});
+        t.assertEqual(logger._maxFiles, 10, "default maxFiles should be 10");
+    },
+
+    "maxFiles respects config": (t) => {
+        const logger = new Logger({ maxFiles: 5 });
+        t.assertEqual(logger._maxFiles, 5, "maxFiles should be 5");
+    },
+
+    "maxFiles rejects zero, defaults to 10": (t) => {
+        const logger = new Logger({ maxFiles: 0 });
+        t.assertEqual(logger._maxFiles, 10, "maxFiles 0 should fall back to 10");
+    },
+
+    "_resolveFilePath index 0 returns repli.log": (t) => {
+        const logger = new Logger({});
+        const p = logger._resolveFilePath(0);
+        t.assert(p.endsWith("repli.log"), "index 0 should be repli.log");
+    },
+
+    "_resolveFilePath index 1 returns repli_0001.log": (t) => {
+        const logger = new Logger({});
+        const p = logger._resolveFilePath(1);
+        t.assert(p.endsWith("repli_0001.log"), "index 1 should be repli_0001.log");
+    },
+
+    "init() replaces singleton instance": (t) => {
+        const before = getInstance();
+        init({ level: "warn" });
+        const after = getInstance();
+        t.assert(before !== after, "getInstance should return new instance after init");
+        // restore
         init({});
     },
 
-    "file output writes to file": (t) => {
-        const fs = require("fs");
-        const path = "/app/logs/test-logger.log";
-        try { fs.unlink(path); } catch (_) {}
-
-        const logger = new Logger("test", {
-            level: "INFO",
-            output: "file",
-            format: "json",
-            file: { path, maxSize: "1MB", maxFiles: 3, rotate: "size" },
-        });
-        logger.info("file test");
-
-        const content = fs.readFile(path, "utf-8");
-        const entry = JSON.parse(content.trim());
-        t.assertEqual(entry.level, "INFO");
-        t.assertEqual(entry.message, "file test");
-
-        try { fs.unlink(path); } catch (_) {}
-    },
-
-    "both output writes to console and file": (t) => {
-        const fs = require("fs");
-        const path = "/app/logs/test-logger-both.log";
-        try { fs.unlink(path); } catch (_) {}
-
-        const logger = new Logger("test", {
-            level: "INFO",
-            output: "both",
-            format: "json",
-            file: { path, maxSize: "1MB", maxFiles: 3, rotate: "size" },
-        });
-        const lines = capture(() => logger.info("both test"));
-        t.assertEqual(lines.length, 1, "should output to console");
-
-        const content = fs.readFile(path, "utf-8");
-        t.assert(content.indexOf("both test") >= 0, "should write to file");
-
-        try { fs.unlink(path); } catch (_) {}
-    },
-
-    "size rotate triggers based on written bytes": (t) => {
-        const fs = require("fs");
-        const path = "/app/logs/test-size-rotate.log";
-        try { fs.unlink(path); } catch (_) {}
-
-        // maxSize 100 bytes — small enough to trigger rotation after a few writes
-        const logger = new Logger("test", {
-            level: "INFO",
-            output: "file",
-            format: "json",
-            file: { path, maxSize: "100B", maxFiles: 3, rotate: "size" },
-        });
-
-        // Write enough to exceed 100 bytes
-        logger.info("line one");
-        logger.info("line two");
-        logger.info("line three");
-
-        // After rotation, original path should exist (new file after rotate)
-        const content = fs.readFile(path, "utf-8");
-        t.assert(typeof content === "string", "log file should exist after rotation");
-
-        // Cleanup
-        try { fs.unlink(path); } catch (_) {}
-        const dir = "/app/logs";
-        try {
-            const files = fs.readdir(dir).filter(f => f.startsWith("test-size-rotate.log."));
-            files.forEach(f => { try { fs.unlink(dir + "/" + f); } catch (_) {} });
-        } catch (_) {}
+    "getInstance() returns Logger instance": (t) => {
+        init({});
+        const logger = getInstance();
+        t.assert(logger instanceof Logger, "should be instance of Logger");
     },
 });
 

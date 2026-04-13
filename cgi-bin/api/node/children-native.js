@@ -1,5 +1,5 @@
 /**
- * POST /cgi-bin/api/node/children  -- OPC UA 노드 browse (프론트엔드용)
+ * POST /cgi-bin/api/node/children-native  -- OPC UA 노드 native children 조회
  *
  * body: { endpoint, node, nodeClassMask? }
  */
@@ -12,7 +12,7 @@ const { CGI } = require(path.join(ROOT, 'src', 'cgi', 'cgi_util.js'));
 const Handler = require(path.join(ROOT, 'src', 'cgi', 'handler.js'));
 
 const handlers = {
-  POST: () => Handler.nodeChildren(CGI.readBody()),
+  POST: () => Handler.nodeChildrenNative(CGI.readBody()),
 };
 const method = (process.env.get('REQUEST_METHOD') || 'GET').toUpperCase();
 try {

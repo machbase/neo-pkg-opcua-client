@@ -5,7 +5,7 @@ const path = require('path');
 const fs = require('fs');
 const ROOT = path.resolve(path.dirname(process.argv[1]));
 
-const { init, getLogger } = require(path.join(ROOT, 'src', 'logger.js'));
+const { init, getInstance } = require(path.join(ROOT, 'src', 'lib', 'logger.js'));
 const Collector = require(path.join(ROOT, 'src', 'collector.js'));
 
 const configPath = process.argv[2];
@@ -16,19 +16,20 @@ if (!configPath) {
 
 try {
   const config = JSON.parse(fs.readFile(configPath, 'utf-8'));
-  init(config.log);
-  const logger = getLogger('app');
-
   const configName = path.basename(configPath, '.json');
+  init(config.log);
+  const logger = getInstance();
   const pidFile = path.join(ROOT, 'run', `${configName}.pid`);
   fs.mkdirSync(path.dirname(pidFile), { recursive: true });
   fs.writeFileSync(pidFile, String(process.pid), 'utf-8');
 
-  const collector = new Collector(config);
+  const collector = new Collector(config, { collectorName: configName });
 
   process.addShutdownHook(() => {
     logger.info('shutdown requested');
-    try { fs.unlinkSync(pidFile); } catch (_) {}
+    try {
+      fs.unlinkSync(pidFile);
+    } catch (_) {}
     collector.close();
   });
 

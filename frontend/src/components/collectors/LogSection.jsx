@@ -53,15 +53,18 @@ export default function LogSection({ form, update }) {
         {showFile && (
           <div className="space-y-20 pt-5 border-t border-border">
             <div>
-              <label className="form-label">File Path</label>
+              <label className="form-label">Log Directory</label>
               <input
                 type="text"
                 required={showFile}
                 value={form.log.file.path}
                 onChange={e => update('log.file.path', e.target.value)}
                 className="w-full"
-                placeholder="./logs/collector-a.log"
+                placeholder="${CWD}/log"
               />
+              <div className="help-text mt-6">
+                Log file name is generated automatically from the collector name.
+              </div>
             </div>
             <div className="grid grid-cols-3 gap-12">
               <div>

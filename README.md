@@ -92,10 +92,17 @@ neo-tools/
     │   ├── collector.js        # POST/GET/PUT/DELETE  /cgi-bin/api/collector
     │   ├── collector/
     │   │   ├── list.js         # GET    /cgi-bin/api/collector/list
+    │   │   ├── install.js      # POST   /cgi-bin/api/collector/install?name=xxx
+    │   │   ├── last-time.js    # GET    /cgi-bin/api/collector/last-time?name=xxx
     │   │   ├── start.js        # POST   /cgi-bin/api/collector/start?name=xxx
     │   │   └── stop.js         # POST   /cgi-bin/api/collector/stop?name=xxx
+    │   ├── db/
+    │   │   ├── connect.js      # POST   /cgi-bin/api/db/connect
+    │   │   └── table/
+    │   │       └── create.js   # POST   /cgi-bin/api/db/table/create
     │   └── node/
-    │       └── children.js     # POST   /cgi-bin/api/node/children
+    │       ├── children.js     # POST   /cgi-bin/api/node/children
+    │       └── children-native.js # POST /cgi-bin/api/node/children-native
     ├── conf.d/
     │   └── collector-a.json    # 수집기 설정 파일
     ├── src/
@@ -104,7 +111,8 @@ neo-tools/
     │   ├── collector.js            # Collector 클래스
     │   ├── logger.js               # Logger / LogRotator 클래스
     │   ├── db/
-    │   │   └── machbase-appender.js  # MachbaseAppender 클래스
+    │   │   ├── machbase-appender.js  # MachbaseAppender 클래스
+    │   │   └── machbase-client.js    # DB connect / exec helper
     │   └── opcua/
     │       └── opcua-client.js       # OpcuaClient 클래스 (read/write/browse/browseNext/children)
     ├── test/
@@ -112,6 +120,7 @@ neo-tools/
     │   ├── runner.js             # 테스트 러너
     │   ├── logger.test.js
     │   ├── opcua-client.test.js
+    │   ├── machbase-client.test.js
     │   ├── machbase-appender.test.js
     │   └── collector.test.js
     └── docs/
@@ -132,14 +141,19 @@ machbase-neo jsh -v /app=/path/to/neo-tools /app/cgi-bin/neo-collector.js /app/c
 
 | 메서드 | 경로 | 설명 |
 |--------|------|------|
-| GET | `/cgi-bin/api/collector/list` | 수집기 목록 조회 (running 상태 포함) |
-| POST | `/cgi-bin/api/collector` | 수집기 등록 (body: `{ name, config }`) |
+| GET | `/cgi-bin/api/collector/list` | 수집기 목록 조회 (`installed`, `running` 상태 포함) |
+| POST | `/cgi-bin/api/collector` | 수집기 등록 + service install (body: `{ name, config }`) |
 | GET | `/cgi-bin/api/collector?name=xxx` | 수집기 단건 조회 |
-| PUT | `/cgi-bin/api/collector?name=xxx` | 수집기 설정 수정 (body: config) |
-| DELETE | `/cgi-bin/api/collector?name=xxx` | 수집기 삭제 |
-| POST | `/cgi-bin/api/collector/start?name=xxx` | 수집기 시작 (데몬 연동 예정) |
-| POST | `/cgi-bin/api/collector/stop?name=xxx` | 수집기 종료 (데몬 연동 예정) |
-| POST | `/cgi-bin/api/node/children` | OPC UA 노드 자식 목록 조회 (body: `{ endpoint, node }`) |
+| PUT | `/cgi-bin/api/collector?name=xxx` | 수집기 설정 수정. 실행 중이면 service stop -> start. `db.password` 가 없거나 `""` 이면 기존 값을 유지 (body: config) |
+| DELETE | `/cgi-bin/api/collector?name=xxx` | 수집기 삭제 + service uninstall |
+| POST | `/cgi-bin/api/collector/install?name=xxx` | config-only 수집기의 service 설치 |
+| GET | `/cgi-bin/api/collector/last-time?name=xxx` | 마지막 성공 수집 시간 조회 (`service.details.lastCollectedAt`, epoch ms) |
+| POST | `/cgi-bin/api/collector/start?name=xxx` | 등록된 service 시작 |
+| POST | `/cgi-bin/api/collector/stop?name=xxx` | 등록된 service 종료 |
+| POST | `/cgi-bin/api/db/connect` | DB 접속 정보 유효성 검사 (body는 `config.db` 와 동일, `table` 제외 가능) |
+| POST | `/cgi-bin/api/db/table/create` | TAG 테이블 생성 (body는 `config.db` 와 동일) |
+| POST | `/cgi-bin/api/node/children` | OPC UA 노드 browse reference 목록 조회. UI 탐색용 endpoint (body: `{ endpoint, node }`) |
+| POST | `/cgi-bin/api/node/children-native` | JSH `opcua.children()` 원형 결과 조회용 endpoint (body: `{ endpoint, node }`) |
 
 ## 테스트
 

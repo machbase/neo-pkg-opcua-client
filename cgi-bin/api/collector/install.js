@@ -1,7 +1,5 @@
 /**
- * POST /cgi-bin/api/node/children  -- OPC UA 노드 browse (프론트엔드용)
- *
- * body: { endpoint, node, nodeClassMask? }
+ * POST /cgi-bin/api/collector/install?name=xxx  -- collector service 설치
  */
 
 const path = require('path');
@@ -11,8 +9,10 @@ const ROOT = _argv.slice(0, _argv.lastIndexOf('/cgi-bin/') + '/cgi-bin'.length);
 const { CGI } = require(path.join(ROOT, 'src', 'cgi', 'cgi_util.js'));
 const Handler = require(path.join(ROOT, 'src', 'cgi', 'handler.js'));
 
+const { name } = CGI.parseQuery();
+
 const handlers = {
-  POST: () => Handler.nodeChildren(CGI.readBody()),
+  POST: () => Handler.collectorInstall(name),
 };
 const method = (process.env.get('REQUEST_METHOD') || 'GET').toUpperCase();
 try {
