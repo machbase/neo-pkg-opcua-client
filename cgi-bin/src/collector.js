@@ -122,7 +122,6 @@ class Collector {
         if (this.timer !== null) {
             return;
         }
-        this.opcua.open();
         this._openDb();
         this.timer = setInterval(() => {
             try {
