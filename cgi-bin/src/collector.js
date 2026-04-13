@@ -1,23 +1,34 @@
 const OpcuaClient = require("./opcua/opcua-client.js");
-const MachbaseAppender = require("./db/machbase-appender.js");
+const { MachbaseClient } = require("./db/client.js");
+const { MachbaseStream } = require("./db/stream.js");
 const Service = require("./cgi/service.js");
 const { getInstance } = require("./lib/logger.js");
 
 const logger = getInstance();
 
+const _TAG_COLUMNS = [
+    { name: "NAME" },
+    { name: "TIME" },
+    { name: "VALUE" },
+];
+
 class Collector {
-    constructor(config, { opcuaClient, machbaseAppender, collectorName, lastCollectedAtWriter } = {}) {
+    constructor(config, { opcuaClient, db, collectorName, lastCollectedAtWriter } = {}) {
         const dbConf = config.db || {
-            host: '127.0.0.1',
+            host: "127.0.0.1",
             port: 5656,
-            user: 'sys',
-            password: 'manager',
+            user: "sys",
+            password: "manager",
         };
         this.nodes = config.opcua.nodes;
         this.nodeIds = this.nodes.map(n => n.nodeId);
         this.interval = config.opcua.interval;
         this.opcua = opcuaClient || new OpcuaClient(config.opcua.endpoint, config.opcua.readRetryInterval);
-        this.db = machbaseAppender || new MachbaseAppender(dbConf, config.db.table);
+        this._dbConf = dbConf;
+        this._table = config.db.table;
+        this._injectedDb = db || null;
+        this._dbClient = db ? db.client : null;
+        this._dbStream = db ? db.stream : null;
         this.collectorName = collectorName || config.name || "";
         this._lastCollectedAtWriter = lastCollectedAtWriter || ((name, value, callback) => {
             Service.setValue(name, "lastCollectedAt", value, callback);
@@ -32,11 +43,51 @@ class Collector {
         return value;
     }
 
+    _isDbOpen() {
+        return this._dbStream !== null && this._dbStream.stream !== null;
+    }
+
     _openDb() {
+        if (this._injectedDb) {
+            const { client, stream } = this._injectedDb;
+            const err = stream.open(client, this._table, _TAG_COLUMNS);
+            if (err) {
+                logger.error("db open failed", { error: err.message });
+                return;
+            }
+            this._dbClient = client;
+            this._dbStream = stream;
+            return;
+        }
         try {
-            this.db.open();
+            const client = new MachbaseClient(this._dbConf);
+            client.connect();
+            const stream = new MachbaseStream();
+            const err = stream.open(client, this._table, _TAG_COLUMNS);
+            if (err) {
+                logger.error("db open failed", { error: err.message });
+                try {
+                    client.close();
+                } catch (_) {}
+                return;
+            }
+            this._dbClient = client;
+            this._dbStream = stream;
         } catch (e) {
             logger.error("db open failed", { error: e.message });
+        }
+    }
+
+    _closeDb() {
+        if (this._dbStream) {
+            this._dbStream.close();
+            this._dbStream = null;
+        }
+        if (this._dbClient) {
+            try {
+                this._dbClient.close();
+            } catch (_) {}
+            this._dbClient = null;
         }
     }
 
@@ -48,9 +99,7 @@ class Collector {
         try {
             this.opcua.close();
         } catch (_) {}
-        try {
-            this.db.close();
-        } catch (_) {}
+        this._closeDb();
     }
 
     _recordLastCollectedAt(ts) {
@@ -76,9 +125,9 @@ class Collector {
 
     collect() {
         try {
-            if (!this.db.isOpen()) {
+            if (!this._isDbOpen()) {
                 this._openDb();
-                if (!this.db.isOpen()) {
+                if (!this._isDbOpen()) {
                     return;
                 }
             }
@@ -87,8 +136,11 @@ class Collector {
                 logger.warn("opcua connect failed, will retry");
                 return;
             }
+
             const results = this.opcua.read(this.nodeIds);
             let lastTs = null;
+            const matrix = [];
+
             this.nodes.forEach((node, idx) => {
                 const r = results[idx];
                 const ts = r.sourceTimestamp ? new Date(r.sourceTimestamp) : new Date();
@@ -102,19 +154,20 @@ class Collector {
                     value,
                     ts: ts.toISOString(),
                 });
-                this.db.append(node.name, ts, value);
-                logger.debug("appended", {
-                    name: node.name,
-                    value,
-                    ts: ts.toISOString(),
-                });
+                matrix.push([node.name, ts, value]);
             });
-            this.db.flush();
+
+            const appendErr = this._dbStream.append(matrix);
+            if (appendErr) {
+                throw appendErr;
+            }
+
             this._recordLastCollectedAt(lastTs);
             logger.info("collected", { count: this.nodes.length });
         } catch (e) {
             logger.error("collect error", { error: e.message });
             this.opcua.close();
+            this._closeDb();
         }
     }
 

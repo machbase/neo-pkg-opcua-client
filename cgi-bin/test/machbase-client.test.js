@@ -1,5 +1,6 @@
 const TestRunner = require("./runner.js");
-const MachbaseClient = require("../src/db/machbase-client.js");
+const { MachbaseClient } = require("../src/db/client.js");
+const { Column, TableSchema, ColumnType, FLAG_PRIMARY, FLAG_BASETIME, FLAG_SUMMARIZED } = require("../src/db/types.js");
 
 const runner = new TestRunner();
 
@@ -56,41 +57,8 @@ runner.run("MachbaseClient", {
     "connect() opens a connection": (t) => {
         const mock = createMock();
         const client = new MachbaseClient({}, { clientFactory: () => mock.client });
-        const conn = client.connect();
+        client.connect();
         t.assertEqual(mock.state.connectCalled, 1);
-        t.assertNotNull(conn);
-        client.close();
-    },
-
-    "createTagTable() executes fixed create SQL": (t) => {
-        const mock = createMock();
-        const client = new MachbaseClient({}, { clientFactory: () => mock.client });
-        client.connect();
-        client.createTagTable("TAGDATA");
-        t.assert(mock.state.execSql[0].indexOf("CREATE TAG TABLE TAGDATA") >= 0, "should create target table");
-        t.assert(mock.state.execSql[0].indexOf("NAME VARCHAR(100) PRIMARY KEY") >= 0, "should include NAME column");
-        t.assert(mock.state.execSql[0].indexOf("TIME DATETIME BASETIME") >= 0, "should include TIME column");
-        t.assert(mock.state.execSql[0].indexOf("VALUE DOUBLE SUMMARIZED") >= 0, "should include VALUE column");
-        client.close();
-    },
-
-    "hasTable() queries system tables using uppercase name": (t) => {
-        const mock = createMock({
-            query(sql, params) {
-                return {
-                    close() {},
-                    [Symbol.iterator]: function* () {
-                        yield { NAME: "TAGDATA" };
-                    },
-                };
-            },
-        });
-        const client = new MachbaseClient({}, { clientFactory: () => mock.client });
-        client.connect();
-        const exists = client.hasTable("tagdata");
-        t.assertEqual(exists, true);
-        t.assert(mock.state.queryArgs[0].sql.indexOf("M$SYS_TABLES") >= 0, "should query system table");
-        t.assertEqual(mock.state.queryArgs[0].params[0], "TAGDATA");
         client.close();
     },
 
@@ -112,6 +80,60 @@ runner.run("MachbaseClient", {
         client.close();
         t.assertEqual(mock.state.connClosed, 1);
         t.assertEqual(mock.state.clientClosed, 1);
+    },
+
+    "execute() runs DDL sql": (t) => {
+        const mock = createMock();
+        const client = new MachbaseClient({}, { clientFactory: () => mock.client });
+        client.connect();
+        client.execute("DROP TABLE FOO");
+        t.assertEqual(mock.state.execSql[0], "DROP TABLE FOO");
+        client.close();
+    },
+
+    "createTagTable() executes correct create SQL": (t) => {
+        const mock = createMock();
+        const client = new MachbaseClient({}, { clientFactory: () => mock.client });
+        client.connect();
+        const schema = new TableSchema("TAG", "TAGDATA", [
+            new Column("NAME", ColumnType.VARCHAR, 0, FLAG_PRIMARY, 100),
+            new Column("TIME", ColumnType.DATETIME, 1, FLAG_BASETIME, 0),
+            new Column("VALUE", ColumnType.DOUBLE, 2, FLAG_SUMMARIZED, 0),
+        ]);
+        client.createTagTable("TAGDATA", schema);
+        t.assert(mock.state.execSql[0].indexOf("CREATE TAG TABLE TAGDATA") >= 0, "should create target table");
+        t.assert(mock.state.execSql[0].indexOf("NAME VARCHAR(100) PRIMARY KEY") >= 0, "should include NAME column");
+        t.assert(mock.state.execSql[0].indexOf("TIME DATETIME BASETIME") >= 0, "should include TIME column");
+        t.assert(mock.state.execSql[0].indexOf("VALUE DOUBLE SUMMARIZED") >= 0, "should include VALUE column");
+        client.close();
+    },
+
+    "selectTableType() returns TAG for type code 6": (t) => {
+        const mock = createMock({
+            query(_sql, _params) {
+                return {
+                    close() {},
+                    [Symbol.iterator]: function* () {
+                        yield { TYPE: 6 };
+                    },
+                };
+            },
+        });
+        const client = new MachbaseClient({}, { clientFactory: () => mock.client });
+        client.connect();
+        const result = client.selectTableType("TAGDATA");
+        t.assertEqual(result.type, "TAG");
+        t.assert(mock.state.queryArgs[0].sql.indexOf("M$SYS_TABLES") >= 0, "should query system table");
+        client.close();
+    },
+
+    "selectTableType() returns UNSUPPORTED when not found": (t) => {
+        const mock = createMock();
+        const client = new MachbaseClient({}, { clientFactory: () => mock.client });
+        client.connect();
+        const result = client.selectTableType("MISSING");
+        t.assertEqual(result.type, "UNSUPPORTED");
+        client.close();
     },
 });
 

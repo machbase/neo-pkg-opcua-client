@@ -10,21 +10,28 @@ const { CGI } = require(path.join(ROOT, 'src', 'cgi', 'cgi_util.js'));
 const Handler = require(path.join(ROOT, 'src', 'cgi', 'handler.js'));
 
 const { name } = CGI.parseQuery();
+const reply = (r) => CGI.reply(r);
 
 const handlers = {
-  POST: () => Handler.collectorStop(name),
+  POST: () => {
+    if (!name) {
+      reply({ ok: false, reason: 'name is required' });
+      return;
+    }
+    Handler.collectorStop(name, reply);
+  },
 };
 const method = (process.env.get('REQUEST_METHOD') || 'GET').toUpperCase();
 try {
   const handler = handlers[method] || (() => {
-    CGI.reply({
+    reply({
       ok: false,
       reason: 'method not allowed',
     });
   });
   handler();
 } catch (err) {
-  CGI.reply({
+  reply({
     ok: false,
     reason: err && err.message ? err.message : String(err),
   });

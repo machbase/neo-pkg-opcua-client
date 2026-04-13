@@ -1,5 +1,5 @@
 /**
- * POST /cgi-bin/api/db/table/create  -- TAG 테이블 생성
+ * POST /cgi-bin/api/db/table/columns  -- 테이블 컬럼 목록 조회
  *
  * body: { host, port, user, password, table }
  */
@@ -41,7 +41,7 @@ const handlers = {
       reply({ ok: false, reason: 'db.table is required' });
       return;
     }
-    Handler.dbTableCreate({
+    Handler.dbTableColumns({
       host: db.host,
       port: Number(db.port),
       user: db.user,

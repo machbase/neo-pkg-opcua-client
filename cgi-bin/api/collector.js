@@ -13,24 +13,54 @@ const { CGI } = require(path.join(ROOT, 'src', 'cgi', 'cgi_util.js'));
 const Handler = require(path.join(ROOT, 'src', 'cgi', 'handler.js'));
 
 const { name } = CGI.parseQuery();
+const reply = (r) => CGI.reply(r);
 
 const handlers = {
-  POST:   () => Handler.collectorPost(CGI.readBody()),
-  GET:    () => Handler.collectorGet(name),
-  PUT:    () => Handler.collectorPut(name, CGI.readBody()),
-  DELETE: () => Handler.collectorDelete(name),
+  POST: () => {
+    const body = CGI.readBody();
+    if (!body.name) {
+      reply({ ok: false, reason: 'name is required' });
+      return;
+    }
+    if (!body.config) {
+      reply({ ok: false, reason: 'config is required' });
+      return;
+    }
+    Handler.collectorPost(body.name, body.config, reply);
+  },
+  GET: () => {
+    if (!name) {
+      reply({ ok: false, reason: 'name is required' });
+      return;
+    }
+    Handler.collectorGet(name, reply);
+  },
+  PUT: () => {
+    if (!name) {
+      reply({ ok: false, reason: 'name is required' });
+      return;
+    }
+    Handler.collectorPut(name, CGI.readBody(), reply);
+  },
+  DELETE: () => {
+    if (!name) {
+      reply({ ok: false, reason: 'name is required' });
+      return;
+    }
+    Handler.collectorDelete(name, reply);
+  },
 };
 const method = (process.env.get('REQUEST_METHOD') || 'GET').toUpperCase();
 try {
   const handler = handlers[method] || (() => {
-    CGI.reply({
+    reply({
       ok: false,
       reason: 'method not allowed',
     });
   });
   handler();
 } catch (err) {
-  CGI.reply({
+  reply({
     ok: false,
     reason: err && err.message ? err.message : String(err),
   });
