@@ -116,7 +116,7 @@ function collectorPut(name, body) {
     });
     return;
   }
-  CGI.writeConfig(name, _mergeConfigForUpdate(currentConfig, body));
+  const nextConfig = _mergeConfigForUpdate(currentConfig, body);
   Service.status(name, (statusErr, serviceInfo) => {
     if (statusErr && !Service.isMissingServiceError(statusErr)) {
       CGI.reply({
@@ -125,6 +125,7 @@ function collectorPut(name, body) {
       });
       return;
     }
+    CGI.writeConfig(name, nextConfig);
     const isRunning = !statusErr && serviceInfo
       && String(serviceInfo.status).toUpperCase() === 'RUNNING';
     if (!isRunning) {
@@ -234,6 +235,9 @@ function _uniqueConfigNames() {
     .sort();
 }
 
+// TODO: fast-path(getServiceMap 성공)에서 installed 판단이 runtime map 기준이라
+//       definition 파일 존재 여부와 다를 수 있음. 예: daemon 재시작 후 map에 없지만
+//       파일은 존재하는 경우 installed: false로 잘못 반환될 수 있음.
 // servicesByName: getServiceMap 성공 시 map, 실패 시 null
 function _replyCollectorStatuses(names, index, data, servicesByName) {
   if (index >= names.length) {
@@ -282,6 +286,10 @@ function collectorList() {
   });
 }
 
+// TODO: collectorInstall의 중복 설치 확인이 getServiceMap 성공/실패에 따라
+//       runtime map(getServiceMap)과 filesystem(Service.installed()) 두 가지 소스를 사용함.
+//       getServiceMap 실패 시 Service.installed()=false 이지만 runtime은 여전히 추적 중이라면
+//       불필요한 install 시도가 발생하고 JSH 구현에 따라 partial state가 남을 수 있음.
 /**
  * POST /cgi-bin/api/collector/install?name=xxx
  * @param {string} name
