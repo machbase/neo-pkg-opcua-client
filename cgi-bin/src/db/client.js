@@ -81,9 +81,8 @@ class MachbaseClient {
    * @param {Array<{ name: string }>} columns
    * @returns {object} machcli Appender 인스턴스
    */
-  openAppender(table, columns) {
-    const appender = this._conn.append(table);
-    return appender.withInputColumns(...columns.map(c => c.name));
+  openAppender(table) {
+    return this._conn.append(table);
   }
 
   /**

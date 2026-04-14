@@ -11,14 +11,14 @@ class Collector {
     constructor(config, { opcuaClient, db, collectorName, lastCollectedAtWriter } = {}) {
         const dbConf = CGI.getServerConfig(config.db);
         const table = config.dbTable;
-        const column = config.valueColumn || "VALUE";
+        const valueColumn = config.valueColumn || "VALUE";
         this.nodes = config.opcua.nodes;
         this.nodeIds = this.nodes.map(n => n.nodeId);
         this.interval = config.opcua.interval;
         this.opcua = opcuaClient || new OpcuaClient(config.opcua.endpoint, config.opcua.readRetryInterval);
         this._dbConf = dbConf;
         this._table = table;
-        this._tagColumns = [{ name: "NAME" }, { name: "TIME" }, { name: column }];
+        this._valueColumn = valueColumn;
         this._injectedDb = db || null;
         this._dbClient = db ? db.client : null;
         this._dbStream = db ? db.stream : null;
@@ -44,7 +44,7 @@ class Collector {
     _openDb() {
         if (this._injectedDb) {
             const { client, stream } = this._injectedDb;
-            const err = stream.open(client, this._table, this._tagColumns);
+            const err = stream.open(client, this._table, this._valueColumn);
             if (err) {
                 logger.error("db open failed", { error: err.message });
                 return;
@@ -57,7 +57,7 @@ class Collector {
             const client = new MachbaseClient(this._dbConf);
             client.connect();
             const stream = new MachbaseStream();
-            const err = stream.open(client, this._table, this._tagColumns);
+            const err = stream.open(client, this._table, this._valueColumn);
             if (err) {
                 logger.error("db open failed", { error: err.message });
                 try {
