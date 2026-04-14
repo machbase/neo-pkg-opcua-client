@@ -1,5 +1,7 @@
 'use strict';
 
+const { FLAG_SUMMARIZED } = require('./types.js');
+
 /**
  * Machbase append 스트림 래퍼
  *
@@ -53,6 +55,11 @@ class MachbaseStream {
         if (this._timeIdx < 0) missing.push('TIME');
         if (this._valueIdx < 0) missing.push(vcUpper);
         return new Error('column not found in table \'' + table + '\': ' + missing.join(', '));
+      }
+
+      const conflicting = cols.filter((c, i) => i !== this._nameIdx && i !== this._timeIdx && i !== this._valueIdx && (c.FLAG & FLAG_SUMMARIZED));
+      if (conflicting.length > 0) {
+        return new Error('table \'' + table + '\' has other SUMMARIZED columns that cannot be null: ' + conflicting.map(c => c.NAME).join(', ') + '. Use one of these as valueColumn instead.');
       }
 
       this.columnNames = cols.map(c => c.NAME);
