@@ -2,36 +2,38 @@
 
 const process = require('process');
 const path = require('path');
-const fs = require('fs');
-const { CGI }= require('./src/cgi/cgi_util.js');
+const { CGI } = require('./src/cgi/cgi_util.js');
 const ROOT = path.resolve(path.dirname(process.argv[1]));
 
 const { init, getInstance } = require(path.join(ROOT, 'src', 'lib', 'logger.js'));
 const Collector = require(path.join(ROOT, 'src', 'collector.js'));
 
-const configName = process.argv[2];
-if (!configName) {
-  console.log(JSON.stringify({ level: 'ERROR', message: 'config name is required: neo-collector.js <config.json>' }));
+const arg = process.argv[2];
+if (!arg) {
+  console.println(JSON.stringify({ level: 'ERROR', message: 'config name is required: neo-collector.js <name>' }));
   process.exit(1);
 }
 
+const configName = path.basename(arg, '.json');
+
 try {
   const config = CGI.getConfig(configName);
-  const configName = path.basename(configName, '.json');
+  if (!config) {
+    console.println(JSON.stringify({ level: 'ERROR', message: 'config not found: ' + configName }));
+    process.exit(1);
+  }
+
   init(config.log);
   const logger = getInstance();
-  const pidFile = path.join(ROOT, `${configName}.pid`);
-  fs.writeFileSync(pidFile, String(process.pid), 'utf-8');
 
   const collector = new Collector(config, { collectorName: configName });
 
   process.addShutdownHook(() => {
     logger.info('shutdown requested');
-    try {
-      fs.unlinkSync(pidFile);
-    } catch (_) {}
     collector.close();
   });
+
+  logger.info('starting', { name: configName });
 
   function startWithRetry() {
     try {
@@ -44,6 +46,6 @@ try {
 
   startWithRetry();
 } catch (err) {
-  console.log(JSON.stringify({ level: 'ERROR', message: err.message }));
+  console.println(JSON.stringify({ level: 'ERROR', message: err && err.message ? err.message : String(err) }));
   process.exit(1);
 }
