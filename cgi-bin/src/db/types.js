@@ -32,26 +32,13 @@ class ColumnType {
   static JSON      = new ColumnType('JSON');
   static UNKNOWN   = new ColumnType(null);
 
-  /** @type {Map<number, ColumnType>} */
-  static #byCode = new Map([
-    [4,   ColumnType.SHORT],   [104, ColumnType.USHORT],
-    [8,   ColumnType.INTEGER], [108, ColumnType.UINTEGER],
-    [12,  ColumnType.LONG],    [112, ColumnType.ULONG],
-    [6,   ColumnType.DATETIME],
-    [16,  ColumnType.FLOAT],   [20,  ColumnType.DOUBLE],
-    [5,   ColumnType.VARCHAR], [49,  ColumnType.TEXT],
-    [53,  ColumnType.CLOB],    [57,  ColumnType.BLOB],
-    [97,  ColumnType.BINARY],  [32,  ColumnType.IPV4],
-    [36,  ColumnType.IPV6],    [61,  ColumnType.JSON],
-  ]);
-
   /**
    * M$SYS_COLUMNS.TYPE 코드로 ColumnType 인스턴스 반환
    * @param {number} code
    * @returns {ColumnType}
    */
   static fromCode(code) {
-    return ColumnType.#byCode.get(code) ?? ColumnType.UNKNOWN;
+    return _columnTypeByCode.get(code) || ColumnType.UNKNOWN;
   }
 }
 
@@ -110,5 +97,18 @@ class TableSchema {
     this.columns = columns || [];
   }
 }
+
+/** @type {Map<number, ColumnType>} */
+const _columnTypeByCode = new Map([
+  [4,   ColumnType.SHORT],   [104, ColumnType.USHORT],
+  [8,   ColumnType.INTEGER], [108, ColumnType.UINTEGER],
+  [12,  ColumnType.LONG],    [112, ColumnType.ULONG],
+  [6,   ColumnType.DATETIME],
+  [16,  ColumnType.FLOAT],   [20,  ColumnType.DOUBLE],
+  [5,   ColumnType.VARCHAR], [49,  ColumnType.TEXT],
+  [53,  ColumnType.CLOB],    [57,  ColumnType.BLOB],
+  [97,  ColumnType.BINARY],  [32,  ColumnType.IPV4],
+  [36,  ColumnType.IPV6],    [61,  ColumnType.JSON],
+]);
 
 module.exports = { ColumnType, Column, TableSchema, FLAG_BASETIME, FLAG_SUMMARIZED, FLAG_METADATA, FLAG_PRIMARY };

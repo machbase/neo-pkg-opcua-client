@@ -106,7 +106,7 @@ class Logger {
   // index 0: repli.log, index 1+: repli_0001.log, repli_0002.log, ...
   _resolveFilePath(index) {
     const suffix = index === 0 ? '' : `_${String(index).padStart(4, '0')}`;
-    return path.join(this._fileDir, `repli${suffix}.log`);
+    return path.join(this._fileDir, `${PKG_NAME}${suffix}.log`);
   }
 
   _ensurePath() {
