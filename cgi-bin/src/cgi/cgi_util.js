@@ -6,6 +6,7 @@ const process = require('process');
 
 const APP_DIR = process.argv[1].slice(0, process.argv[1].lastIndexOf('/cgi-bin/') + '/cgi-bin'.length);
 const CONF_DIR = path.join(APP_DIR, 'conf.d');
+const SERVERS_DIR = path.join(CONF_DIR, 'servers');
 
 class CGI {
 
@@ -80,6 +81,68 @@ class CGI {
       return fs.statSync(path.join(CONF_DIR, `${name}.json`)).isFile();
     } catch (_) {
       return false;
+    }
+  }
+
+  // ── conf.d/servers CRUD ─────────────────────────────────────────────────────
+
+  /**
+   * conf.d/servers/ 디렉토리의 JSON 설정 파일 이름 목록을 반환한다.
+   * @returns {string[]}
+   */
+  static getServerConfigList() {
+    try {
+      return fs.readdirSync(SERVERS_DIR)
+        .filter(f => f.endsWith('.json'))
+        .map(f => f.replace(/\.json$/, ''));
+    } catch (_) {
+      return [];
+    }
+  }
+
+  /**
+   * 이름으로 서버 설정 파일을 읽어 반환한다. 없으면 null을 반환한다.
+   * @param {string} name
+   * @returns {object|null}
+   */
+  static getServerConfig(name) {
+    try {
+      const raw = fs.readFileSync(path.join(SERVERS_DIR, `${name}.json`), 'utf8');
+      return JSON.parse(raw);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /**
+   * 서버 설정을 파일에 저장한다. 디렉토리가 없으면 생성한다 (atomic write).
+   * @param {string} name
+   * @param {object} config
+   */
+  static writeServerConfig(name, config) {
+    fs.mkdirSync(SERVERS_DIR, { recursive: true });
+    const filePath = path.join(SERVERS_DIR, `${name}.json`);
+    const tmpPath = `${filePath}.${Date.now()}.tmp`;
+    fs.writeFileSync(tmpPath, JSON.stringify(config, null, 2), 'utf8');
+    fs.renameSync(tmpPath, filePath);
+  }
+
+  /**
+   * 서버 설정 파일을 삭제한다. 파일이 이미 없으면 null, 그 외 오류는 err를 반환한다.
+   * @param {string} name
+   * @returns {Error|null}
+   */
+  static removeServerConfig(name) {
+    try {
+      fs.unlinkSync(path.join(SERVERS_DIR, `${name}.json`));
+      return null;
+    } catch (err) {
+      const message = err && err.message ? String(err.message) : String(err || '');
+      const isMissing = (err && err.code === 'ENOENT')
+        || message.indexOf('no such file') >= 0
+        || message.indexOf('cannot find the file') >= 0
+        || message.indexOf('cannot find the path') >= 0;
+      return isMissing ? null : err;
     }
   }
 

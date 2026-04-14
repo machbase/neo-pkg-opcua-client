@@ -14,18 +14,6 @@ function errorMessage(err) {
 
 // ── Collector CRUD ──────────────────────────────────────────────────────────
 
-function _mergeConfigForUpdate(currentConfig, nextConfig) {
-  const merged = { ...nextConfig };
-  if (currentConfig && currentConfig.db) {
-    merged.db = { ...(nextConfig.db || {}) };
-    if (currentConfig.db.password !== undefined &&
-        (merged.db.password === undefined || merged.db.password === '')) {
-      merged.db.password = currentConfig.db.password;
-    }
-  }
-  return merged;
-}
-
 /**
  * POST /cgi-bin/api/collector
  * @param {string} name
@@ -71,13 +59,11 @@ function collectorGet(name, reply) {
     });
     return;
   }
-  const safeConfig = { ...config, db: { ...config.db } };
-  delete safeConfig.db.password;
   reply({
     ok: true,
     data: {
       name,
-      config: safeConfig,
+      config,
     },
   });
 }
@@ -97,7 +83,7 @@ function collectorPut(name, body, reply) {
     });
     return;
   }
-  const nextConfig = _mergeConfigForUpdate(currentConfig, body);
+  const nextConfig = body;
   Service.status(name, (statusErr, serviceInfo) => {
     if (statusErr && !Service.isMissingServiceError(statusErr)) {
       reply({
@@ -441,6 +427,124 @@ function collectorStop(name, reply) {
   });
 }
 
+// ── DB Server config CRUD ───────────────────────────────────────────────────
+
+function _mergeServerConfig(current, next) {
+  const merged = { ...next };
+  if (current && current.password !== undefined &&
+      (merged.password === undefined || merged.password === '')) {
+    merged.password = current.password;
+  }
+  return merged;
+}
+
+/**
+ * POST /cgi-bin/api/db/server
+ * @param {string} name
+ * @param {object} config
+ * @param {function} reply
+ */
+function serverPost(name, config, reply) {
+  if (CGI.getServerConfig(name)) {
+    reply({
+      ok: false,
+      reason: `server '${name}' already exists`,
+    });
+    return;
+  }
+  CGI.writeServerConfig(name, config);
+  reply({
+    ok: true,
+    data: { name },
+  });
+}
+
+/**
+ * GET /cgi-bin/api/db/server?name=xxx
+ * @param {string} name
+ * @param {function} reply
+ */
+function serverGet(name, reply) {
+  const config = CGI.getServerConfig(name);
+  if (!config) {
+    reply({
+      ok: false,
+      reason: `server '${name}' not found`,
+    });
+    return;
+  }
+  const safeConfig = { ...config };
+  delete safeConfig.password;
+  reply({
+    ok: true,
+    data: { name, config: safeConfig },
+  });
+}
+
+/**
+ * PUT /cgi-bin/api/db/server?name=xxx
+ * @param {string} name
+ * @param {object} body
+ * @param {function} reply
+ */
+function serverPut(name, body, reply) {
+  const current = CGI.getServerConfig(name);
+  if (!current) {
+    reply({
+      ok: false,
+      reason: `server '${name}' not found`,
+    });
+    return;
+  }
+  CGI.writeServerConfig(name, _mergeServerConfig(current, body));
+  reply({
+    ok: true,
+    data: { name },
+  });
+}
+
+/**
+ * DELETE /cgi-bin/api/db/server?name=xxx
+ * @param {string} name
+ * @param {function} reply
+ */
+function serverDelete(name, reply) {
+  if (!CGI.getServerConfig(name)) {
+    reply({
+      ok: false,
+      reason: `server '${name}' not found`,
+    });
+    return;
+  }
+  const err = CGI.removeServerConfig(name);
+  if (err) {
+    reply({
+      ok: false,
+      reason: errorMessage(err),
+    });
+    return;
+  }
+  reply({ ok: true });
+}
+
+/**
+ * GET /cgi-bin/api/db/server/list
+ * @param {function} reply
+ */
+function serverList(reply) {
+  const names = CGI.getServerConfigList().sort();
+  const data = names.map((name) => {
+    const config = CGI.getServerConfig(name);
+    const safeConfig = { ...config };
+    delete safeConfig.password;
+    return { name, config: safeConfig };
+  });
+  reply({
+    ok: true,
+    data,
+  });
+}
+
 // ── DB endpoints ────────────────────────────────────────────────────────────
 
 /**
@@ -519,10 +623,10 @@ function dbTableColumns(db, reply) {
   const client = new MachbaseClient(db);
   try {
     client.connect();
-    if (client.selectTableType(db.table).type === 'UNSUPPORTED') {
+    if (client.selectTableType(db.table).type !== 'TAG') {
       reply({
         ok: false,
-        reason: `table '${db.table}' not found`,
+        reason: `table '${db.table}' is not a TAG table`,
       });
       return;
     }
@@ -555,32 +659,33 @@ function dbTableColumns(db, reply) {
   }
 }
 
-// ── Node endpoints ──────────────────────────────────────────────────────────
+// ── OPC UA one-shot endpoints ───────────────────────────────────────────────
 
 /**
- * POST /cgi-bin/api/node/children
- * @param {object} body
+ * GET /cgi-bin/api/opcua/read?endpoint=xxx&nodes=id1,id2
+ * @param {string} endpoint
+ * @param {string[]} nodeIds
  * @param {function} reply
  */
-function nodeChildren(body, reply) {
-  const client = new OpcuaClient(body.endpoint);
+function opcuaRead(endpoint, nodeIds, reply) {
+  const client = new OpcuaClient(endpoint);
   if (!client.open()) {
     reply({
       ok: false,
-      reason: 'connect failed: ' + body.endpoint,
+      reason: 'connect failed: ' + endpoint,
     });
     return;
   }
   try {
-    const request = { nodes: [body.node] };
-    if (typeof body.nodeClassMask === 'number') {
-      request.nodeClassMask = body.nodeClassMask;
-    }
-    const results = client.browse(request);
-    const data = results && results[0] && results[0].references ? results[0].references : [];
+    const results = client.read(nodeIds);
     reply({
       ok: true,
-      data,
+      data: nodeIds.map((nodeId, i) => ({
+        nodeId,
+        value: results[i].value,
+        sourceTimestamp: results[i].sourceTimestamp,
+        serverTimestamp: results[i].serverTimestamp,
+      })),
     });
   } catch (e) {
     reply({
@@ -593,11 +698,69 @@ function nodeChildren(body, reply) {
 }
 
 /**
- * POST /cgi-bin/api/node/children-native
+ * POST /cgi-bin/api/opcua/write
+ * @param {string} endpoint
+ * @param {Array<{ node: string, value: any }>} writes
+ * @param {function} reply
+ */
+function opcuaWrite(endpoint, writes, reply) {
+  const client = new OpcuaClient(endpoint);
+  if (!client.open()) {
+    reply({
+      ok: false,
+      reason: 'connect failed: ' + endpoint,
+    });
+    return;
+  }
+  try {
+    const result = client.write(...writes);
+    reply({
+      ok: true,
+      data: result,
+    });
+  } catch (e) {
+    reply({
+      ok: false,
+      reason: errorMessage(e),
+    });
+  } finally {
+    client.close();
+  }
+}
+
+// ── Node endpoints ──────────────────────────────────────────────────────────
+
+/**
+ * POST /cgi-bin/api/opcua/node/descendants
  * @param {object} body
  * @param {function} reply
  */
-function nodeChildrenNative(body, reply) {
+function _browseAll(client, nodeId, nodeClassMask) {
+  const request = { nodes: [nodeId] };
+  if (typeof nodeClassMask === 'number') {
+    request.nodeClassMask = nodeClassMask;
+  }
+  const results = client.browse(request);
+  const first = results && results[0] ? results[0] : {};
+  const references = first.references ? first.references.slice() : [];
+  let continuationPoint = first.continuationPoint;
+  while (continuationPoint) {
+    const nextResults = client.browseNext({
+      continuationPoints: [continuationPoint],
+      releaseContinuationPoints: false,
+    });
+    const next = nextResults && nextResults[0] ? nextResults[0] : {};
+    if (next.references && next.references.length > 0) {
+      for (let i = 0; i < next.references.length; i++) {
+        references.push(next.references[i]);
+      }
+    }
+    continuationPoint = next.continuationPoint;
+  }
+  return references;
+}
+
+function nodeChildren(body, reply) {
   const client = new OpcuaClient(body.endpoint);
   if (!client.open()) {
     reply({
@@ -607,10 +770,26 @@ function nodeChildrenNative(body, reply) {
     return;
   }
   try {
-    const results = client.children(body);
+    const visited = {};
+    visited[body.node] = true;
+    const queue = [body.node];
+    const all = [];
+    while (queue.length > 0) {
+      const current = queue.shift();
+      const references = _browseAll(client, current, body.nodeClassMask);
+      for (let i = 0; i < references.length; i++) {
+        const ref = references[i];
+        all.push(ref);
+        const childId = ref.NodeId;
+        if (childId && !visited[childId]) {
+          visited[childId] = true;
+          queue.push(childId);
+        }
+      }
+    }
     reply({
       ok: true,
-      data: results,
+      data: all,
     });
   } catch (e) {
     reply({
@@ -632,9 +811,15 @@ module.exports = {
   collectorLastTime,
   collectorStart,
   collectorStop,
+  serverPost,
+  serverGet,
+  serverPut,
+  serverDelete,
+  serverList,
   dbConnect,
   dbTableCreate,
   dbTableColumns,
   nodeChildren,
-  nodeChildrenNative,
+  opcuaRead,
+  opcuaWrite,
 };

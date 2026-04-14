@@ -36,3 +36,6 @@ Thumbs.db
 
 # Http
 *.http
+
+# Collector runtime configs
+cgi-bin/conf.d

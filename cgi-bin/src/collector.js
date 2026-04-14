@@ -2,30 +2,23 @@ const OpcuaClient = require("./opcua/opcua-client.js");
 const { MachbaseClient } = require("./db/client.js");
 const { MachbaseStream } = require("./db/stream.js");
 const Service = require("./cgi/service.js");
+const { CGI } = require("./cgi/cgi_util.js");
 const { getInstance } = require("./lib/logger.js");
 
 const logger = getInstance();
 
-const _TAG_COLUMNS = [
-    { name: "NAME" },
-    { name: "TIME" },
-    { name: "VALUE" },
-];
-
 class Collector {
     constructor(config, { opcuaClient, db, collectorName, lastCollectedAtWriter } = {}) {
-        const dbConf = config.db || {
-            host: "127.0.0.1",
-            port: 5656,
-            user: "sys",
-            password: "manager",
-        };
+        const dbConf = CGI.getServerConfig(config.db);
+        const table = config.dbTable;
+        const column = config.valueColumn || "VALUE";
         this.nodes = config.opcua.nodes;
         this.nodeIds = this.nodes.map(n => n.nodeId);
         this.interval = config.opcua.interval;
         this.opcua = opcuaClient || new OpcuaClient(config.opcua.endpoint, config.opcua.readRetryInterval);
         this._dbConf = dbConf;
-        this._table = config.db.table;
+        this._table = table;
+        this._tagColumns = [{ name: "NAME" }, { name: "TIME" }, { name: column }];
         this._injectedDb = db || null;
         this._dbClient = db ? db.client : null;
         this._dbStream = db ? db.stream : null;
@@ -36,10 +29,11 @@ class Collector {
         this.timer = null;
     }
 
-    _normalizeValue(value) {
+    _normalizeValue(value, node) {
         if (typeof value === "boolean") {
-            return value ? 1 : 0;
+            value = value ? 1 : 0;
         }
+        value = (value + (node.add ?? 0)) * (node.multiply ?? 1);
         return value;
     }
 
@@ -50,7 +44,7 @@ class Collector {
     _openDb() {
         if (this._injectedDb) {
             const { client, stream } = this._injectedDb;
-            const err = stream.open(client, this._table, _TAG_COLUMNS);
+            const err = stream.open(client, this._table, this._tagColumns);
             if (err) {
                 logger.error("db open failed", { error: err.message });
                 return;
@@ -63,7 +57,7 @@ class Collector {
             const client = new MachbaseClient(this._dbConf);
             client.connect();
             const stream = new MachbaseStream();
-            const err = stream.open(client, this._table, _TAG_COLUMNS);
+            const err = stream.open(client, this._table, this._tagColumns);
             if (err) {
                 logger.error("db open failed", { error: err.message });
                 try {
@@ -144,7 +138,7 @@ class Collector {
             this.nodes.forEach((node, idx) => {
                 const r = results[idx];
                 const ts = r.sourceTimestamp ? new Date(r.sourceTimestamp) : new Date();
-                const value = this._normalizeValue(r.value);
+                const value = this._normalizeValue(r.value, node);
                 if (lastTs === null || ts.getTime() > lastTs.getTime()) {
                     lastTs = ts;
                 }

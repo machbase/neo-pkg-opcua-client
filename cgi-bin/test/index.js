@@ -6,6 +6,7 @@ const suites = [
     "./machbase-client.test.js",
     "./machbase-stream.test.js",
     "./collector.test.js",
+    "./handler.test.js",
 ];
 
 let allPassed = true;

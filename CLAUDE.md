@@ -53,9 +53,11 @@ cgi-bin/
 │   │   ├── connect.js            # POST   /cgi-bin/api/db/connect
 │   │   └── table/
 │   │       └── create.js         # POST   /cgi-bin/api/db/table/create
-│   └── node/
-│       ├── children.js           # POST   /cgi-bin/api/node/children
-│       └── children-native.js    # POST   /cgi-bin/api/node/children-native
+│   └── opcua/
+│       ├── read.js               # POST   /cgi-bin/api/opcua/read
+│       ├── write.js              # POST   /cgi-bin/api/opcua/write
+│       └── node/
+│           └── descendants.js    # POST   /cgi-bin/api/opcua/node/descendants
 ├── src/
 │   ├── collector.js              # polling loop
 │   ├── logger.js                 # logger / rotator
@@ -170,27 +172,18 @@ CREATE TAG TABLE ${table} (
 - list API와 delete 흐름에서 이 둘을 혼동하면 상태가 꼬인다
 - delete 구현은 retry loop보다 단일 cleanup 흐름을 유지하는 쪽이 안전하다
 
-## OPC UA browse / children 메모
+## OPC UA node browse 메모
 
-현재 프론트엔드 node browser는 `children.js` 를 사용한다.
-그런데 이 endpoint는 이름은 `children` 이지만 현재 실제 구현은 `browse()` 기반이다.
+`/cgi-bin/api/opcua/node/descendants` 는 BFS로 지정 노드의 모든 하위 노드를 탐색한다.
 
-이유:
+구현 배경:
 
 - 일부 서버/노드 조합에서 JSH `opcua.Client#children()` 이 Variable 노드를 누락했다
 - 실제 테스트에서 `ns=1;s=Plant1.Line1` 에 대해:
   - `browse()` 는 `Temperature`, `Pressure`, `Counter` 반환
   - `children()` 는 `Line1` 만 반환
 
-그래서 현재 endpoint 의미는 아래와 같다.
-
-- `/cgi-bin/api/node/children`
-  - 프론트용
-  - `browse()` 결과의 `references` 반환
-- `/cgi-bin/api/node/children-native`
-  - JSH native `children()` 결과 비교용
-
-이 부분은 나중에 API 이름을 더 명확히 바꿀 수 있지만, 현재 프론트는 `children` 경로를 기대한다.
+따라서 `browse()` 기반 BFS 탐색을 사용한다.
 
 ## Logger 메모
 
@@ -216,7 +209,7 @@ collector-a.2026-04-08.log
   - logger file I/O
   - service install/start/stop/uninstall
   - CGI mounted path
-  - OPC UA browse / children 차이
+  - OPC UA browse / descendants 동작
 
 ## 공개 테스트 경로 메모
 
@@ -229,7 +222,7 @@ collector-a.2026-04-08.log
 예시 URL:
 
 - `http://127.0.0.1:5654/public/neo-pkg-opcua-client/cgi-bin/api/collector`
-- `http://127.0.0.1:5654/public/neo-pkg-opcua-client/cgi-bin/api/node/children`
+- `http://127.0.0.1:5654/public/neo-pkg-opcua-client/cgi-bin/api/opcua/node/descendants`
 
 ## 다음 작업자 체크리스트
 

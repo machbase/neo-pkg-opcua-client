@@ -37,11 +37,12 @@ class MockMachbaseStream {
         this.openError = null;
         this.appendError = null;
     }
-    open(_client, _table, _columns) {
+    open(_client, _table, columns) {
         if (this.openError) {
             return new Error(this.openError);
         }
         this.stream = {};
+        this.openedColumns = columns;
         return null;
     }
     append(matrix) {
@@ -71,7 +72,8 @@ const testConfig = {
             { nodeId: "ns=1;s=Tag2", name: "sensor.tag2" },
         ],
     },
-    db: { table: "TAG", host: "127.0.0.1", port: 5656, user: "sys", password: "manager" },
+    db: "my-server",
+    dbTable: "TAG",
 };
 
 function makeCollector() {
@@ -217,6 +219,30 @@ runner.run("Collector", {
         c.collect();
         t.assert(opcuaClient.closed, "opcua should be closed on error");
         t.assertEqual(detailWrites.length, 0, "lastCollectedAt should not be updated on append failure");
+        clearInterval(c.timer);
+    },
+
+    "constructor uses VALUE column by default": (t) => {
+        const { dbStream } = makeCollector();
+        const cols = dbStream.openedColumns;
+        t.assert(cols && cols[2] && cols[2].name === "VALUE", "default column should be VALUE");
+    },
+
+    "constructor uses valueColumn when specified": (t) => {
+        const opcuaClient = new MockOpcuaClient();
+        const dbClient = new MockMachbaseClient();
+        const dbStream = new MockMachbaseStream();
+        const config = {
+            ...testConfig,
+            valueColumn: "TEMPERATURE",
+        };
+        const c = new Collector(config, {
+            opcuaClient,
+            db: { client: dbClient, stream: dbStream },
+            collectorName: "collector-a",
+        });
+        c.start();
+        t.assert(dbStream.openedColumns && dbStream.openedColumns[2].name === "TEMPERATURE", "should use TEMPERATURE column");
         clearInterval(c.timer);
     },
 });

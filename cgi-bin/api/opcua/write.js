@@ -1,7 +1,7 @@
 /**
- * POST /cgi-bin/api/node/children  -- OPC UA 노드 browse (프론트엔드용)
+ * POST /cgi-bin/api/opcua/write  -- OPC UA 노드 일회성 쓰기
  *
- * body: { endpoint, node, nodeClassMask? }
+ * body: { endpoint, writes: [{ node, value }, ...] }
  */
 
 const path = require('path');
@@ -20,11 +20,21 @@ const handlers = {
       reply({ ok: false, reason: 'endpoint is required' });
       return;
     }
-    if (!body.node) {
-      reply({ ok: false, reason: 'node is required' });
+    if (!Array.isArray(body.writes) || body.writes.length === 0) {
+      reply({ ok: false, reason: 'writes is required and must be a non-empty array' });
       return;
     }
-    Handler.nodeChildren(body, reply);
+    for (const w of body.writes) {
+      if (!w.node) {
+        reply({ ok: false, reason: 'each write entry must have a node' });
+        return;
+      }
+      if (w.value === undefined || w.value === null) {
+        reply({ ok: false, reason: `value is required for node '${w.node}'` });
+        return;
+      }
+    }
+    Handler.opcuaWrite(body.endpoint, body.writes, reply);
   },
 };
 const method = (process.env.get('REQUEST_METHOD') || 'GET').toUpperCase();

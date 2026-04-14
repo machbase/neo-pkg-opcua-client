@@ -5,7 +5,10 @@ const path = require('path');
 const process = require('process');
 
 const HOME = process.env.get('HOME');
-const LOG_DIR = path.join(HOME, 'public', 'logs');
+const _cgiBinIdx = process.argv[1].lastIndexOf('/cgi-bin/');
+const _appDir = _cgiBinIdx >= 0 ? process.argv[1].slice(0, _cgiBinIdx + '/cgi-bin'.length) : null;
+const PKG_NAME = _appDir ? path.basename(path.dirname(_appDir)) : 'neo-pkg-opcua-client';
+const LOG_DIR = path.join(HOME, 'public', 'logs', PKG_NAME);
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
 
@@ -27,7 +30,7 @@ const LEVEL_LABEL = {
 /**
  * Logger — 크기 기반 로테이션, file 출력
  *
- * 출력 디렉토리: $HOME/public/logs  (고정)
+ * 출력 디렉토리: $HOME/public/logs/{pkg}  (pkg = process.argv[1] 기반 패키지 디렉토리명)
  * 파일명: repli.log, repli_0001.log, repli_0002.log, ...
  * 파일당 최대 크기: 10 MB
  *

@@ -107,6 +107,23 @@ runner.run("MachbaseStream", {
         t.assertNull(err, "close should return null when not open");
         t.assertNull(stream.stream, "stream should remain null");
     },
+
+    "close() returns error when flush throws": (t) => {
+        const mock = makeMockClient({ flushError: "flush on close failed" });
+        const stream = new MachbaseStream();
+        stream.open(mock, "TAG", []);
+        const err = stream.close();
+        t.assertNotNull(err, "should return error when flush throws");
+        t.assert(err.message.indexOf("flush on close failed") >= 0, "error message should match");
+        t.assertNull(stream.stream, "stream should be null even after flush error");
+    },
+
+    "append() returns error when stream is not open": (t) => {
+        const stream = new MachbaseStream();
+        const err = stream.append([["tag", new Date(), 1.0]]);
+        t.assertNotNull(err, "should return error when stream is not open");
+        t.assert(err.message.indexOf("before open") >= 0, "error message should mention open");
+    },
 });
 
 runner.summary();

@@ -1,7 +1,7 @@
 /**
  * POST /cgi-bin/api/db/table/create  -- TAG 테이블 생성
  *
- * body: { host, port, user, password, table }
+ * body: { server: "server-name", table: "TAGDATA" }
  */
 
 const path = require('path');
@@ -16,38 +16,20 @@ const reply = (r) => CGI.reply(r);
 const handlers = {
   POST: () => {
     const body = CGI.readBody();
-    const db = body && body.db && typeof body.db === 'object' ? body.db : body;
-    if (!db || typeof db !== 'object') {
-      reply({ ok: false, reason: 'db config is required' });
+    if (!body.server) {
+      reply({ ok: false, reason: 'server is required' });
       return;
     }
-    if (!db.host) {
-      reply({ ok: false, reason: 'db.host is required' });
+    if (!body.table) {
+      reply({ ok: false, reason: 'table is required' });
       return;
     }
-    if (db.port === undefined || db.port === null || db.port === '') {
-      reply({ ok: false, reason: 'db.port is required' });
+    const db = CGI.getServerConfig(body.server);
+    if (!db) {
+      reply({ ok: false, reason: `server '${body.server}' not found` });
       return;
     }
-    if (!db.user) {
-      reply({ ok: false, reason: 'db.user is required' });
-      return;
-    }
-    if (db.password === undefined || db.password === null) {
-      reply({ ok: false, reason: 'db.password is required' });
-      return;
-    }
-    if (!db.table) {
-      reply({ ok: false, reason: 'db.table is required' });
-      return;
-    }
-    Handler.dbTableCreate({
-      host: db.host,
-      port: Number(db.port),
-      user: db.user,
-      password: db.password,
-      table: db.table,
-    }, reply);
+    Handler.dbTableCreate({ ...db, table: body.table }, reply);
   },
 };
 const method = (process.env.get('REQUEST_METHOD') || 'GET').toUpperCase();

@@ -1,5 +1,5 @@
 /**
- * POST /cgi-bin/api/node/children-native  -- OPC UA 노드 native children 조회
+ * POST /cgi-bin/api/opcua/node/descendants  -- OPC UA 노드 하위 전체 탐색
  *
  * body: { endpoint, node, nodeClassMask? }
  */
@@ -24,7 +24,7 @@ const handlers = {
       reply({ ok: false, reason: 'node is required' });
       return;
     }
-    Handler.nodeChildrenNative(body, reply);
+    Handler.nodeChildren(body, reply);
   },
 };
 const method = (process.env.get('REQUEST_METHOD') || 'GET').toUpperCase();
