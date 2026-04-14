@@ -5,7 +5,7 @@ const path = require('path');
 const { CGI } = require('./src/cgi/cgi_util.js');
 const ROOT = path.resolve(path.dirname(process.argv[1]));
 
-const { init, getInstance } = require(path.join(ROOT, 'src', 'lib', 'logger.js'));
+const { Logger } = require(path.join(ROOT, 'src', 'lib', 'logger.js'));
 const Collector = require(path.join(ROOT, 'src', 'collector.js'));
 
 const arg = process.argv[2];
@@ -23,10 +23,9 @@ try {
     process.exit(1);
   }
 
-  init(config.log, { name: configName });
-  const logger = getInstance();
+  const logger = new Logger(config.log || {}, { name: configName });
 
-  const collector = new Collector(config, { collectorName: configName });
+  const collector = new Collector(config, { collectorName: configName, logger });
 
   process.addShutdownHook(() => {
     logger.info('shutdown requested');

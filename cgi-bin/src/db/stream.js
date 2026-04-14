@@ -1,7 +1,5 @@
 'use strict';
 
-const { getInstance: getLogger } = require('../lib/logger.js');
-
 /**
  * Machbase append 스트림 래퍼
  *
@@ -105,7 +103,6 @@ class MachbaseStream {
         this.stream.flush();
         this.stream.close();
       } catch (err) {
-        getLogger().error('stream', { msg: 'close failed', error: err.message });
         this.stream = null;
         return err;
       }
