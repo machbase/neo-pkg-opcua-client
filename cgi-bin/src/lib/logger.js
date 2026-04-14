@@ -42,11 +42,12 @@ const LEVEL_LABEL = {
  *   maxFiles : number                                  (기본 10, 최대 파일 개수)
  */
 class Logger {
-  constructor(loggingConfig = {}) {
+  constructor(loggingConfig = {}, options = {}) {
     this._disabled = loggingConfig.disable === true;
     const levelVal = LEVELS[loggingConfig.level];
     this._minLevel = (levelVal !== undefined && levelVal !== null) ? levelVal : LEVELS.info;
     this._maxFiles = (loggingConfig.maxFiles > 0 ? loggingConfig.maxFiles : 10);
+    this._name = options.name || PKG_NAME;
     this._fileDir = LOG_DIR;
 
     this._filePath = null;
@@ -112,7 +113,7 @@ class Logger {
   // index 0: repli.log, index 1+: repli_0001.log, repli_0002.log, ...
   _resolveFilePath(index) {
     const suffix = index === 0 ? '' : `_${String(index).padStart(4, '0')}`;
-    return path.join(this._fileDir, `${PKG_NAME}${suffix}.log`);
+    return path.join(this._fileDir, `${this._name}${suffix}.log`);
   }
 
   _ensurePath() {
@@ -167,9 +168,9 @@ function _quoteIfNeeded(str) {
 
 let _instance = new Logger();
 
-function init(loggingConfig) {
+function init(loggingConfig, options) {
   _instance.close();
-  _instance = new Logger(loggingConfig);
+  _instance = new Logger(loggingConfig, options);
 }
 
 function getInstance() {

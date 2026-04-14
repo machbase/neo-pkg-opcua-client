@@ -100,7 +100,9 @@ class Collector {
         try {
             this.opcua.close();
         } catch (_) {}
+        this._opcuaConnected = false;
         this._closeDb();
+        logger.info("stopped");
     }
 
     _recordLastCollectedAt(ts) {

@@ -23,7 +23,7 @@ try {
     process.exit(1);
   }
 
-  init(config.log);
+  init(config.log, { name: configName });
   const logger = getInstance();
 
   const collector = new Collector(config, { collectorName: configName });
