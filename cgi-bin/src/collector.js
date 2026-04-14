@@ -27,6 +27,7 @@ class Collector {
             Service.setValue(name, "lastCollectedAt", value, callback);
         });
         this.timer = null;
+        this._opcuaConnected = false;
     }
 
     _normalizeValue(value, node) {
@@ -51,6 +52,7 @@ class Collector {
             }
             this._dbClient = client;
             this._dbStream = stream;
+            logger.debug("db opened", { table: this._table, columns: this._dbStream.columnNames.join(', '), nameIdx: this._dbStream.nameIdx, timeIdx: this._dbStream.timeIdx, valueIdx: this._dbStream.valueIdx });
             return;
         }
         try {
@@ -67,12 +69,14 @@ class Collector {
             }
             this._dbClient = client;
             this._dbStream = stream;
+            logger.debug("db opened", { table: this._table, columns: this._dbStream.columnNames.join(', '), nameIdx: this._dbStream.nameIdx, timeIdx: this._dbStream.timeIdx, valueIdx: this._dbStream.valueIdx });
         } catch (e) {
             logger.error("db open failed", { error: e.message });
         }
     }
 
     _closeDb() {
+        const wasOpen = this._dbStream !== null;
         if (this._dbStream) {
             this._dbStream.close();
             this._dbStream = null;
@@ -82,6 +86,9 @@ class Collector {
                 this._dbClient.close();
             } catch (_) {}
             this._dbClient = null;
+        }
+        if (wasOpen) {
+            logger.debug("db closed", { table: this._table });
         }
     }
 
@@ -118,6 +125,7 @@ class Collector {
     }
 
     collect() {
+        logger.trace("cycle");
         try {
             if (!this._isDbOpen()) {
                 this._openDb();
@@ -127,8 +135,13 @@ class Collector {
             }
 
             if (!this.opcua.open()) {
-                logger.warn("opcua connect failed, will retry");
+                this._opcuaConnected = false;
+                logger.warn("opcua connect failed, will retry", { endpoint: this.opcua.endpoint });
                 return;
+            }
+            if (!this._opcuaConnected) {
+                logger.info("opcua connected", { endpoint: this.opcua.endpoint });
+                this._opcuaConnected = true;
             }
 
             const results = this.opcua.read(this.nodeIds);
@@ -137,30 +150,38 @@ class Collector {
 
             this.nodes.forEach((node, idx) => {
                 const r = results[idx];
+                if (r.statusCode !== undefined && r.statusCode !== 0) {
+                    logger.warn("opcua bad status", { nodeId: node.nodeId, name: node.name, statusCode: r.statusCode });
+                }
                 const ts = r.sourceTimestamp ? new Date(r.sourceTimestamp) : new Date();
-                const value = this._normalizeValue(r.value, node);
+                const rawValue = r.value;
+                const value = this._normalizeValue(rawValue, node);
                 if (lastTs === null || ts.getTime() > lastTs.getTime()) {
                     lastTs = ts;
                 }
-                logger.debug("read", {
-                    nodeId: node.nodeId,
-                    name: node.name,
-                    value,
-                    ts: ts.toISOString(),
-                });
+                const fields = { nodeId: node.nodeId, name: node.name, value, ts: ts.toISOString() };
+                if (rawValue !== value) fields.rawValue = rawValue;
+                logger.debug("read", fields);
                 matrix.push([node.name, ts, value]);
             });
 
+            for (const row of matrix) {
+                logger.trace("append", { name: row[0], time: row[1] instanceof Date ? row[1].toISOString() : String(row[1]), value: row[2] });
+            }
             const appendErr = this._dbStream.append(matrix);
             if (appendErr) {
                 throw appendErr;
             }
 
             this._recordLastCollectedAt(lastTs);
-            logger.info("collected", { count: this.nodes.length });
+            logger.debug("collected", { count: this.nodes.length });
         } catch (e) {
             logger.error("collect error", { error: e.message });
+            if (this._opcuaConnected) {
+                logger.debug("opcua disconnected", { endpoint: this.opcua.endpoint });
+            }
             this.opcua.close();
+            this._opcuaConnected = false;
             this._closeDb();
         }
     }
@@ -169,6 +190,7 @@ class Collector {
         if (this.timer !== null) {
             return;
         }
+        logger.info("starting", { table: this._table, valueColumn: this._valueColumn, host: this._dbConf.host, port: this._dbConf.port, user: this._dbConf.user, interval: this.interval, nodes: this.nodes.length, endpoint: this.opcua.endpoint });
         this._openDb();
         this.timer = setInterval(() => {
             try {

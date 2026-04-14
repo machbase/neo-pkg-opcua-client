@@ -1,6 +1,6 @@
 'use strict';
 
-const { ColumnType, Column, TableSchema, FLAG_BASETIME, FLAG_SUMMARIZED, FLAG_METADATA, FLAG_PRIMARY } = require('./types.js');
+const { ColumnType, Column, TableSchema, FLAG_BASETIME, FLAG_METADATA, FLAG_PRIMARY } = require('./types.js');
 const { MachbaseClient } = require('./client.js');
 const { MachbaseStream } = require('./stream.js');
 const { getInstance: getLogger } = require('../lib/logger.js');
@@ -40,7 +40,7 @@ function _findFirstMissRow(logicalTable, schema, rows, client) {
     }
     return { firstMissIdx: null, err: null };
   } catch (err) {
-    getLogger().error('table', { table: logicalTable, msg: err.message });
+    getLogger().error('table', { msg: 'query failed', error: err.message, table: logicalTable });
     return { firstMissIdx: null, err };
   }
 }
@@ -154,11 +154,7 @@ class LogTable {
   openStream() {
     if (!this.schema) this.schema = this.getSchema();
     this.stream = new MachbaseStream();
-    return this.stream.open(
-      this.client,
-      this.logicalTable,
-      this.schema.columns.map(c => ({ name: c.name, type: c.sqlType() }))
-    );
+    return this.stream.open(this.client, this.logicalTable);
   }
 
   /**
@@ -206,7 +202,7 @@ class LogTable {
       const result = [];
       for (const row of sqlRows) {
         if (row._RID == null) {
-          getLogger().warn('table', { msg: `row with null _RID skipped in ${this.logicalTable}` });
+          getLogger().warn('table', { msg: 'row with null _RID skipped', table: this.logicalTable });
           continue;
         }
         const rid = BigInt(row._RID);
@@ -218,7 +214,7 @@ class LogTable {
       }
       return { rows: result, rangeMaxRid, err: null };
     } catch (err) {
-      getLogger().error('table', { table: this.logicalTable, msg: err.message });
+      getLogger().error('table', { msg: 'read failed', error: err.message, table: this.logicalTable });
       return { rows: [], rangeMaxRid: 0n, err };
     }
   }
@@ -231,7 +227,10 @@ class LogTable {
   append(rows) {
     if (!this.stream) {
       const err = this.openStream();
-      if (err) return err;
+      if (err) {
+        getLogger().error('table', { msg: 'openStream failed', error: err.message, table: this.logicalTable });
+        return err;
+      }
     }
 
     if (!rows || rows.length === 0) return null;
@@ -240,7 +239,7 @@ class LogTable {
       this.schema.columns.map(col => {
         const val = row[col.name];
         if (typeof val === 'number' && !isFinite(val)) {
-          getLogger().warn('stream', { table: this.logicalTable, col: col.name, val: String(val), msg: 'non-finite value will be stored as null' });
+          getLogger().warn('table', { table: this.logicalTable, col: col.name, val: String(val), msg: 'non-finite value will be stored as null' });
         }
         return val;
       })
@@ -252,10 +251,9 @@ class LogTable {
    * source batch 순서대로 target 존재 여부를 확인하여 첫 번째 miss row의 0-based 인덱스를 반환
    * @param {Array<{ canonical: string, time: bigint }>} rows
    * @param {MachbaseClient} client
-   * @param {string} suffix
    * @returns {{ firstMissIdx: number|null, err: Error|null }}
    */
-  findFirstMissRow(rows, client, suffix) {
+  findFirstMissRow(rows, client) {
     return _findFirstMissRow(this.logicalTable, this.schema, rows, client);
   }
 }
@@ -398,11 +396,7 @@ class TagTable {
   openStream() {
     if (!this.schema) this.schema = this.getSchema();
     this.stream = new MachbaseStream();
-    return this.stream.open(
-      this.client,
-      this.logicalTable,
-      this.schema.columns.map(c => ({ name: c.name, type: c.sqlType() }))
-    );
+    return this.stream.open(this.client, this.logicalTable);
   }
 
   /**
@@ -440,7 +434,7 @@ class TagTable {
         return data;
       });
     } catch (err) {
-      getLogger().error('table', { table: this.logicalTable, msg: err.message });
+      getLogger().error('table', { msg: 'read failed', error: err.message, table: this.logicalTable });
       return [];
     }
   }
@@ -453,7 +447,10 @@ class TagTable {
   append(rows) {
     if (!this.stream) {
       const err = this.openStream();
-      if (err) return err;
+      if (err) {
+        getLogger().error('table', { msg: 'openStream failed', error: err.message, table: this.logicalTable });
+        return err;
+      }
     }
 
     if (!rows || rows.length === 0) return null;
@@ -462,7 +459,7 @@ class TagTable {
       this.schema.columns.map(col => {
         const val = row[col.name];
         if (typeof val === 'number' && !isFinite(val)) {
-          getLogger().warn('stream', { table: this.logicalTable, col: col.name, val: String(val), msg: 'non-finite value will be stored as null' });
+          getLogger().warn('table', { table: this.logicalTable, col: col.name, val: String(val), msg: 'non-finite value will be stored as null' });
         }
         return val;
       })
@@ -475,10 +472,9 @@ class TagTable {
    * source batch 순서대로 target 존재 여부를 확인하여 첫 번째 miss row의 0-based 인덱스를 반환
    * @param {Array<{ canonical: string, time: bigint }>} rows
    * @param {MachbaseClient} client
-   * @param {string} suffix
    * @returns {{ firstMissIdx: number|null, err: Error|null }}
    */
-  findFirstMissRow(rows, client, suffix) {
+  findFirstMissRow(rows, client) {
     return _findFirstMissRow(this.logicalTable, this.schema, rows, client);
   }
 
@@ -591,7 +587,7 @@ class TagDataTable {
       }
       return null;
     } catch (err) {
-      getLogger().error('table', { msg: `cacheTagMetaAll failed: ${err.message}` });
+      getLogger().error('table', { msg: 'cacheTagMetaAll failed', error: err.message });
       return err;
     }
   }
@@ -644,7 +640,7 @@ class TagDataTable {
       const result = [];
       for (const row of sqlRows) {
         if (row._RID == null) {
-          getLogger().warn('table', { msg: `row with null _RID skipped in ${this.dataTable}` });
+          getLogger().warn('table', { msg: 'row with null _RID skipped', table: this.dataTable });
           continue;
         }
         const rid = BigInt(row._RID);
@@ -680,7 +676,7 @@ class TagDataTable {
 
       return { rows: result, rangeMaxRid, err: null };
     } catch (err) {
-      getLogger().error('table', { table: this.dataTable, msg: err.message });
+      getLogger().error('table', { msg: 'read failed', error: err.message, table: this.dataTable });
       return { rows: [], rangeMaxRid: 0n, err };
     }
   }

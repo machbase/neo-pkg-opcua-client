@@ -15,6 +15,11 @@ class MachbaseStream {
     this._nameIdx = -1;
     this._timeIdx = -1;
     this._valueIdx = -1;
+    /** @type {string[]} open() 성공 후 채워지는 컬럼명 배열 */
+    this.columnNames = [];
+    this.nameIdx  = -1;
+    this.timeIdx  = -1;
+    this.valueIdx = -1;
   }
 
   /**
@@ -52,10 +57,13 @@ class MachbaseStream {
         return new Error('column not found in table \'' + table + '\': ' + missing.join(', '));
       }
 
+      this.columnNames = cols.map(c => c.NAME);
+      this.nameIdx = this._nameIdx;
+      this.timeIdx = this._timeIdx;
+      this.valueIdx = this._valueIdx;
       this.stream = client.openAppender(table);
       return null;
     } catch (err) {
-      getLogger().error('stream', { table: table, msg: 'open failed: ' + err.message });
       return err;
     }
   }
@@ -83,7 +91,6 @@ class MachbaseStream {
       this.stream.flush();
       return null;
     } catch (err) {
-      getLogger().error('stream', { msg: 'append failed: ' + err.message });
       return err;
     }
   }
@@ -98,7 +105,7 @@ class MachbaseStream {
         this.stream.flush();
         this.stream.close();
       } catch (err) {
-        getLogger().error('stream', { msg: 'stream close failed: ' + err.message });
+        getLogger().error('stream', { msg: 'close failed', error: err.message });
         this.stream = null;
         return err;
       }

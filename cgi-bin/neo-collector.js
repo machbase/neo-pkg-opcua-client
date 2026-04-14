@@ -39,7 +39,7 @@ try {
     try {
       collector.start();
     } catch (e) {
-      logger.error('failed to start collector, retrying...', { error: e.message });
+      logger.warn('start failed, retrying', { error: e.message });
       setTimeout(startWithRetry, 5000);
     }
   }
