@@ -384,18 +384,27 @@ function collectorStart(name, reply) {
     });
     return;
   }
-  Service.start(name, (err) => {
-    if (err) {
+  Service.status(name, (statusErr, serviceInfo) => {
+    if (!statusErr && String(serviceInfo && serviceInfo.status).toUpperCase() === 'RUNNING') {
       reply({
         ok: false,
-        reason: errorMessage(err),
+        reason: `collector '${name}' is already running`,
       });
-    } else {
-      reply({
-        ok: true,
-        data: { name },
-      });
+      return;
     }
+    Service.start(name, (err) => {
+      if (err) {
+        reply({
+          ok: false,
+          reason: errorMessage(err),
+        });
+      } else {
+        reply({
+          ok: true,
+          data: { name },
+        });
+      }
+    });
   });
 }
 

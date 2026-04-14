@@ -165,7 +165,7 @@ class Collector {
                 }
                 const fields = { nodeId: node.nodeId, name: node.name, value, ts: ts.toISOString() };
                 if (rawValue !== value) fields.rawValue = rawValue;
-                this._logger.debug("read", fields);
+                this._logger.trace("read", fields);
                 matrix.push([node.name, ts, value]);
             });
 
