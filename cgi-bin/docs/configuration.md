@@ -11,7 +11,7 @@
     "readRetryInterval": 100,
     "interval": 5000,
     "nodes": [
-      { "nodeId": "ns=3;i=1001", "name": "sensor.tag1" },
+      { "nodeId": "ns=3;i=1001", "name": "sensor.tag1", "add": -273.15, "multiply": 1.0 },
       { "nodeId": "ns=3;i=1002", "name": "sensor.tag2" }
     ]
   },
@@ -35,6 +35,8 @@
 | `nodes` | array | - | 수집할 노드 목록 |
 | `nodes[].nodeId` | string | - | OPC UA 노드 ID |
 | `nodes[].name` | string | - | Machbase TAG 이름 |
+| `nodes[].add` | number | `0` | 값에 더할 오프셋. `multiply` 적용 전에 실행 |
+| `nodes[].multiply` | number | `1` | 값에 곱할 배율. `add` 이후 적용 |
 참고:
 - OPC UA 값이 boolean이면 `true → 1`, `false → 0` 으로 변환합니다.
 
