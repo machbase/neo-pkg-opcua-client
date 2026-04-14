@@ -7,6 +7,11 @@ const process = require('process');
 const APP_DIR = process.argv[1].slice(0, process.argv[1].lastIndexOf('/cgi-bin/') + '/cgi-bin'.length);
 const CONF_DIR = path.join(APP_DIR, 'conf.d');
 const SERVERS_DIR = path.join(CONF_DIR, 'servers');
+const DATA_DIR = path.join(APP_DIR, 'data');
+
+fs.mkdirSync(CONF_DIR, { recursive: true });
+fs.mkdirSync(SERVERS_DIR, { recursive: true });
+fs.mkdirSync(DATA_DIR, { recursive: true });
 
 class CGI {
 
@@ -191,4 +196,4 @@ class CGI {
   }
 }
 
-module.exports = { CGI };
+module.exports = { CGI, CONF_DIR, DATA_DIR };

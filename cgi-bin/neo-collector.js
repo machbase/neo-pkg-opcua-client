@@ -3,24 +3,24 @@
 const process = require('process');
 const path = require('path');
 const fs = require('fs');
+const { CGI }= require('./src/cgi/cgi_util.js');
 const ROOT = path.resolve(path.dirname(process.argv[1]));
 
 const { init, getInstance } = require(path.join(ROOT, 'src', 'lib', 'logger.js'));
 const Collector = require(path.join(ROOT, 'src', 'collector.js'));
 
-const configPath = process.argv[2];
-if (!configPath) {
-  console.log(JSON.stringify({ level: 'ERROR', message: 'config path is required: neo-collector.js <config.json>' }));
+const configName = process.argv[2];
+if (!configName) {
+  console.log(JSON.stringify({ level: 'ERROR', message: 'config name is required: neo-collector.js <config.json>' }));
   process.exit(1);
 }
 
 try {
-  const config = JSON.parse(fs.readFile(configPath, 'utf-8'));
-  const configName = path.basename(configPath, '.json');
+  const config = CGI.getConfig(configName);
+  const configName = path.basename(configName, '.json');
   init(config.log);
   const logger = getInstance();
-  const pidFile = path.join(ROOT, 'run', `${configName}.pid`);
-  fs.mkdirSync(path.dirname(pidFile), { recursive: true });
+  const pidFile = path.join(ROOT, `${configName}.pid`);
   fs.writeFileSync(pidFile, String(process.pid), 'utf-8');
 
   const collector = new Collector(config, { collectorName: configName });
