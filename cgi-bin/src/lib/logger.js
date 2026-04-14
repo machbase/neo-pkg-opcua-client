@@ -44,7 +44,8 @@ const LEVEL_LABEL = {
 class Logger {
   constructor(loggingConfig = {}) {
     this._disabled = loggingConfig.disable === true;
-    this._minLevel = LEVELS[loggingConfig.level] ?? LEVELS.info;
+    const levelVal = LEVELS[loggingConfig.level];
+    this._minLevel = (levelVal !== undefined && levelVal !== null) ? levelVal : LEVELS.info;
     this._maxFiles = (loggingConfig.maxFiles > 0 ? loggingConfig.maxFiles : 10);
     this._fileDir = LOG_DIR;
 
@@ -55,9 +56,7 @@ class Logger {
     if (!this._disabled) {
       try {
         fs.mkdirSync(this._fileDir, { recursive: true });
-      } catch (err) {
-        console.error(`[Logger] failed to create log directory: ${err.message}`);
-      }
+      } catch (_) {}
     }
   }
 
@@ -93,14 +92,21 @@ class Logger {
     const ts = new Date().toISOString().replace('T', ' ').slice(0, 23);
     const label = LEVEL_LABEL[level] || level.toUpperCase();
 
-    const { msg, ...rest } = fields;
-    const kvParts = Object.entries(rest)
-      .filter(([, v]) => v !== undefined && v !== null)
-      .map(([k, v]) => `${k}=${_quoteIfNeeded(String(v))}`);
+    const msg = fields && fields.msg !== undefined ? String(fields.msg) : '';
+    const kvParts = [];
+    if (fields) {
+      const keys = Object.keys(fields);
+      for (let i = 0; i < keys.length; i++) {
+        const k = keys[i];
+        if (k === 'msg') continue;
+        const v = fields[k];
+        if (v === undefined || v === null) continue;
+        kvParts.push(k + '=' + _quoteIfNeeded(String(v)));
+      }
+    }
 
-    const msgStr = msg !== undefined ? String(msg) : '';
-    const kv = kvParts.length > 0 ? `  (${kvParts.join(' ')})` : '';
-    return `[${label}] ${ts}  ${stage}  ${msgStr}${kv}`;
+    const kv = kvParts.length > 0 ? '  (' + kvParts.join(' ') + ')' : '';
+    return '[' + label + '] ' + ts + '  ' + stage + '  ' + msg + kv;
   }
 
   // index 0: repli.log, index 1+: repli_0001.log, repli_0002.log, ...
@@ -114,23 +120,19 @@ class Logger {
       return;
     }
 
-    try {
-      // 10 MB 미만인 첫 번째 파일을 찾아 이어씀
-      while (this._fileIndex < this._maxFiles) {
-        const candidate = this._resolveFilePath(this._fileIndex);
-        let size = 0;
-        try {
-          size = fs.statSync(candidate).size;
-        } catch (_) {}
-        if (size < MAX_FILE_SIZE) {
-          this._filePath = candidate;
-          this._fileSize = size;
-          break;
-        }
-        this._fileIndex++;
+    // 10 MB 미만인 첫 번째 파일을 찾아 이어씀
+    while (this._fileIndex < this._maxFiles) {
+      const candidate = this._resolveFilePath(this._fileIndex);
+      let size = 0;
+      try {
+        size = fs.statSync(candidate).size;
+      } catch (_) {}
+      if (size < MAX_FILE_SIZE) {
+        this._filePath = candidate;
+        this._fileSize = size;
+        break;
       }
-    } catch (err) {
-      console.error(`[Logger] failed to open log file: ${err.message}`);
+      this._fileIndex++;
     }
   }
 
@@ -151,11 +153,10 @@ class Logger {
     }
 
     try {
-      fs.appendFileSync(this._filePath, text, 'utf8');
+      fs.appendFileSync(this._filePath, text);
       this._fileSize += text.length;
     } catch (err) {
       this._filePath = null;
-      console.error(`[Logger] failed to write log file: ${err.message}`);
     }
   }
 }

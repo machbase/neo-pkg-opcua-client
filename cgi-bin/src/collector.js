@@ -33,7 +33,7 @@ class Collector {
         if (typeof value === "boolean") {
             value = value ? 1 : 0;
         }
-        value = (value + (node.add ?? 0)) * (node.multiply ?? 1);
+        value = (value + (node.add != null ? node.add : 0)) * (node.multiply != null ? node.multiply : 1);
         return value;
     }
 
