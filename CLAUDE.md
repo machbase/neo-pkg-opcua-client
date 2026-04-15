@@ -22,7 +22,7 @@ Machbase Neo JSH 환경에서 OPC UA 서버 데이터를 주기적으로 읽어 
   - `log.file.path` 를 디렉토리로 입력하면 collector 실행 시 `${name}.log` 생성
   - 예: `${CWD}/log` + `collector-a` -> `<package_root>/log/collector-a.log`
   - legacy 호환: `.../name.log` 형태를 직접 넣으면 그대로 사용
-- 로그 API 경로: `~/public/logs/<pkg-name>/` (log list/content API 기준)
+- 로그 API 경로: `{package_root}/logs/` (log list/content API 기준)
 - rotate 파일명:
   - size: `collector-a.2026-04-08T03-42-34-064Z.log`
   - daily: `collector-a.2026-04-08.log`
@@ -221,7 +221,7 @@ CREATE TAG TABLE ${table} (
 ## Logger 메모
 
 - 클래스: `src/lib/logger.js` — `Logger`, `init`, `getInstance`, `LOG_DIR` export
-- 로그 디렉토리: `LOG_DIR = ~/public/logs/<pkg-name>/` (process.argv 기반 자동 계산)
+- 로그 디렉토리: `LOG_DIR = {package_root}/logs/` (process.argv[1] 기반 자동 계산, fallback: `~/public/logs/neo-pkg-opcua-client`)
 - `neo-collector.js` 에서 `new Logger(config.log, { name: configName })` 로 생성
   - `options.name` 이 로그 파일 stem — `collector-a.log` 형태
 - rotate: 파일이 10 MB 초과 시 `stem.ISO타임스탬프.log` 로 rename 후 새 파일 생성

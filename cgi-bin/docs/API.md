@@ -454,7 +454,7 @@ CREATE TAG TABLE {table} (
   "ok": true,
   "data": {
     "files": ["collector-a.log", "collector-a.2026-04-15T03-42-34-064Z.log"],
-    "dir": "/home/xxx/public/logs/neo-pkg-opcua-client"
+    "dir": "/path/to/neo-pkg-opcua-client/logs"
   }
 }
 ```
