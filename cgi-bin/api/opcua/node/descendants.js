@@ -1,5 +1,5 @@
 /**
- * POST /cgi-bin/api/node/children  -- OPC UA 노드 browse (프론트엔드용)
+ * POST /cgi-bin/api/opcua/node/descendants  -- OPC UA 노드 하위 전체 탐색
  *
  * body: { endpoint, node, nodeClassMask? }
  */
@@ -11,20 +11,33 @@ const ROOT = _argv.slice(0, _argv.lastIndexOf('/cgi-bin/') + '/cgi-bin'.length);
 const { CGI } = require(path.join(ROOT, 'src', 'cgi', 'cgi_util.js'));
 const Handler = require(path.join(ROOT, 'src', 'cgi', 'handler.js'));
 
+const reply = (r) => CGI.reply(r);
+
 const handlers = {
-  POST: () => Handler.nodeChildren(CGI.readBody()),
+  POST: () => {
+    const body = CGI.readBody();
+    if (!body.endpoint) {
+      reply({ ok: false, reason: 'endpoint is required' });
+      return;
+    }
+    if (!body.node) {
+      reply({ ok: false, reason: 'node is required' });
+      return;
+    }
+    Handler.nodeChildren(body, reply);
+  },
 };
 const method = (process.env.get('REQUEST_METHOD') || 'GET').toUpperCase();
 try {
   const handler = handlers[method] || (() => {
-    CGI.reply({
+    reply({
       ok: false,
       reason: 'method not allowed',
     });
   });
   handler();
 } catch (err) {
-  CGI.reply({
+  reply({
     ok: false,
     reason: err && err.message ? err.message : String(err),
   });

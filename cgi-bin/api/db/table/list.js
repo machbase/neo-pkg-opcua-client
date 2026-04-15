@@ -1,5 +1,5 @@
 /**
- * GET /cgi-bin/api/db/connect?server=xxx  -- DB 연결 확인
+ * GET /cgi-bin/api/db/table/list?server=xxx  -- 테이블 목록 조회
  */
 
 const path = require('path');
@@ -23,7 +23,7 @@ const handlers = {
       reply({ ok: false, reason: `server '${server}' not found` });
       return;
     }
-    Handler.dbConnect(db, reply);
+    Handler.dbTableList(db, reply);
   },
 };
 const method = (process.env.get('REQUEST_METHOD') || 'GET').toUpperCase();

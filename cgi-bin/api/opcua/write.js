@@ -1,7 +1,7 @@
 /**
- * POST /cgi-bin/api/db/table/create  -- TAG 테이블 생성
+ * POST /cgi-bin/api/opcua/write  -- OPC UA 노드 일회성 쓰기
  *
- * body: { server: "server-name", table: "TAGDATA" }
+ * body: { endpoint, writes: [{ node, value }, ...] }
  */
 
 const path = require('path');
@@ -16,20 +16,25 @@ const reply = (r) => CGI.reply(r);
 const handlers = {
   POST: () => {
     const body = CGI.readBody();
-    if (!body.server) {
-      reply({ ok: false, reason: 'server is required' });
+    if (!body.endpoint) {
+      reply({ ok: false, reason: 'endpoint is required' });
       return;
     }
-    if (!body.table) {
-      reply({ ok: false, reason: 'table is required' });
+    if (!Array.isArray(body.writes) || body.writes.length === 0) {
+      reply({ ok: false, reason: 'writes is required and must be a non-empty array' });
       return;
     }
-    const db = CGI.getServerConfig(body.server);
-    if (!db) {
-      reply({ ok: false, reason: `server '${body.server}' not found` });
-      return;
+    for (const w of body.writes) {
+      if (!w.node) {
+        reply({ ok: false, reason: 'each write entry must have a node' });
+        return;
+      }
+      if (w.value === undefined || w.value === null) {
+        reply({ ok: false, reason: `value is required for node '${w.node}'` });
+        return;
+      }
     }
-    Handler.dbTableCreate({ ...db, table: body.table }, reply);
+    Handler.opcuaWrite(body.endpoint, body.writes, reply);
   },
 };
 const method = (process.env.get('REQUEST_METHOD') || 'GET').toUpperCase();

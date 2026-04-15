@@ -145,7 +145,7 @@ function getValue(name, key, callback) {
         callback(err);
         return;
       }
-      const value = result && result.details ? (result.details[key] ?? null) : null;
+      const value = result && result.details ? (result.details[key] !== undefined ? result.details[key] : null) : null;
       callback(null, value);
     });
   } catch (err) {

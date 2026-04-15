@@ -18,6 +18,10 @@ class MockOpcuaClient extends OpcuaClient {
                 if (this._readError) throw new Error(this._readError);
                 return this._readResult;
             },
+            write: (...args) => args,
+            browse: (_req) => [{ references: [] }],
+            browseNext: (_req) => [{ references: [] }],
+            children: (_req) => [],
             close: () => { this.innerClosed = true; },
         };
         return true;
@@ -73,6 +77,54 @@ runner.run("OpcuaClient", {
         client.close();
         t.assertNull(client.client, "client should be null after close");
         t.assert(client.innerClosed, "inner close() should have been called");
+    },
+
+    "write() throws when not connected": (t) => {
+        const client = new MockOpcuaClient();
+        t.assertThrows(() => client.write({ node: "ns=1;s=T1", value: 42 }), "not connected");
+    },
+
+    "write() returns result on success": (t) => {
+        const client = new MockOpcuaClient();
+        client.open();
+        const result = client.write({ node: "ns=1;s=T1", value: 42 });
+        t.assertNotNull(result, "write() should return a result");
+    },
+
+    "browse() throws when not connected": (t) => {
+        const client = new MockOpcuaClient();
+        t.assertThrows(() => client.browse({ nodes: ["ns=0;i=85"] }), "not connected");
+    },
+
+    "browse() returns results on success": (t) => {
+        const client = new MockOpcuaClient();
+        client.open();
+        const result = client.browse({ nodes: ["ns=0;i=85"] });
+        t.assertNotNull(result, "browse() should return a result");
+    },
+
+    "browseNext() throws when not connected": (t) => {
+        const client = new MockOpcuaClient();
+        t.assertThrows(() => client.browseNext({ continuationPoints: ["cp1"] }), "not connected");
+    },
+
+    "browseNext() returns results on success": (t) => {
+        const client = new MockOpcuaClient();
+        client.open();
+        const result = client.browseNext({ continuationPoints: ["cp1"] });
+        t.assertNotNull(result, "browseNext() should return a result");
+    },
+
+    "children() throws when not connected": (t) => {
+        const client = new MockOpcuaClient();
+        t.assertThrows(() => client.children({ node: "ns=0;i=85" }), "not connected");
+    },
+
+    "children() returns results on success": (t) => {
+        const client = new MockOpcuaClient();
+        client.open();
+        const result = client.children({ node: "ns=0;i=85" });
+        t.assertNotNull(result, "children() should return a result");
     },
 });
 

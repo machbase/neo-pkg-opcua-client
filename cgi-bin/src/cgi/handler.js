@@ -2,7 +2,8 @@
 
 const { CGI } = require('./cgi_util.js');
 const Service = require('./service.js');
-const MachbaseClient = require('../db/machbase-client.js');
+const { MachbaseClient } = require('../db/client.js');
+const { Column, TableSchema, ColumnType, FLAG_PRIMARY, FLAG_BASETIME, FLAG_SUMMARIZED, FLAG_METADATA } = require('../db/types.js');
 const OpcuaClient = require('../opcua/opcua-client.js');
 
 // ── Shared helpers ──────────────────────────────────────────────────────────
@@ -13,113 +14,79 @@ function errorMessage(err) {
 
 // ── Collector CRUD ──────────────────────────────────────────────────────────
 
-function _mergeConfigForUpdate(currentConfig, nextConfig) {
-  const merged = { ...nextConfig };
-  if (currentConfig && currentConfig.db) {
-    merged.db = { ...(nextConfig.db || {}) };
-    if (currentConfig.db.password !== undefined &&
-        (merged.db.password === undefined || merged.db.password === '')) {
-      merged.db.password = currentConfig.db.password;
-    }
-  }
-  return merged;
-}
-
 /**
  * POST /cgi-bin/api/collector
- * @param {{ name: string, config: object }} body
+ * @param {string} name
+ * @param {object} config
+ * @param {function} reply
  */
-function collectorPost(body) {
-  if (!body.name) {
-    CGI.reply({
+function collectorPost(name, config, reply) {
+  if (CGI.getConfig(name)) {
+    reply({
       ok: false,
-      reason: 'name is required',
+      reason: `collector '${name}' already exists`,
     });
-  } else if (!body.config) {
-    CGI.reply({
-      ok: false,
-      reason: 'config is required',
-    });
-  } else if (CGI.getConfig(body.name)) {
-    CGI.reply({
-      ok: false,
-      reason: `collector '${body.name}' already exists`,
-    });
-  } else {
-    CGI.writeConfig(body.name, body.config);
-    Service.install(body.name, (err) => {
-      if (err) {
-        CGI.removeConfig(body.name);
-        CGI.reply({
-          ok: false,
-          reason: errorMessage(err),
-        });
-      } else {
-        CGI.reply({
-          ok: true,
-          data: { name: body.name },
-        });
-      }
-    });
+    return;
   }
+  CGI.writeConfig(name, config);
+  Service.install(name, (err) => {
+    if (err) {
+      CGI.removeConfig(name);
+      reply({
+        ok: false,
+        reason: errorMessage(err),
+      });
+    } else {
+      reply({
+        ok: true,
+        data: { name },
+      });
+    }
+  });
 }
 
 /**
  * GET /cgi-bin/api/collector?name=xxx
  * @param {string} name
+ * @param {function} reply
  */
-function collectorGet(name) {
-  if (!name) {
-    CGI.reply({
-      ok: false,
-      reason: 'name is required',
-    });
-    return;
-  }
+function collectorGet(name, reply) {
   const config = CGI.getConfig(name);
   if (!config) {
-    CGI.reply({
+    reply({
       ok: false,
       reason: `collector '${name}' not found`,
     });
-  } else {
-    const safeConfig = { ...config, db: { ...config.db } };
-    delete safeConfig.db.password;
-    CGI.reply({
-      ok: true,
-      data: {
-        name,
-        config: safeConfig,
-      },
-    });
+    return;
   }
+  reply({
+    ok: true,
+    data: {
+      name,
+      config,
+    },
+  });
 }
 
 /**
  * PUT /cgi-bin/api/collector?name=xxx
  * @param {string} name
  * @param {object} body
+ * @param {function} reply
  */
-function collectorPut(name, body) {
-  if (!name) {
-    CGI.reply({
-      ok: false,
-      reason: 'name is required',
-    });
-    return;
-  }
+function collectorPut(name, body, reply) {
   const currentConfig = CGI.getConfig(name);
   if (!currentConfig) {
-    CGI.reply({
+    reply({
       ok: false,
       reason: `collector '${name}' not found`,
     });
     return;
   }
-  const nextConfig = _mergeConfigForUpdate(currentConfig, body);
+  const nextConfig = body;
   Service.status(name, (statusErr, serviceInfo) => {
     if (statusErr && !Service.isMissingServiceError(statusErr)) {
-      CGI.reply({
+      reply({
         ok: false,
         reason: errorMessage(statusErr),
       });
@@ -129,7 +96,7 @@ function collectorPut(name, body) {
     const isRunning = !statusErr && serviceInfo
       && String(serviceInfo.status).toUpperCase() === 'RUNNING';
     if (!isRunning) {
-      CGI.reply({
+      reply({
         ok: true,
         data: { name },
       });
@@ -137,7 +104,7 @@ function collectorPut(name, body) {
     }
     Service.stop(name, (stopErr) => {
       if (stopErr) {
-        CGI.reply({
+        reply({
           ok: false,
           reason: errorMessage(stopErr),
         });
@@ -145,12 +112,12 @@ function collectorPut(name, body) {
       }
       Service.start(name, (startErr) => {
         if (startErr) {
-          CGI.reply({
+          reply({
             ok: false,
             reason: errorMessage(startErr),
           });
         } else {
-          CGI.reply({
+          reply({
             ok: true,
             data: { name },
           });
@@ -163,17 +130,11 @@ function collectorPut(name, body) {
 /**
  * DELETE /cgi-bin/api/collector?name=xxx
  * @param {string} name
+ * @param {function} reply
  */
-function collectorDelete(name) {
-  if (!name) {
-    CGI.reply({
-      ok: false,
-      reason: 'name is required',
-    });
-    return;
-  }
+function collectorDelete(name, reply) {
   if (!CGI.getConfig(name)) {
-    CGI.reply({
+    reply({
       ok: false,
       reason: `collector '${name}' not found`,
     });
@@ -181,7 +142,7 @@ function collectorDelete(name) {
   }
   Service.status(name, (statusErr, serviceInfo) => {
     if (statusErr && !Service.isMissingServiceError(statusErr)) {
-      CGI.reply({
+      reply({
         ok: false,
         reason: errorMessage(statusErr),
       });
@@ -192,7 +153,7 @@ function collectorDelete(name) {
     const proceed = () => {
       Service.uninstall(name, (uninstallErr) => {
         if (uninstallErr && !Service.isMissingServiceError(uninstallErr)) {
-          CGI.reply({
+          reply({
             ok: false,
             reason: errorMessage(uninstallErr),
           });
@@ -200,13 +161,13 @@ function collectorDelete(name) {
         }
         Service.remove(name);
         CGI.removeConfig(name);
-        CGI.reply({ ok: true });
+        reply({ ok: true });
       });
     };
     if (isRunning) {
       Service.stop(name, (stopErr) => {
         if (stopErr) {
-          CGI.reply({
+          reply({
             ok: false,
             reason: errorMessage(stopErr),
           });
@@ -239,9 +200,9 @@ function _uniqueConfigNames() {
 //       definition 파일 존재 여부와 다를 수 있음. 예: daemon 재시작 후 map에 없지만
 //       파일은 존재하는 경우 installed: false로 잘못 반환될 수 있음.
 // servicesByName: getServiceMap 성공 시 map, 실패 시 null
-function _replyCollectorStatuses(names, index, data, servicesByName) {
+function _replyCollectorStatuses(names, index, data, servicesByName, reply) {
   if (index >= names.length) {
-    CGI.reply({
+    reply({
       ok: true,
       data,
     });
@@ -255,7 +216,7 @@ function _replyCollectorStatuses(names, index, data, servicesByName) {
       installed: !!listedService,
       running: listedService ? String(listedService.status).toUpperCase() === 'RUNNING' : false,
     });
-    _replyCollectorStatuses(names, index + 1, data, servicesByName);
+    _replyCollectorStatuses(names, index + 1, data, servicesByName, reply);
     return;
   }
   const installed = Service.installed(name);
@@ -273,16 +234,17 @@ function _replyCollectorStatuses(names, index, data, servicesByName) {
         running: String(serviceInfo.status).toUpperCase() === 'RUNNING',
       });
     }
-    _replyCollectorStatuses(names, index + 1, data, servicesByName);
+    _replyCollectorStatuses(names, index + 1, data, servicesByName, reply);
   });
 }
 
 /**
  * GET /cgi-bin/api/collector/list
+ * @param {function} reply
  */
-function collectorList() {
+function collectorList(reply) {
   Service.getServiceMap((err, serviceInfos) => {
-    _replyCollectorStatuses(_uniqueConfigNames(), 0, [], err ? null : serviceInfos);
+    _replyCollectorStatuses(_uniqueConfigNames(), 0, [], err ? null : serviceInfos, reply);
   });
 }
 
@@ -293,17 +255,11 @@ function collectorList() {
 /**
  * POST /cgi-bin/api/collector/install?name=xxx
  * @param {string} name
+ * @param {function} reply
  */
-function collectorInstall(name) {
-  if (!name) {
-    CGI.reply({
-      ok: false,
-      reason: 'name is required',
-    });
-    return;
-  }
+function collectorInstall(name, reply) {
   if (!CGI.getConfig(name)) {
-    CGI.reply({
+    reply({
       ok: false,
       reason: `collector '${name}' not found`,
     });
@@ -312,7 +268,7 @@ function collectorInstall(name) {
   Service.getServiceMap((listErr, serviceInfos) => {
     if (!listErr) {
       if (serviceInfos[name]) {
-        CGI.reply({
+        reply({
           ok: false,
           reason: `collector '${name}' service already installed`,
         });
@@ -320,12 +276,12 @@ function collectorInstall(name) {
       }
       Service.install(name, (installErr) => {
         if (installErr) {
-          CGI.reply({
+          reply({
             ok: false,
             reason: errorMessage(installErr),
           });
         } else {
-          CGI.reply({
+          reply({
             ok: true,
             data: { name },
           });
@@ -334,7 +290,7 @@ function collectorInstall(name) {
       return;
     }
     if (Service.installed(name)) {
-      CGI.reply({
+      reply({
         ok: false,
         reason: `collector '${name}' service already installed`,
       });
@@ -342,12 +298,12 @@ function collectorInstall(name) {
     }
     Service.install(name, (installErr) => {
       if (installErr) {
-        CGI.reply({
+        reply({
           ok: false,
           reason: errorMessage(installErr),
         });
       } else {
-        CGI.reply({
+        reply({
           ok: true,
           data: { name },
         });
@@ -359,20 +315,14 @@ function collectorInstall(name) {
 /**
  * GET /cgi-bin/api/collector/last-time?name=xxx
  * @param {string} name
+ * @param {function} reply
  * TODO: service details 대신 checkpoint 파일의 mtime을 읽는 방식으로 교체 검토
  *       - 현재: Service.getValue() — IPC, 비동기
  *       - 개선안: fs.statSync('run/${name}.checkpoint').mtimeMs — 동기, 시스템콜 1회
  */
-function collectorLastTime(name) {
-  if (!name) {
-    CGI.reply({
-      ok: false,
-      reason: 'name is required',
-    });
-    return;
-  }
+function collectorLastTime(name, reply) {
   if (!CGI.getConfig(name)) {
-    CGI.reply({
+    reply({
       ok: false,
       reason: `collector '${name}' not found`,
     });
@@ -381,7 +331,7 @@ function collectorLastTime(name) {
   Service.getValue(name, 'lastCollectedAt', (err, value) => {
     if (err) {
       if (Service.isMissingServiceError(err)) {
-        CGI.reply({
+        reply({
           ok: true,
           data: {
             name,
@@ -390,13 +340,13 @@ function collectorLastTime(name) {
         });
         return;
       }
-      CGI.reply({
+      reply({
         ok: false,
         reason: errorMessage(err),
       });
       return;
     }
-    CGI.reply({
+    reply({
       ok: true,
       data: {
         name,
@@ -424,51 +374,48 @@ function _normalizeTimestamp(value) {
 /**
  * POST /cgi-bin/api/collector/start?name=xxx
  * @param {string} name
+ * @param {function} reply
  */
-function collectorStart(name) {
-  if (!name) {
-    CGI.reply({
-      ok: false,
-      reason: 'name is required',
-    });
-    return;
-  }
+function collectorStart(name, reply) {
   if (!CGI.getConfig(name)) {
-    CGI.reply({
+    reply({
       ok: false,
       reason: `collector '${name}' not found`,
     });
     return;
   }
-  Service.start(name, (err) => {
-    if (err) {
-      CGI.reply({
+  Service.status(name, (statusErr, serviceInfo) => {
+    if (!statusErr && String(serviceInfo && serviceInfo.status).toUpperCase() === 'RUNNING') {
+      reply({
         ok: false,
-        reason: errorMessage(err),
+        reason: `collector '${name}' is already running`,
       });
-    } else {
-      CGI.reply({
-        ok: true,
-        data: { name },
-      });
+      return;
     }
+    Service.start(name, (err) => {
+      if (err) {
+        reply({
+          ok: false,
+          reason: errorMessage(err),
+        });
+      } else {
+        reply({
+          ok: true,
+          data: { name },
+        });
+      }
+    });
   });
 }
 
 /**
  * POST /cgi-bin/api/collector/stop?name=xxx
  * @param {string} name
+ * @param {function} reply
  */
-function collectorStop(name) {
-  if (!name) {
-    CGI.reply({
-      ok: false,
-      reason: 'name is required',
-    });
-    return;
-  }
+function collectorStop(name, reply) {
   if (!CGI.getConfig(name)) {
-    CGI.reply({
+    reply({
       ok: false,
       reason: `collector '${name}' not found`,
     });
@@ -476,12 +423,12 @@ function collectorStop(name) {
   }
   Service.stop(name, (err) => {
     if (err) {
-      CGI.reply({
+      reply({
         ok: false,
         reason: errorMessage(err),
       });
     } else {
-      CGI.reply({
+      reply({
         ok: true,
         data: { name },
       });
@@ -489,66 +436,146 @@ function collectorStop(name) {
   });
 }
 
-// ── DB endpoints ────────────────────────────────────────────────────────────
+// ── DB Server config CRUD ───────────────────────────────────────────────────
 
-function _validateDbBody(body, requireTable) {
-  const db = body && body.db && typeof body.db === 'object' ? body.db : body;
-  if (!db || typeof db !== 'object') {
-    return { error: 'db config is required' };
+function _mergeServerConfig(current, next) {
+  const merged = { ...next };
+  if (current && current.password !== undefined &&
+      (merged.password === undefined || merged.password === '')) {
+    merged.password = current.password;
   }
-  if (!db.host) {
-    return { error: 'db.host is required' };
-  }
-  if (db.port === undefined || db.port === null || db.port === '') {
-    return { error: 'db.port is required' };
-  }
-  if (!db.user) {
-    return { error: 'db.user is required' };
-  }
-  if (db.password === undefined || db.password === null) {
-    return { error: 'db.password is required' };
-  }
-  if (requireTable && !db.table) {
-    return { error: 'db.table is required' };
-  }
-  return {
-    db: {
-      host: db.host,
-      port: Number(db.port),
-      user: db.user,
-      password: db.password,
-      table: db.table,
-    },
-  };
+  return merged;
 }
 
 /**
- * POST /cgi-bin/api/db/connect
- * @param {object} body
+ * POST /cgi-bin/api/db/server
+ * @param {string} name
+ * @param {object} config
+ * @param {function} reply
  */
-function dbConnect(body) {
-  const checked = _validateDbBody(body, false);
-  if (checked.error) {
-    CGI.reply({
+function serverPost(name, config, reply) {
+  if (CGI.getServerConfig(name)) {
+    reply({
       ok: false,
-      reason: checked.error,
+      reason: `server '${name}' already exists`,
     });
     return;
   }
-  const client = new MachbaseClient(checked.db);
+  CGI.writeServerConfig(name, config);
+  reply({
+    ok: true,
+    data: { name },
+  });
+}
+
+/**
+ * GET /cgi-bin/api/db/server?name=xxx
+ * @param {string} name
+ * @param {function} reply
+ */
+function serverGet(name, reply) {
+  const config = CGI.getServerConfig(name);
+  if (!config) {
+    reply({
+      ok: false,
+      reason: `server '${name}' not found`,
+    });
+    return;
+  }
+  const safeConfig = { ...config };
+  delete safeConfig.password;
+  reply({
+    ok: true,
+    data: { name, config: safeConfig },
+  });
+}
+
+/**
+ * PUT /cgi-bin/api/db/server?name=xxx
+ * @param {string} name
+ * @param {object} body
+ * @param {function} reply
+ */
+function serverPut(name, body, reply) {
+  const current = CGI.getServerConfig(name);
+  if (!current) {
+    reply({
+      ok: false,
+      reason: `server '${name}' not found`,
+    });
+    return;
+  }
+  CGI.writeServerConfig(name, _mergeServerConfig(current, body));
+  reply({
+    ok: true,
+    data: { name },
+  });
+}
+
+/**
+ * DELETE /cgi-bin/api/db/server?name=xxx
+ * @param {string} name
+ * @param {function} reply
+ */
+function serverDelete(name, reply) {
+  if (!CGI.getServerConfig(name)) {
+    reply({
+      ok: false,
+      reason: `server '${name}' not found`,
+    });
+    return;
+  }
+  const err = CGI.removeServerConfig(name);
+  if (err) {
+    reply({
+      ok: false,
+      reason: errorMessage(err),
+    });
+    return;
+  }
+  reply({ ok: true });
+}
+
+/**
+ * GET /cgi-bin/api/db/server/list
+ * @param {function} reply
+ */
+function serverList(reply) {
+  const names = CGI.getServerConfigList().sort();
+  const data = names.map((name) => {
+    const config = CGI.getServerConfig(name);
+    const safeConfig = { ...config };
+    delete safeConfig.password;
+    return { name, config: safeConfig };
+  });
+  reply({
+    ok: true,
+    data,
+  });
+}
+
+// ── DB endpoints ────────────────────────────────────────────────────────────
+
+/**
+ * POST /cgi-bin/api/db/connect
+ * @param {{ host: string, port: number, user: string, password: string }} db
+ * @param {function} reply
+ */
+function dbConnect(db, reply) {
+  const client = new MachbaseClient(db);
   try {
     client.connect();
-    CGI.reply({
+    reply({
       ok: true,
       data: {
         connected: true,
-        host: checked.db.host,
-        port: checked.db.port,
-        user: checked.db.user,
+        host: db.host,
+        port: db.port,
+        user: db.user,
       },
     });
   } catch (err) {
-    CGI.reply({
+    reply({
       ok: false,
       reason: errorMessage(err),
     });
@@ -559,37 +586,35 @@ function dbConnect(body) {
 
 /**
  * POST /cgi-bin/api/db/table/create
- * @param {object} body
+ * @param {{ host: string, port: number, user: string, password: string, table: string }} db
+ * @param {function} reply
  */
-function dbTableCreate(body) {
-  const checked = _validateDbBody(body, true);
-  if (checked.error) {
-    CGI.reply({
-      ok: false,
-      reason: checked.error,
-    });
-    return;
-  }
-  const client = new MachbaseClient(checked.db);
+function dbTableCreate(db, reply) {
+  const client = new MachbaseClient(db);
   try {
     client.connect();
-    if (client.hasTable(checked.db.table)) {
-      CGI.reply({
+    if (client.selectTableType(db.table).type !== 'UNSUPPORTED') {
+      reply({
         ok: false,
-        reason: `table '${checked.db.table}' already exists`,
+        reason: `table '${db.table}' already exists`,
       });
       return;
     }
-    client.createTagTable(checked.db.table);
-    CGI.reply({
+    const schema = new TableSchema('TAG', db.table, [
+      new Column('NAME', ColumnType.VARCHAR, 0, FLAG_PRIMARY, 100),
+      new Column('TIME', ColumnType.DATETIME, 1, FLAG_BASETIME, 0),
+      new Column('VALUE', ColumnType.DOUBLE, 2, FLAG_SUMMARIZED, 0),
+    ]);
+    client.createTagTable(db.table, schema);
+    reply({
       ok: true,
       data: {
-        table: checked.db.table,
+        table: db.table,
         created: true,
       },
     });
   } catch (err) {
-    CGI.reply({
+    reply({
       ok: false,
       reason: errorMessage(err),
     });
@@ -598,48 +623,108 @@ function dbTableCreate(body) {
   }
 }
 
-// ── Node endpoints ──────────────────────────────────────────────────────────
+/**
+ * GET /cgi-bin/api/db/table/list?server=xxx
+ * @param {{ host: string, port: number, user: string, password: string }} db
+ * @param {function} reply
+ */
+function dbTableList(db, reply) {
+  const client = new MachbaseClient(db);
+  try {
+    client.connect();
+    const rows = client.selectAllTables();
+    const tables = rows
+      .filter((row) => row.TYPE === 6)
+      .map((row) => ({ name: row.NAME }));
+    reply({
+      ok: true,
+      data: tables,
+    });
+  } catch (err) {
+    reply({
+      ok: false,
+      reason: errorMessage(err),
+    });
+  } finally {
+    client.close();
+  }
+}
 
 /**
- * POST /cgi-bin/api/node/children
- * @param {object} body
+ * POST /cgi-bin/api/db/table/columns
+ * @param {{ host: string, port: number, user: string, password: string, table: string }} db
+ * @param {function} reply
  */
-function nodeChildren(body) {
-  if (!body.endpoint) {
-    CGI.reply({
-      ok: false,
-      reason: 'endpoint is required',
+function dbTableColumns(db, reply) {
+  const client = new MachbaseClient(db);
+  try {
+    client.connect();
+    if (client.selectTableType(db.table).type !== 'TAG') {
+      reply({
+        ok: false,
+        reason: `table '${db.table}' is not a TAG table`,
+      });
+      return;
+    }
+    const rows = client.selectColumnsByTableName(db.table);
+    const columns = rows.map((row) => {
+      const col = new Column(row.NAME, ColumnType.fromCode(row.TYPE), row.ID, row.FLAG || 0, row.LENGTH || 0);
+      return {
+        name: col.name,
+        type: col.sqlType(),
+        primaryKey: !!(col.flag & FLAG_PRIMARY),
+        basetime: !!(col.flag & FLAG_BASETIME),
+        summarized: !!(col.flag & FLAG_SUMMARIZED),
+        metadata: !!(col.flag & FLAG_METADATA),
+      };
     });
-    return;
-  }
-  if (!body.node) {
-    CGI.reply({
-      ok: false,
-      reason: 'node is required',
+    reply({
+      ok: true,
+      data: {
+        table: db.table,
+        columns,
+      },
     });
-    return;
+  } catch (err) {
+    reply({
+      ok: false,
+      reason: errorMessage(err),
+    });
+  } finally {
+    client.close();
   }
-  const client = new OpcuaClient(body.endpoint);
+}
+
+// ── OPC UA one-shot endpoints ───────────────────────────────────────────────
+
+/**
+ * GET /cgi-bin/api/opcua/read?endpoint=xxx&nodes=id1,id2
+ * @param {string} endpoint
+ * @param {string[]} nodeIds
+ * @param {function} reply
+ */
+function opcuaRead(endpoint, nodeIds, reply) {
+  const client = new OpcuaClient(endpoint);
   if (!client.open()) {
-    CGI.reply({
+    reply({
       ok: false,
-      reason: 'connect failed: ' + body.endpoint,
+      reason: 'connect failed: ' + endpoint,
     });
     return;
   }
   try {
-    const request = { nodes: [body.node] };
-    if (typeof body.nodeClassMask === 'number') {
-      request.nodeClassMask = body.nodeClassMask;
-    }
-    const results = client.browse(request);
-    const data = results && results[0] && results[0].references ? results[0].references : [];
-    CGI.reply({
+    const results = client.read(nodeIds);
+    reply({
       ok: true,
-      data,
+      data: nodeIds.map((nodeId, i) => ({
+        nodeId,
+        value: results[i].value,
+        sourceTimestamp: results[i].sourceTimestamp,
+        serverTimestamp: results[i].serverTimestamp,
+      })),
     });
   } catch (e) {
-    CGI.reply({
+    reply({
       ok: false,
       reason: errorMessage(e),
     });
@@ -649,40 +734,101 @@ function nodeChildren(body) {
 }
 
 /**
- * POST /cgi-bin/api/node/children-native
- * @param {object} body
+ * POST /cgi-bin/api/opcua/write
+ * @param {string} endpoint
+ * @param {Array<{ node: string, value: any }>} writes
+ * @param {function} reply
  */
-function nodeChildrenNative(body) {
-  if (!body.endpoint) {
-    CGI.reply({
+function opcuaWrite(endpoint, writes, reply) {
+  const client = new OpcuaClient(endpoint);
+  if (!client.open()) {
+    reply({
       ok: false,
-      reason: 'endpoint is required',
+      reason: 'connect failed: ' + endpoint,
     });
     return;
   }
-  if (!body.node) {
-    CGI.reply({
-      ok: false,
-      reason: 'node is required',
+  try {
+    const result = client.write(...writes);
+    reply({
+      ok: true,
+      data: result,
     });
-    return;
+  } catch (e) {
+    reply({
+      ok: false,
+      reason: errorMessage(e),
+    });
+  } finally {
+    client.close();
   }
+}
+
+// ── Node endpoints ──────────────────────────────────────────────────────────
+
+/**
+ * POST /cgi-bin/api/opcua/node/descendants
+ * @param {object} body
+ * @param {function} reply
+ */
+function _browseAll(client, nodeId, nodeClassMask) {
+  const request = { nodes: [nodeId] };
+  if (typeof nodeClassMask === 'number') {
+    request.nodeClassMask = nodeClassMask;
+  }
+  const results = client.browse(request);
+  const first = results && results[0] ? results[0] : {};
+  const references = first.references ? first.references.slice() : [];
+  let continuationPoint = first.continuationPoint;
+  while (continuationPoint) {
+    const nextResults = client.browseNext({
+      continuationPoints: [continuationPoint],
+      releaseContinuationPoints: false,
+    });
+    const next = nextResults && nextResults[0] ? nextResults[0] : {};
+    if (next.references && next.references.length > 0) {
+      for (let i = 0; i < next.references.length; i++) {
+        references.push(next.references[i]);
+      }
+    }
+    continuationPoint = next.continuationPoint;
+  }
+  return references;
+}
+
+function nodeChildren(body, reply) {
   const client = new OpcuaClient(body.endpoint);
   if (!client.open()) {
-    CGI.reply({
+    reply({
       ok: false,
       reason: 'connect failed: ' + body.endpoint,
     });
     return;
   }
   try {
-    const results = client.children(body);
-    CGI.reply({
+    const visited = {};
+    visited[body.node] = true;
+    const queue = [body.node];
+    const all = [];
+    while (queue.length > 0) {
+      const current = queue.shift();
+      const references = _browseAll(client, current, body.nodeClassMask);
+      for (let i = 0; i < references.length; i++) {
+        const ref = references[i];
+        all.push(ref);
+        const childId = ref.NodeId;
+        if (childId && !visited[childId]) {
+          visited[childId] = true;
+          queue.push(childId);
+        }
+      }
+    }
+    reply({
       ok: true,
-      data: results,
+      data: all,
     });
   } catch (e) {
-    CGI.reply({
+    reply({
       ok: false,
       reason: errorMessage(e),
     });
@@ -701,8 +847,16 @@ module.exports = {
   collectorLastTime,
   collectorStart,
   collectorStop,
+  serverPost,
+  serverGet,
+  serverPut,
+  serverDelete,
+  serverList,
   dbConnect,
   dbTableCreate,
+  dbTableList,
+  dbTableColumns,
   nodeChildren,
-  nodeChildrenNative,
+  opcuaRead,
+  opcuaWrite,
 };

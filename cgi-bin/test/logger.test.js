@@ -81,16 +81,10 @@ runner.run("Logger", {
         t.assertEqual(logger._maxFiles, 10, "maxFiles 0 should fall back to 10");
     },
 
-    "_resolveFilePath index 0 returns repli.log": (t) => {
+    "_activeFilePath returns name.log": (t) => {
         const logger = new Logger({});
-        const p = logger._resolveFilePath(0);
-        t.assert(p.endsWith("repli.log"), "index 0 should be repli.log");
-    },
-
-    "_resolveFilePath index 1 returns repli_0001.log": (t) => {
-        const logger = new Logger({});
-        const p = logger._resolveFilePath(1);
-        t.assert(p.endsWith("repli_0001.log"), "index 1 should be repli_0001.log");
+        const p = logger._activeFilePath();
+        t.assert(p.endsWith("repli.log"), "active file should be repli.log");
     },
 
     "init() replaces singleton instance": (t) => {

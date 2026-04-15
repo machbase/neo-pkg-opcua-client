@@ -4,8 +4,9 @@ const suites = [
     "./logger.test.js",
     "./opcua-client.test.js",
     "./machbase-client.test.js",
-    "./machbase-appender.test.js",
+    "./machbase-stream.test.js",
     "./collector.test.js",
+    "./handler.test.js",
 ];
 
 let allPassed = true;

@@ -1,7 +1,5 @@
 /**
- * POST /cgi-bin/api/node/children-native  -- OPC UA 노드 native children 조회
- *
- * body: { endpoint, node, nodeClassMask? }
+ * GET /cgi-bin/api/db/server/list  -- DB 서버 목록 조회
  */
 
 const path = require('path');
@@ -11,20 +9,22 @@ const ROOT = _argv.slice(0, _argv.lastIndexOf('/cgi-bin/') + '/cgi-bin'.length);
 const { CGI } = require(path.join(ROOT, 'src', 'cgi', 'cgi_util.js'));
 const Handler = require(path.join(ROOT, 'src', 'cgi', 'handler.js'));
 
+const reply = (r) => CGI.reply(r);
+
 const handlers = {
-  POST: () => Handler.nodeChildrenNative(CGI.readBody()),
+  GET: () => Handler.serverList(reply),
 };
 const method = (process.env.get('REQUEST_METHOD') || 'GET').toUpperCase();
 try {
   const handler = handlers[method] || (() => {
-    CGI.reply({
+    reply({
       ok: false,
       reason: 'method not allowed',
     });
   });
   handler();
 } catch (err) {
-  CGI.reply({
+  reply({
     ok: false,
     reason: err && err.message ? err.message : String(err),
   });

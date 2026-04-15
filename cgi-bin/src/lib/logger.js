@@ -5,7 +5,10 @@ const path = require('path');
 const process = require('process');
 
 const HOME = process.env.get('HOME');
-const LOG_DIR = path.join(HOME, 'public', 'logs');
+const _cgiBinIdx = process.argv[1].lastIndexOf('/cgi-bin/');
+const _appDir = _cgiBinIdx >= 0 ? process.argv[1].slice(0, _cgiBinIdx + '/cgi-bin'.length) : null;
+const PKG_NAME = _appDir ? path.basename(path.dirname(_appDir)) : 'neo-pkg-opcua-client';
+const LOG_DIR = path.join(HOME, 'public', 'logs', PKG_NAME);
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
 
@@ -27,8 +30,9 @@ const LEVEL_LABEL = {
 /**
  * Logger — 크기 기반 로테이션, file 출력
  *
- * 출력 디렉토리: $HOME/public/logs  (고정)
- * 파일명: repli.log, repli_0001.log, repli_0002.log, ...
+ * 출력 디렉토리: $HOME/public/logs/{pkg}  (pkg = process.argv[1] 기반 패키지 디렉토리명)
+ * 파일명: repli.log  (현재 활성 파일)
+ * 로테이션: repli.log 가 MAX_FILE_SIZE 초과 시 repli.2026-04-15T03-42-34-064Z.log 로 rename
  * 파일당 최대 크기: 10 MB
  *
  * 포맷: [LEVEL] YYYY-MM-DD HH:MM:SS.sss  stage  message  (key=value ...)
@@ -36,25 +40,24 @@ const LEVEL_LABEL = {
  * 설정 (config.logging):
  *   disable  : boolean                                 (기본 false, true이면 모든 출력 비활성화)
  *   level    : "trace"|"debug"|"info"|"warn"|"error"  (기본 "info")
- *   maxFiles : number                                  (기본 10, 최대 파일 개수)
+ *   maxFiles : number                                  (기본 10, 최대 rotate 파일 개수)
  */
 class Logger {
-  constructor(loggingConfig = {}) {
+  constructor(loggingConfig = {}, options = {}) {
     this._disabled = loggingConfig.disable === true;
-    this._minLevel = LEVELS[loggingConfig.level] ?? LEVELS.info;
+    const levelVal = LEVELS[loggingConfig.level];
+    this._minLevel = (levelVal !== undefined && levelVal !== null) ? levelVal : LEVELS.info;
     this._maxFiles = (loggingConfig.maxFiles > 0 ? loggingConfig.maxFiles : 10);
+    this._name = options.name || PKG_NAME;
     this._fileDir = LOG_DIR;
 
     this._filePath = null;
-    this._fileIndex = 0;
     this._fileSize = 0;
 
     if (!this._disabled) {
       try {
         fs.mkdirSync(this._fileDir, { recursive: true });
-      } catch (err) {
-        console.error(`[Logger] failed to create log directory: ${err.message}`);
-      }
+      } catch (_) {}
     }
   }
 
@@ -90,45 +93,63 @@ class Logger {
     const ts = new Date().toISOString().replace('T', ' ').slice(0, 23);
     const label = LEVEL_LABEL[level] || level.toUpperCase();
 
-    const { msg, ...rest } = fields;
-    const kvParts = Object.entries(rest)
-      .filter(([, v]) => v !== undefined && v !== null)
-      .map(([k, v]) => `${k}=${_quoteIfNeeded(String(v))}`);
+    const msg = fields && fields.msg !== undefined ? String(fields.msg) : '';
+    const kvParts = [];
+    if (fields) {
+      const keys = Object.keys(fields);
+      for (let i = 0; i < keys.length; i++) {
+        const k = keys[i];
+        if (k === 'msg') continue;
+        const v = fields[k];
+        if (v === undefined || v === null) continue;
+        kvParts.push(k + '=' + _quoteIfNeeded(String(v)));
+      }
+    }
 
-    const msgStr = msg !== undefined ? String(msg) : '';
-    const kv = kvParts.length > 0 ? `  (${kvParts.join(' ')})` : '';
-    return `[${label}] ${ts}  ${stage}  ${msgStr}${kv}`;
+    const kv = kvParts.length > 0 ? '  (' + kvParts.join(' ') + ')' : '';
+    return '[' + label + '] ' + ts + '  ' + stage + '  ' + msg + kv;
   }
 
-  // index 0: repli.log, index 1+: repli_0001.log, repli_0002.log, ...
-  _resolveFilePath(index) {
-    const suffix = index === 0 ? '' : `_${String(index).padStart(4, '0')}`;
-    return path.join(this._fileDir, `repli${suffix}.log`);
+  // 활성 로그 파일 경로: 항상 ${name}.log
+  _activeFilePath() {
+    return path.join(this._fileDir, `${this._name}.log`);
   }
 
   _ensurePath() {
     if (this._filePath) {
       return;
     }
-
+    this._filePath = this._activeFilePath();
     try {
-      // 10 MB 미만인 첫 번째 파일을 찾아 이어씀
-      while (this._fileIndex < this._maxFiles) {
-        const candidate = this._resolveFilePath(this._fileIndex);
-        let size = 0;
-        try {
-          size = fs.statSync(candidate).size;
-        } catch (_) {}
-        if (size < MAX_FILE_SIZE) {
-          this._filePath = candidate;
-          this._fileSize = size;
-          break;
-        }
-        this._fileIndex++;
-      }
-    } catch (err) {
-      console.error(`[Logger] failed to open log file: ${err.message}`);
+      this._fileSize = fs.statSync(this._filePath).size;
+    } catch (_) {
+      this._fileSize = 0;
     }
+  }
+
+  // 현재 파일을 datetime 접미사로 rename 후 오래된 rotate 파일 정리
+  _rotate() {
+    const ts = new Date().toISOString().replace(/:/g, '-').replace('.', '-');
+    const rotated = path.join(this._fileDir, `${this._name}.${ts}.log`);
+    try {
+      fs.renameSync(this._filePath, rotated);
+    } catch (_) {}
+    this._fileSize = 0;
+    this._purgeOldFiles();
+  }
+
+  // rotate된 파일이 maxFiles 초과 시 가장 오래된 것부터 삭제
+  _purgeOldFiles() {
+    try {
+      const prefix = `${this._name}.`;
+      const files = fs.readdirSync(this._fileDir)
+        .filter(f => f !== `${this._name}.log` && f.startsWith(prefix) && f.endsWith('.log'))
+        .sort();
+      while (files.length >= this._maxFiles) {
+        const oldest = files.shift();
+        try { fs.unlinkSync(path.join(this._fileDir, oldest)); } catch (_) {}
+      }
+    } catch (_) {}
   }
 
   _appendToFile(text) {
@@ -137,22 +158,16 @@ class Logger {
       return;
     }
 
-    // 파일 크기 초과 시 다음 인덱스 파일로 전환
+    // 파일 크기 초과 시 현재 파일을 datetime으로 rename 후 새 파일에 이어씀
     if (this._fileSize + text.length > MAX_FILE_SIZE) {
-      if (this._fileIndex + 1 >= this._maxFiles) {
-        return; // 최대 파일 개수 도달, 쓰기 중단
-      }
-      this._fileIndex++;
-      this._filePath = this._resolveFilePath(this._fileIndex);
-      this._fileSize = 0;
+      this._rotate();
     }
 
     try {
-      fs.appendFileSync(this._filePath, text, 'utf8');
+      fs.appendFileSync(this._filePath, text);
       this._fileSize += text.length;
     } catch (err) {
       this._filePath = null;
-      console.error(`[Logger] failed to write log file: ${err.message}`);
     }
   }
 }
@@ -163,9 +178,9 @@ function _quoteIfNeeded(str) {
 
 let _instance = new Logger();
 
-function init(loggingConfig) {
+function init(loggingConfig, options) {
   _instance.close();
-  _instance = new Logger(loggingConfig);
+  _instance = new Logger(loggingConfig, options);
 }
 
 function getInstance() {
