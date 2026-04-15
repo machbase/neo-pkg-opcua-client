@@ -632,10 +632,20 @@ function dbTableList(db, reply) {
   const client = new MachbaseClient(db);
   try {
     client.connect();
+    const users = client.selectUsers();
+    if (db.user) {
+      const found = users.find((u) => u.NAME === db.user);
+      if (!found) {
+        reply({ ok: false, reason: `user '${db.user}' not found` });
+        return;
+      }
+    }
+    const userById = {};
+    for (const u of users) userById[u.USER_ID] = u.NAME;
     const rows = client.selectAllTables();
     const tables = rows
       .filter((row) => row.TYPE === 6)
-      .map((row) => ({ name: row.NAME }));
+      .map((row) => ({ name: row.NAME, user: userById[row.USER_ID] || null }));
     reply({
       ok: true,
       data: tables,
@@ -651,22 +661,47 @@ function dbTableList(db, reply) {
 }
 
 /**
- * POST /cgi-bin/api/db/table/columns
- * @param {{ host: string, port: number, user: string, password: string, table: string }} db
+ * GET /cgi-bin/api/db/table/columns?server=xxx&table=xxx
+ * @param {{ host: string, port: number, user: string, password: string }} db
+ * @param {string} table
  * @param {function} reply
  */
-function dbTableColumns(db, reply) {
+function dbTableColumns(db, table, reply) {
+  // README: "SYS.TAG" 형식으로 들어올 수 있으므로 user명과 테이블명을 분리한다.
+  // user명이 있으면 해당 USER_ID 소유 테이블만 조회해 동명 테이블 간 충돌을 방지한다.
+  // TODO: 현재는 "user.table" 2단계만 파싱한다.
+  //       Machbase가 "database.user.table" 3단계 형식을 지원할 경우
+  //       database 단위 구분 및 연결 대상 분기 로직 추가 필요.
+  const dotIdx = table.indexOf('.');
+  const tableUser = dotIdx >= 0 ? table.slice(0, dotIdx) : null;
+  const tableName = dotIdx >= 0 ? table.slice(dotIdx + 1) : table;
+
   const client = new MachbaseClient(db);
   try {
     client.connect();
-    if (client.selectTableType(db.table).type !== 'TAG') {
-      reply({
-        ok: false,
-        reason: `table '${db.table}' is not a TAG table`,
-      });
+    const users = client.selectUsers();
+
+    let userId = null;
+    const lookupUser = tableUser || db.user;
+    if (lookupUser) {
+      const found = users.find((u) => u.NAME === lookupUser);
+      if (!found) {
+        reply({ ok: false, reason: `user '${lookupUser}' not found` });
+        return;
+      }
+      userId = found.USER_ID;
+    }
+
+    const meta = client.selectTableMeta(tableName, userId);
+    if (!meta) {
+      reply({ ok: false, reason: `table '${table}' not found` });
       return;
     }
-    const rows = client.selectColumnsByTableName(db.table);
+    if (meta.TYPE !== 6) {
+      reply({ ok: false, reason: `table '${table}' is not a TAG table` });
+      return;
+    }
+    const rows = client.selectColumnsByTableId(meta.ID);
     const columns = rows.map((row) => {
       const col = new Column(row.NAME, ColumnType.fromCode(row.TYPE), row.ID, row.FLAG || 0, row.LENGTH || 0);
       return {
@@ -680,10 +715,7 @@ function dbTableColumns(db, reply) {
     });
     reply({
       ok: true,
-      data: {
-        table: db.table,
-        columns,
-      },
+      data: { table, columns },
     });
   } catch (err) {
     reply({

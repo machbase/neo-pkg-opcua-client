@@ -8,10 +8,7 @@ const process = require('process');
 const _argv = process.argv[1];
 const ROOT = _argv.slice(0, _argv.lastIndexOf('/cgi-bin/') + '/cgi-bin'.length);
 const { CGI } = require(path.join(ROOT, 'src', 'cgi', 'cgi_util.js'));
-
-const HOME = process.env.get('HOME');
-const PKG_NAME = path.basename(path.dirname(ROOT));
-const LOG_DIR = path.join(HOME, 'public', 'logs', PKG_NAME);
+const { LOG_DIR } = require(path.join(ROOT, 'src', 'lib', 'logger.js'));
 
 const reply = (r) => CGI.reply(r);
 
@@ -20,11 +17,30 @@ const handlers = {
     let files;
     try {
       files = fs.readdirSync(LOG_DIR).filter((f) => f.endsWith('.log'));
-    } catch (_) {
-      files = [];
+    } catch (err) {
+      const msg = err && err.message ? err.message : String(err);
+      const notFound = msg.indexOf('ENOENT') >= 0 || msg.indexOf('no such file') >= 0;
+      if (notFound) {
+        files = [];
+      } else {
+        reply({ ok: false, reason: msg });
+        return;
+      }
     }
     files.sort();
-    reply({ ok: true, data: files });
+    const fileInfos = files.map((name) => {
+      const filePath = path.join(LOG_DIR, name);
+      let size = 0;
+      let lines = 0;
+      try {
+        const stat = fs.statSync(filePath);
+        size = stat.size;
+        const content = fs.readFileSync(filePath, 'utf8');
+        lines = content ? content.split('\n').filter((_, i, arr) => i < arr.length - 1 || arr[i] !== '').length : 0;
+      } catch (_) {}
+      return { name, size, lines };
+    });
+    reply({ ok: true, data: { files: fileInfos } });
   },
 };
 

@@ -97,7 +97,10 @@ class MockMachbaseClient {
         this.closed = false;
         this.connectError = null;
         this.tableType = 'UNSUPPORTED';
+        this.tableMeta = null;
         this.columns = [];
+        this.tables = [];
+        this.users = [{ USER_ID: 1, NAME: 'SYS' }];
         this.createError = null;
     }
     connect() {
@@ -106,6 +109,10 @@ class MockMachbaseClient {
     }
     close() { this.closed = true; }
     selectTableType(_table) { return { type: this.tableType }; }
+    selectUsers() { return this.users; }
+    selectAllTables() { return this.tables; }
+    selectTableMeta(_table, _userId) { return this.tableMeta; }
+    selectColumnsByTableId(_tableId) { return this.columns; }
     selectColumnsByTableName(_table) { return this.columns; }
     createTagTable(_table, _schema) {
         if (this.createError) throw new Error(this.createError);
@@ -221,13 +228,13 @@ runner.run('Handler: collectorPost', {
 // ── collectorGet ─────────────────────────────────────────────────────────────
 
 runner.run('Handler: collectorGet', {
-    'returns config without password': (t) => {
+    'returns config': (t) => {
         const H = makeHandler();
-        mockCGI._configs['col-a'] = { opcua: {}, db: { host: 'h', password: 'secret' } };
+        mockCGI._configs['col-a'] = { opcua: {}, db: 'server-a' };
         let result;
         H.collectorGet('col-a', (r) => { result = r; });
         t.assert(result.ok, 'should be ok');
-        t.assertEqual(result.data.config.db.password, undefined, 'password should be removed');
+        t.assertEqual(result.data.config.db, 'server-a');
         t.assertEqual(result.data.name, 'col-a');
     },
 
@@ -244,30 +251,11 @@ runner.run('Handler: collectorGet', {
 runner.run('Handler: collectorPut', {
     'updates config when not running': (t) => {
         const H = makeHandler();
-        mockCGI._configs['col-a'] = { db: { host: 'h', password: 'secret' } };
+        mockCGI._configs['col-a'] = { db: 'server-a', opcua: {} };
         let result;
-        H.collectorPut('col-a', { db: { host: 'h2' } }, (r) => { result = r; });
+        H.collectorPut('col-a', { db: 'server-b', opcua: {} }, (r) => { result = r; });
         t.assert(result.ok, 'should be ok');
-        t.assertEqual(mockCGI._configs['col-a'].db.host, 'h2');
-        t.assertEqual(mockCGI._configs['col-a'].db.password, 'secret', 'password preserved');
-    },
-
-    'preserves password when new config sets empty string': (t) => {
-        const H = makeHandler();
-        mockCGI._configs['col-a'] = { db: { host: 'h', password: 'secret' } };
-        let result;
-        H.collectorPut('col-a', { db: { host: 'h2', password: '' } }, (r) => { result = r; });
-        t.assert(result.ok, 'should be ok');
-        t.assertEqual(mockCGI._configs['col-a'].db.password, 'secret', 'empty password falls back');
-    },
-
-    'replaces password when explicitly provided': (t) => {
-        const H = makeHandler();
-        mockCGI._configs['col-a'] = { db: { host: 'h', password: 'old' } };
-        let result;
-        H.collectorPut('col-a', { db: { host: 'h2', password: 'new' } }, (r) => { result = r; });
-        t.assert(result.ok, 'should be ok');
-        t.assertEqual(mockCGI._configs['col-a'].db.password, 'new');
+        t.assertEqual(mockCGI._configs['col-a'].db, 'server-b');
     },
 
     'stops and restarts service when running': (t) => {
@@ -610,20 +598,69 @@ runner.run('Handler: dbTableCreate', {
     },
 });
 
+// ── dbTableList ───────────────────────────────────────────────────────────────
+
+runner.run('Handler: dbTableList', {
+    'returns TAG tables with user name': (t) => {
+        const H = makeHandler();
+        mockMachbaseClient.users = [
+            { USER_ID: 1, NAME: 'SYS' },
+            { USER_ID: 2, NAME: 'ADMIN' },
+        ];
+        mockMachbaseClient.tables = [
+            { NAME: 'TAG1', TYPE: 6, ID: 10, USER_ID: 1 },
+            { NAME: 'TAG2', TYPE: 6, ID: 11, USER_ID: 2 },
+            { NAME: 'LOG1', TYPE: 0, ID: 12, USER_ID: 1 },
+        ];
+        let result;
+        H.dbTableList({ host: 'h', port: 5656, user: 'SYS', password: 'pw' }, (r) => { result = r; });
+        t.assert(result.ok, 'should be ok');
+        t.assertEqual(result.data.length, 2, 'only TAG tables');
+        t.assertEqual(result.data[0].name, 'TAG1');
+        t.assertEqual(result.data[0].user, 'SYS');
+        t.assertEqual(result.data[1].name, 'TAG2');
+        t.assertEqual(result.data[1].user, 'ADMIN');
+        t.assert(mockMachbaseClient.closed, 'client should be closed');
+    },
+
+    'returns error when user not found': (t) => {
+        const H = makeHandler();
+        mockMachbaseClient.users = [{ USER_ID: 1, NAME: 'SYS' }];
+        let result;
+        H.dbTableList({ host: 'h', port: 5656, user: 'UNKNOWN', password: 'pw' }, (r) => { result = r; });
+        t.assert(!result.ok, 'should not be ok');
+        t.assert(result.reason.includes('not found'));
+    },
+
+    'returns null user when USER_ID has no match': (t) => {
+        const H = makeHandler();
+        mockMachbaseClient.users = [{ USER_ID: 1, NAME: 'SYS' }];
+        mockMachbaseClient.tables = [
+            { NAME: 'TAG1', TYPE: 6, ID: 10, USER_ID: 99 },
+        ];
+        let result;
+        H.dbTableList({ host: 'h', port: 5656, user: 'SYS', password: 'pw' }, (r) => { result = r; });
+        t.assert(result.ok, 'should be ok');
+        t.assertNull(result.data[0].user, 'user should be null when USER_ID unresolvable');
+    },
+});
+
 // ── dbTableColumns ────────────────────────────────────────────────────────────
 
 runner.run('Handler: dbTableColumns', {
-    'returns columns for existing table': (t) => {
+    'returns columns for existing TAG table': (t) => {
         const H = makeHandler();
-        mockMachbaseClient.tableType = 'TAG';
+        mockMachbaseClient.users = [{ USER_ID: 1, NAME: 'SYS' }];
+        mockMachbaseClient.tableMeta = { ID: 10, TYPE: 6, NAME: 'TAG' };
         mockMachbaseClient.columns = [
             { NAME: 'NAME', TYPE: 5, ID: 0, FLAG: 0x8000000, LENGTH: 100 },
             { NAME: 'TIME', TYPE: 6, ID: 1, FLAG: 0x1000000, LENGTH: 0 },
             { NAME: 'VALUE', TYPE: 20, ID: 2, FLAG: 0x2000000, LENGTH: 0 },
         ];
         let result;
-        H.dbTableColumns({ host: 'h', port: 5656, user: 'u', password: 'p', table: 'TAG' }, (r) => { result = r; });
+        H.dbTableColumns({ host: 'h', port: 5656, user: 'SYS', password: 'p' }, 'TAG', (r) => { result = r; });
         t.assert(result.ok, 'should be ok');
+        t.assertEqual(result.data.table, 'TAG');
         t.assertEqual(result.data.columns.length, 3);
         t.assert(result.data.columns[0].primaryKey, 'NAME should be primary key');
         t.assert(result.data.columns[1].basetime, 'TIME should be basetime');
@@ -631,10 +668,31 @@ runner.run('Handler: dbTableColumns', {
         t.assert(mockMachbaseClient.closed, 'client should be closed');
     },
 
+    'returns error when user not found': (t) => {
+        const H = makeHandler();
+        mockMachbaseClient.users = [{ USER_ID: 1, NAME: 'SYS' }];
+        let result;
+        H.dbTableColumns({ host: 'h', port: 5656, user: 'UNKNOWN', password: 'p' }, 'TAG', (r) => { result = r; });
+        t.assert(!result.ok, 'should not be ok');
+        t.assert(result.reason.includes('not found'));
+    },
+
+    'returns error when table not found': (t) => {
+        const H = makeHandler();
+        mockMachbaseClient.users = [{ USER_ID: 1, NAME: 'SYS' }];
+        mockMachbaseClient.tableMeta = null;
+        let result;
+        H.dbTableColumns({ host: 'h', port: 5656, user: 'SYS', password: 'p' }, 'MISSING', (r) => { result = r; });
+        t.assert(!result.ok, 'should not be ok');
+        t.assert(result.reason.includes('not found'));
+    },
+
     'returns error when table is not a TAG table': (t) => {
         const H = makeHandler();
+        mockMachbaseClient.users = [{ USER_ID: 1, NAME: 'SYS' }];
+        mockMachbaseClient.tableMeta = { ID: 12, TYPE: 0, NAME: 'LOG1' };
         let result;
-        H.dbTableColumns({ host: 'h', port: 5656, user: 'u', password: 'p', table: 'MISSING' }, (r) => { result = r; });
+        H.dbTableColumns({ host: 'h', port: 5656, user: 'SYS', password: 'p' }, 'LOG1', (r) => { result = r; });
         t.assert(!result.ok, 'should not be ok');
         t.assert(result.reason.includes('is not a TAG table'));
     },
@@ -741,7 +799,12 @@ runner.run('Handler: nodeChildren', {
     'handles continuationPoint': (t) => {
         const H = makeHandler();
         let browseNextCalled = false;
-        mockOpcuaClient.browse = (_req) => [{ references: [{ NodeId: 'ns=1;s=C1' }], continuationPoint: 'cp1' }];
+        mockOpcuaClient.browse = (req) => {
+            if (req.nodes[0] === 'ns=0;i=85') {
+                return [{ references: [{ NodeId: 'ns=1;s=C1' }], continuationPoint: 'cp1' }];
+            }
+            return [{ references: [] }];
+        };
         mockOpcuaClient.browseNext = (_req) => {
             browseNextCalled = true;
             return [{ references: [{ NodeId: 'ns=1;s=C2' }], continuationPoint: null }];

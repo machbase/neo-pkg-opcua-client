@@ -22,9 +22,8 @@ Machbase Neo JSH 환경에서 OPC UA 서버 데이터를 주기적으로 읽어 
   - `log.file.path` 를 디렉토리로 입력하면 collector 실행 시 `${name}.log` 생성
   - 예: `${CWD}/log` + `collector-a` -> `<package_root>/log/collector-a.log`
   - legacy 호환: `.../name.log` 형태를 직접 넣으면 그대로 사용
-- rotate 파일명:
-  - size: `collector-a.2026-04-08T03-42-34-064Z.log`
-  - daily: `collector-a.2026-04-08.log`
+- 로그 API 경로: `{package_root}/logs/` (log list/content API 기준)
+- rotate 파일명: `collector-a_20260408_034208.log` (`{name}_YYYYMMDD_HHMMSS.log`)
 
 ## 실행 환경 메모
 
@@ -50,24 +49,37 @@ cgi-bin/
 │   │   ├── start.js              # POST   /cgi-bin/api/collector/start?name=xxx
 │   │   └── stop.js               # POST   /cgi-bin/api/collector/stop?name=xxx
 │   ├── db/
-│   │   ├── connect.js            # POST   /cgi-bin/api/db/connect
+│   │   ├── connect.js            # GET    /cgi-bin/api/db/connect?server=xxx
+│   │   ├── server.js             # POST/GET/PUT/DELETE /cgi-bin/api/db/server
+│   │   ├── server/
+│   │   │   └── list.js           # GET    /cgi-bin/api/db/server/list
 │   │   └── table/
-│   │       └── create.js         # POST   /cgi-bin/api/db/table/create
+│   │       ├── create.js         # POST   /cgi-bin/api/db/table/create
+│   │       ├── list.js           # GET    /cgi-bin/api/db/table/list?server=xxx
+│   │       └── columns.js        # GET    /cgi-bin/api/db/table/columns?server=xxx&table=xxx
+│   ├── log/
+│   │   ├── list.js               # GET    /cgi-bin/api/log/list
+│   │   └── content.js            # GET    /cgi-bin/api/log/content?name=xxx
 │   └── opcua/
-│       ├── read.js               # POST   /cgi-bin/api/opcua/read
+│       ├── read.js               # GET    /cgi-bin/api/opcua/read?endpoint=&nodes=
 │       ├── write.js              # POST   /cgi-bin/api/opcua/write
 │       └── node/
 │           └── descendants.js    # POST   /cgi-bin/api/opcua/node/descendants
 ├── src/
 │   ├── collector.js              # polling loop
-│   ├── logger.js                 # logger / rotator
+│   ├── lib/logger.js             # logger / rotator
 │   ├── cgi/cgi_util.js           # config, pid, service helper
-│   ├── db/machbase-client.js     # DB connect / query / create helper
-│   ├── db/machbase-appender.js   # Machbase append wrapper
-│   └── opcua/opcua-client.js     # opcua wrapper
+│   ├── cgi/handler.js            # API 핸들러 함수 모음
+│   ├── cgi/service.js            # service lifecycle 래퍼
+│   ├── db/client.js              # DB connect / query / execute
+│   ├── db/stream.js              # Machbase append 스트림 래퍼
+│   ├── db/table.js               # TagTable / LogTable / TagDataTable
+│   ├── db/types.js               # ColumnType, Column, TableSchema, FLAG_*
+│   └── opcua/opcua-client.js     # opcua 래퍼
 └── test/
     ├── index.js
     ├── runner.js
+    ├── handler.test.js
     ├── machbase-client.test.js
     └── *.test.js
 ```
@@ -84,14 +96,14 @@ cgi-bin/
 ### GET `/cgi-bin/api/collector?name=xxx`
 
 - 설정 단건 조회
-- `db.password` 는 응답에서 제거
+- collector config의 `db` 필드는 server 이름 string이므로 password 제거 불필요
 
 ### PUT `/cgi-bin/api/collector?name=xxx`
 
 - 설정 파일 수정
 - service가 현재 `RUNNING` 일 때만 `stop -> start`
 - install되지 않았거나 running이 아니면 config만 수정
-- `db.password` 가 없거나 `""` 이면 기존 password 유지
+- collector config의 `db` 필드는 server 이름 string이므로 password 병합 불필요
 
 ### DELETE `/cgi-bin/api/collector?name=xxx`
 
@@ -121,28 +133,6 @@ cgi-bin/
 
 - install된 service stop
 
-### POST `/cgi-bin/api/db/connect`
-
-- body는 `config.db` 와 같은 구조
-- `table` 없이 DB 연결만 확인
-- 성공 시 `{ connected: true, host, port, user }`
-
-### POST `/cgi-bin/api/db/table/create`
-
-- body는 `config.db` 와 같은 구조
-- 지정한 DB에 연결해 TAG 테이블 생성
-- 생성 SQL은 아래 구조로 고정
-
-```sql
-CREATE TAG TABLE ${table} (
-  NAME VARCHAR(100) PRIMARY KEY,
-  TIME DATETIME BASETIME,
-  VALUE DOUBLE SUMMARIZED
-);
-```
-
-- 같은 이름의 테이블이 이미 있으면 에러 반환
-
 ### GET `/cgi-bin/api/collector/list`
 
 - 기준은 `conf.d` 목록
@@ -157,6 +147,50 @@ CREATE TAG TABLE ${table} (
   { "name": "collector-b", "installed": false, "running": false }
 ]
 ```
+
+### GET `/cgi-bin/api/db/connect?server=xxx`
+
+- 등록된 server 이름으로 연결 확인
+- 성공 시 `{ connected: true, host, port, user }`
+
+### POST `/cgi-bin/api/db/table/create`
+
+- body: `{ server: "server-name", table: "TAGDATA" }`
+- 등록된 server에 연결해 TAG 테이블 생성
+- 생성 SQL은 아래 구조로 고정
+
+```sql
+CREATE TAG TABLE ${table} (
+  NAME VARCHAR(100) PRIMARY KEY,
+  TIME DATETIME BASETIME,
+  VALUE DOUBLE SUMMARIZED
+);
+```
+
+- 같은 이름의 테이블이 이미 있으면 에러 반환
+
+### GET `/cgi-bin/api/db/table/list?server=xxx`
+
+- 전체 TAG 테이블 목록 반환 (USER_ID 기준으로 소유 유저명 포함)
+- `M$SYS_USERS` 를 조회해 USER_ID → 유저명 매핑
+- 유효하지 않은 user이면 에러 반환
+- 응답 예:
+
+```json
+[
+  { "name": "TAG1", "user": "SYS" },
+  { "name": "TAG2", "user": "ADMIN" }
+]
+```
+
+### GET `/cgi-bin/api/db/table/columns?server=xxx&table=xxx`
+
+- 지정 TAG 테이블의 컬럼 목록 반환
+- `table` 파라미터는 `TAG` 또는 `user.TAG` 형식 지원 — `user.TAG` 형식이면 해당 user의 USER_ID로 소유자 구분
+- `M$SYS_USERS` 로 user 유효성 검사 → user not found 시 에러
+- `selectTableMeta(tableName, userId)` → table not found / not TAG table 시 에러
+- `selectColumnsByTableId(tableId)` 로 컬럼 조회
+- TODO: `database.user.table` 3단계 형식은 미지원 — Machbase가 지원할 경우 추가 필요
 
 ## Service 관련 구현 메모
 
@@ -187,17 +221,19 @@ CREATE TAG TABLE ${table} (
 
 ## Logger 메모
 
-- 전역 logger config는 `init(config.log, options)` 로 초기화
-- collector 실행 진입점 `neo-collector.js` 에서 `{ defaultFileName: "${configName}.log" }` 를 주입
-- `${CWD}` placeholder는 `cgi-bin` parent, 즉 package root 기준으로 치환
-- rotate / purge 는 현재 `stem.timestamp.ext` 패턴을 기준으로 동작
+- 클래스: `src/lib/logger.js` — `Logger`, `init`, `getInstance`, `LOG_DIR` export
+- 로그 디렉토리: `LOG_DIR = {package_root}/logs/` (process.argv[1] 기반 자동 계산, fallback: `~/public/logs/neo-pkg-opcua-client`)
+- `neo-collector.js` 에서 `new Logger(config.log, { name: configName })` 로 생성
+  - `options.name` 이 로그 파일 stem — `collector-a.log` 형태
+- rotate: 파일이 10 MB 초과 시 `stem_YYYYMMDD_HHMMSS.log` 로 rename 후 새 파일 생성
+- purge: rotate된 파일이 `maxFiles` 초과 시 오래된 것부터 삭제
+- `LOG_DIR` 은 log list/content API에서도 import해서 사용
 
 예:
 
 ```text
 collector-a.log
-collector-a.2026-04-08T03-42-34-064Z.log
-collector-a.2026-04-08.log
+collector-a_20260408_034208.log
 ```
 
 ## 테스트 / 검증 메모
@@ -226,7 +262,7 @@ collector-a.2026-04-08.log
 
 ## 다음 작업자 체크리스트
 
-1. `README.md`, `AGENTS.md`, `CLAUDE.md`, `cgi-bin/docs/convention.md` 를 먼저 읽는다.
+1. `README.md`, `AGENTS.md`, `CLAUDE.md`, `CLAUDE.md` 를 먼저 읽는다.
 2. `machbase-neo` 실행 경로를 사용자에게 확인한다.
 3. 현재 환경의 실제 JSH 호출 형식을 확인한다.
 4. config 이름과 service 이름 `_opc_${name}` 을 구분한다.

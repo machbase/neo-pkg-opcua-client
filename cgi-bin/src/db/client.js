@@ -134,12 +134,20 @@ class MachbaseClient {
   }
 
   /**
-   * 사용자 테이블 목록 조회 (TAG/LOG 타입만)
-   * @returns {Array<{ NAME: string, TYPE: number }>}
+   * 전체 유저 목록 조회
+   * @returns {Array<{ USER_ID: number, NAME: string }>}
+   */
+  selectUsers() {
+    return this.query('SELECT USER_ID, NAME FROM M$SYS_USERS');
+  }
+
+  /**
+   * 사용자 테이블 목록 조회 (TAG/LOG 타입만, USER_ID 포함)
+   * @returns {Array<{ NAME: string, TYPE: number, ID: number, USER_ID: number }>}
    */
   selectAllTables() {
     const sql = `
-      SELECT NAME, TYPE
+      SELECT NAME, TYPE, ID, USER_ID
       FROM M$SYS_TABLES
       WHERE TYPE IN (0, 6)
     `.trim();
@@ -160,6 +168,43 @@ class MachbaseClient {
       ORDER BY c.ID ASC
     `.trim();
     return this.query(sql, [tableName]);
+  }
+
+  /**
+   * 테이블명 기준으로 테이블 메타(ID, TYPE) 조회
+   * @param {string} tableName
+   * @param {number} [userId] - 지정 시 해당 USER_ID 소유 테이블만 조회
+   * @returns {{ ID: number, TYPE: number, NAME: string }|null}
+   */
+  selectTableMeta(tableName, userId) {
+    if (userId != null) {
+      const rows = this.query(
+        'SELECT ID, TYPE, NAME FROM M$SYS_TABLES WHERE NAME = ? AND USER_ID = ?',
+        [tableName, userId]
+      );
+      return rows.length > 0 ? rows[0] : null;
+    }
+    const rows = this.query(
+      'SELECT ID, TYPE, NAME FROM M$SYS_TABLES WHERE NAME = ?',
+      [tableName]
+    );
+    return rows.length > 0 ? rows[0] : null;
+  }
+
+  /**
+   * 테이블 ID 기준으로 M$SYS_COLUMNS 조회
+   * @param {number} tableId
+   * @returns {Array<{ NAME: string, TYPE: number, ID: number, LENGTH: number, FLAG: number }>}
+   */
+  selectColumnsByTableId(tableId) {
+    const sql = `
+      SELECT NAME, TYPE, ID, LENGTH, FLAG
+      FROM M$SYS_COLUMNS
+      WHERE TABLE_ID = ?
+        AND ID < 65534
+      ORDER BY ID ASC
+    `.trim();
+    return this.query(sql, [tableId]);
   }
 
   /**

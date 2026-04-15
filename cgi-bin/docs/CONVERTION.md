@@ -1,5 +1,29 @@
 # Convention
 
+## HTTP 응답 공통 구조
+
+모든 API 응답은 아래 두 가지 형식만 사용한다.
+
+**성공**
+
+```json
+{ "ok": true, "data": <object | array | primitive> }
+```
+
+**실패**
+
+```json
+{ "ok": false, "reason": "<오류 메시지>" }
+```
+
+규칙:
+
+- `ok` 필드는 항상 boolean
+- 성공 시 응답 본문은 `data` 키 하나에 담는다. 추가 top-level 필드를 넣지 않는다
+- 실패 시 `reason` 은 사람이 읽을 수 있는 단문 문자열
+- `data` 가 배열인 경우 빈 배열 `[]` 도 성공 응답이다
+- `data` 가 없는 성공(예: DELETE)은 `{ "ok": true }` 만 반환한다
+
 ## CGI API 파일 (`api/**/*.js`)
 
 파일 상단에 지원 메서드·경로 주석 → ROOT 경로 계산 → CGI/Handler require → `handlers` 객체로 메서드 분기 → 최상위 `try/catch`로 응답.
