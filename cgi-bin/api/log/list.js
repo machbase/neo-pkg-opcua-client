@@ -15,15 +15,20 @@ const reply = (r) => CGI.reply(r);
 const handlers = {
   GET: () => {
     let files;
-    let dirError = null;
     try {
       files = fs.readdirSync(LOG_DIR).filter((f) => f.endsWith('.log'));
     } catch (err) {
-      files = [];
-      dirError = err && err.message ? err.message : String(err);
+      const msg = err && err.message ? err.message : String(err);
+      const notFound = msg.indexOf('ENOENT') >= 0 || msg.indexOf('no such file') >= 0;
+      if (notFound) {
+        files = [];
+      } else {
+        reply({ ok: false, reason: msg });
+        return;
+      }
     }
     files.sort();
-    reply({ ok: true, data: files, dir: LOG_DIR, dirError });
+    reply({ ok: true, data: { files, dir: LOG_DIR } });
   },
 };
 

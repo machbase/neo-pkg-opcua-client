@@ -231,61 +231,6 @@ runner.run("MachbaseClient", {
         client.close();
     },
 
-    "selectTableMeta() queries M$SYS_TABLES by name": (t) => {
-        const mock = createMock({
-            query(_sql, _params) {
-                return {
-                    close() {},
-                    [Symbol.iterator]: function* () {
-                        yield { ID: 10, TYPE: 6, NAME: "TAGDATA" };
-                    },
-                };
-            },
-        });
-        const client = new MachbaseClient({}, { clientFactory: () => mock.client });
-        client.connect();
-        const meta = client.selectTableMeta("TAGDATA");
-        const sql = mock.state.queryArgs[0].sql;
-        t.assert(sql.indexOf("M$SYS_TABLES") >= 0, "should query M$SYS_TABLES");
-        t.assertEqual(mock.state.queryArgs[0].params[0], "TAGDATA");
-        t.assertEqual(meta.ID, 10);
-        t.assertEqual(meta.TYPE, 6);
-        client.close();
-    },
-
-    "selectTableMeta() with userId adds USER_ID condition": (t) => {
-        const mock = createMock();
-        const client = new MachbaseClient({}, { clientFactory: () => mock.client });
-        client.connect();
-        client.selectTableMeta("TAGDATA", 1);
-        const sql = mock.state.queryArgs[0].sql;
-        t.assert(sql.indexOf("USER_ID") >= 0, "should filter by USER_ID");
-        t.assertEqual(mock.state.queryArgs[0].params[0], "TAGDATA");
-        t.assertEqual(mock.state.queryArgs[0].params[1], 1);
-        client.close();
-    },
-
-    "selectTableMeta() returns null when not found": (t) => {
-        const mock = createMock();
-        const client = new MachbaseClient({}, { clientFactory: () => mock.client });
-        client.connect();
-        const meta = client.selectTableMeta("MISSING");
-        t.assertNull(meta, "should return null when table not found");
-        client.close();
-    },
-
-    "selectColumnsByTableId() queries M$SYS_COLUMNS by TABLE_ID": (t) => {
-        const mock = createMock();
-        const client = new MachbaseClient({}, { clientFactory: () => mock.client });
-        client.connect();
-        client.selectColumnsByTableId(10);
-        const sql = mock.state.queryArgs[0].sql;
-        t.assert(sql.indexOf("M$SYS_COLUMNS") >= 0, "should query M$SYS_COLUMNS");
-        t.assert(sql.indexOf("TABLE_ID") >= 0, "should filter by TABLE_ID");
-        t.assertEqual(mock.state.queryArgs[0].params[0], 10);
-        client.close();
-    },
-
     "createLogTable() executes correct create SQL": (t) => {
         const mock = createMock();
         const client = new MachbaseClient({}, { clientFactory: () => mock.client });

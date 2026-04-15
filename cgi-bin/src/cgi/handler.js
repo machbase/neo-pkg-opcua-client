@@ -670,7 +670,6 @@ function dbTableColumns(db, table, reply) {
   const client = new MachbaseClient(db);
   try {
     client.connect();
-    let userId = null;
     if (db.user) {
       const users = client.selectUsers();
       const found = users.find((u) => u.NAME === db.user);
@@ -678,18 +677,16 @@ function dbTableColumns(db, table, reply) {
         reply({ ok: false, reason: `user '${db.user}' not found` });
         return;
       }
-      userId = found.USER_ID;
     }
-    const meta = client.selectTableMeta(table, userId);
-    if (!meta) {
+    const rows = client.selectColumnsAndTableTypeByTableName(table);
+    if (rows.length === 0) {
       reply({ ok: false, reason: `table '${table}' not found` });
       return;
     }
-    if (meta.TYPE !== 6) {
+    if (rows[0].TABLE_TYPE !== 6) {
       reply({ ok: false, reason: `table '${table}' is not a TAG table` });
       return;
     }
-    const rows = client.selectColumnsByTableId(meta.ID);
     const columns = rows.map((row) => {
       const col = new Column(row.NAME, ColumnType.fromCode(row.TYPE), row.ID, row.FLAG || 0, row.LENGTH || 0);
       return {

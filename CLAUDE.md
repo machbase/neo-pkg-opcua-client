@@ -189,8 +189,7 @@ CREATE TAG TABLE ${table} (
 
 - 지정 TAG 테이블의 컬럼 목록 반환
 - `M$SYS_USERS` 로 user 유효성 검사 → user not found 시 에러
-- `M$SYS_TABLES` 에서 table ID 조회 (USER_ID 조건 포함) → table not found / not TAG table 시 에러
-- `M$SYS_COLUMNS` 를 table ID 기준으로 조회
+- `M$SYS_COLUMNS JOIN M$SYS_TABLES` 단일 쿼리로 컬럼과 테이블 타입을 함께 조회 → table not found / not TAG table 시 에러
 
 ## Service 관련 구현 메모
 
@@ -262,7 +261,7 @@ collector-a.2026-04-08T03-42-34-064Z.log
 
 ## 다음 작업자 체크리스트
 
-1. `README.md`, `AGENTS.md`, `CLAUDE.md`, `cgi-bin/docs/convention.md` 를 먼저 읽는다.
+1. `README.md`, `AGENTS.md`, `CLAUDE.md`, `CLAUDE.md` 를 먼저 읽는다.
 2. `machbase-neo` 실행 경로를 사용자에게 확인한다.
 3. 현재 환경의 실제 JSH 호출 형식을 확인한다.
 4. config 이름과 service 이름 `_opc_${name}` 을 구분한다.

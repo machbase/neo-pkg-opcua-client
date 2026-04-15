@@ -452,17 +452,23 @@ CREATE TAG TABLE {table} (
 ```json
 {
   "ok": true,
-  "data": ["collector-a.log", "collector-a.2026-04-15T03-42-34-064Z.log"],
-  "dir": "/home/xxx/public/logs/neo-pkg-opcua-client",
-  "dirError": null
+  "data": {
+    "files": ["collector-a.log", "collector-a.2026-04-15T03-42-34-064Z.log"],
+    "dir": "/home/xxx/public/logs/neo-pkg-opcua-client"
+  }
 }
 ```
 
 | 필드 | 설명 |
 |------|------|
-| `data` | `.log` 파일 이름 목록 (정렬됨) |
-| `dir` | 읽으려는 로그 디렉토리 경로 |
-| `dirError` | 디렉토리 읽기 실패 시 오류 메시지, 성공 시 `null` |
+| `data.files` | `.log` 파일 이름 목록 (정렬됨). 디렉토리가 없으면 빈 배열 |
+| `data.dir` | 읽으려는 로그 디렉토리 경로 |
+
+**응답 (실패)**
+
+| 조건 | reason |
+|------|--------|
+| 디렉토리 읽기 실패 (권한 등) | 시스템 오류 메시지 |
 
 ---
 
