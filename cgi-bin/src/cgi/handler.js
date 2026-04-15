@@ -624,6 +624,33 @@ function dbTableCreate(db, reply) {
 }
 
 /**
+ * GET /cgi-bin/api/db/table/list?server=xxx
+ * @param {{ host: string, port: number, user: string, password: string }} db
+ * @param {function} reply
+ */
+function dbTableList(db, reply) {
+  const client = new MachbaseClient(db);
+  try {
+    client.connect();
+    const rows = client.selectAllTables();
+    const tables = rows
+      .filter((row) => row.TYPE === 6)
+      .map((row) => ({ name: row.NAME }));
+    reply({
+      ok: true,
+      data: tables,
+    });
+  } catch (err) {
+    reply({
+      ok: false,
+      reason: errorMessage(err),
+    });
+  } finally {
+    client.close();
+  }
+}
+
+/**
  * POST /cgi-bin/api/db/table/columns
  * @param {{ host: string, port: number, user: string, password: string, table: string }} db
  * @param {function} reply
@@ -827,6 +854,7 @@ module.exports = {
   serverList,
   dbConnect,
   dbTableCreate,
+  dbTableList,
   dbTableColumns,
   nodeChildren,
   opcuaRead,
