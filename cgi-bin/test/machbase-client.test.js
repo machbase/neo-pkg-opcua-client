@@ -194,7 +194,7 @@ runner.run("MachbaseClient", {
         client.close();
     },
 
-    "selectAllTables() queries M$SYS_TABLES for TAG and LOG types": (t) => {
+    "selectAllTables() queries M$SYS_TABLES for TAG and LOG types with USER_ID": (t) => {
         const mock = createMock();
         const client = new MachbaseClient({}, { clientFactory: () => mock.client });
         client.connect();
@@ -202,6 +202,87 @@ runner.run("MachbaseClient", {
         const sql = mock.state.queryArgs[0].sql;
         t.assert(sql.indexOf("M$SYS_TABLES") >= 0, "should query M$SYS_TABLES");
         t.assert(sql.indexOf("TYPE IN (0, 6)") >= 0, "should filter TAG (6) and LOG (0) types");
+        t.assert(sql.indexOf("USER_ID") >= 0, "should include USER_ID in SELECT");
+        client.close();
+    },
+
+    "selectUsers() queries M$SYS_USERS": (t) => {
+        const mock = createMock({
+            query(_sql, _params) {
+                return {
+                    close() {},
+                    [Symbol.iterator]: function* () {
+                        yield { USER_ID: 1, NAME: "SYS" };
+                        yield { USER_ID: 2, NAME: "ADMIN" };
+                    },
+                };
+            },
+        });
+        const client = new MachbaseClient({}, { clientFactory: () => mock.client });
+        client.connect();
+        const rows = client.selectUsers();
+        const sql = mock.state.queryArgs[0].sql;
+        t.assert(sql.indexOf("M$SYS_USERS") >= 0, "should query M$SYS_USERS");
+        t.assert(sql.indexOf("USER_ID") >= 0, "should include USER_ID");
+        t.assert(sql.indexOf("NAME") >= 0, "should include NAME");
+        t.assertEqual(rows.length, 2);
+        t.assertEqual(rows[0].USER_ID, 1);
+        t.assertEqual(rows[0].NAME, "SYS");
+        client.close();
+    },
+
+    "selectTableMeta() queries M$SYS_TABLES by name": (t) => {
+        const mock = createMock({
+            query(_sql, _params) {
+                return {
+                    close() {},
+                    [Symbol.iterator]: function* () {
+                        yield { ID: 10, TYPE: 6, NAME: "TAGDATA" };
+                    },
+                };
+            },
+        });
+        const client = new MachbaseClient({}, { clientFactory: () => mock.client });
+        client.connect();
+        const meta = client.selectTableMeta("TAGDATA");
+        const sql = mock.state.queryArgs[0].sql;
+        t.assert(sql.indexOf("M$SYS_TABLES") >= 0, "should query M$SYS_TABLES");
+        t.assertEqual(mock.state.queryArgs[0].params[0], "TAGDATA");
+        t.assertEqual(meta.ID, 10);
+        t.assertEqual(meta.TYPE, 6);
+        client.close();
+    },
+
+    "selectTableMeta() with userId adds USER_ID condition": (t) => {
+        const mock = createMock();
+        const client = new MachbaseClient({}, { clientFactory: () => mock.client });
+        client.connect();
+        client.selectTableMeta("TAGDATA", 1);
+        const sql = mock.state.queryArgs[0].sql;
+        t.assert(sql.indexOf("USER_ID") >= 0, "should filter by USER_ID");
+        t.assertEqual(mock.state.queryArgs[0].params[0], "TAGDATA");
+        t.assertEqual(mock.state.queryArgs[0].params[1], 1);
+        client.close();
+    },
+
+    "selectTableMeta() returns null when not found": (t) => {
+        const mock = createMock();
+        const client = new MachbaseClient({}, { clientFactory: () => mock.client });
+        client.connect();
+        const meta = client.selectTableMeta("MISSING");
+        t.assertNull(meta, "should return null when table not found");
+        client.close();
+    },
+
+    "selectColumnsByTableId() queries M$SYS_COLUMNS by TABLE_ID": (t) => {
+        const mock = createMock();
+        const client = new MachbaseClient({}, { clientFactory: () => mock.client });
+        client.connect();
+        client.selectColumnsByTableId(10);
+        const sql = mock.state.queryArgs[0].sql;
+        t.assert(sql.indexOf("M$SYS_COLUMNS") >= 0, "should query M$SYS_COLUMNS");
+        t.assert(sql.indexOf("TABLE_ID") >= 0, "should filter by TABLE_ID");
+        t.assertEqual(mock.state.queryArgs[0].params[0], 10);
         client.close();
     },
 

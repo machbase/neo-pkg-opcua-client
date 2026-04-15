@@ -59,11 +59,13 @@ function collectorGet(name, reply) {
     });
     return;
   }
+  const safeConfig = { ...config, db: { ...config.db } };
+  delete safeConfig.db.password;
   reply({
     ok: true,
     data: {
       name,
-      config,
+      config: safeConfig,
     },
   });
 }
@@ -83,7 +85,12 @@ function collectorPut(name, body, reply) {
     });
     return;
   }
-  const nextConfig = body;
+  const nextConfig = { ...body };
+  if (nextConfig.db && currentConfig.db) {
+    if (!nextConfig.db.password) {
+      nextConfig.db = { ...nextConfig.db, password: currentConfig.db.password };
+    }
+  }
   Service.status(name, (statusErr, serviceInfo) => {
     if (statusErr && !Service.isMissingServiceError(statusErr)) {
       reply({
@@ -632,10 +639,20 @@ function dbTableList(db, reply) {
   const client = new MachbaseClient(db);
   try {
     client.connect();
+    const users = client.selectUsers();
+    if (db.user) {
+      const found = users.find((u) => u.NAME === db.user);
+      if (!found) {
+        reply({ ok: false, reason: `user '${db.user}' not found` });
+        return;
+      }
+    }
+    const userById = {};
+    for (const u of users) userById[u.USER_ID] = u.NAME;
     const rows = client.selectAllTables();
     const tables = rows
       .filter((row) => row.TYPE === 6)
-      .map((row) => ({ name: row.NAME }));
+      .map((row) => ({ name: row.NAME, user: userById[row.USER_ID] || null }));
     reply({
       ok: true,
       data: tables,
@@ -651,22 +668,35 @@ function dbTableList(db, reply) {
 }
 
 /**
- * POST /cgi-bin/api/db/table/columns
- * @param {{ host: string, port: number, user: string, password: string, table: string }} db
+ * GET /cgi-bin/api/db/table/columns?server=xxx&table=xxx
+ * @param {{ host: string, port: number, user: string, password: string }} db
+ * @param {string} table
  * @param {function} reply
  */
-function dbTableColumns(db, reply) {
+function dbTableColumns(db, table, reply) {
   const client = new MachbaseClient(db);
   try {
     client.connect();
-    if (client.selectTableType(db.table).type !== 'TAG') {
-      reply({
-        ok: false,
-        reason: `table '${db.table}' is not a TAG table`,
-      });
+    let userId = null;
+    if (db.user) {
+      const users = client.selectUsers();
+      const found = users.find((u) => u.NAME === db.user);
+      if (!found) {
+        reply({ ok: false, reason: `user '${db.user}' not found` });
+        return;
+      }
+      userId = found.USER_ID;
+    }
+    const meta = client.selectTableMeta(table, userId);
+    if (!meta) {
+      reply({ ok: false, reason: `table '${table}' not found` });
       return;
     }
-    const rows = client.selectColumnsByTableName(db.table);
+    if (meta.TYPE !== 6) {
+      reply({ ok: false, reason: `table '${table}' is not a TAG table` });
+      return;
+    }
+    const rows = client.selectColumnsByTableId(meta.ID);
     const columns = rows.map((row) => {
       const col = new Column(row.NAME, ColumnType.fromCode(row.TYPE), row.ID, row.FLAG || 0, row.LENGTH || 0);
       return {
@@ -680,10 +710,7 @@ function dbTableColumns(db, reply) {
     });
     reply({
       ok: true,
-      data: {
-        table: db.table,
-        columns,
-      },
+      data: { table, columns },
     });
   } catch (err) {
     reply({

@@ -27,7 +27,7 @@ const handlers = {
       reply({ ok: false, reason: `server '${server}' not found` });
       return;
     }
-    Handler.dbTableColumns({ ...db, table }, reply);
+    Handler.dbTableColumns(db, table, reply);
   },
 };
 const method = (process.env.get('REQUEST_METHOD') || 'GET').toUpperCase();
