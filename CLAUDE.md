@@ -226,7 +226,7 @@ collector-a.2026-04-08.log
 
 ## 다음 작업자 체크리스트
 
-1. `README.md`, `AGENTS.md`, `CLAUDE.md` 를 먼저 읽는다.
+1. `README.md`, `AGENTS.md`, `CLAUDE.md`, `cgi-bin/docs/convention.md` 를 먼저 읽는다.
 2. `machbase-neo` 실행 경로를 사용자에게 확인한다.
 3. 현재 환경의 실제 JSH 호출 형식을 확인한다.
 4. config 이름과 service 이름 `_opc_${name}` 을 구분한다.

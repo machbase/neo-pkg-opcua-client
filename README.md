@@ -171,9 +171,7 @@ machbase-neo jsh -v /app=<프로젝트 경로> /app/cgi-bin/test/index.js
 ## 문서
 
 - [CGI API](cgi-bin/docs/API.md)
-- [설정](cgi-bin/docs/configuration.md)
-- [Logger](cgi-bin/docs/logger.md)
-- [OpcuaClient](cgi-bin/docs/opcua-client.md)
-- [Collector](cgi-bin/docs/collector.md)
+- [프로젝트 구조 · 설정](cgi-bin/docs/PROJECT.md)
+- [개발 컨벤션](cgi-bin/docs/convention.md)
 - [JSH Runtime Reference](cgi-bin/docs/JSH_REFERENCE.md)
 - [machbase-neo cgi-bin 가이드](https://wiki.machbase.com/pages/viewpage.action?pageId=329352275)
