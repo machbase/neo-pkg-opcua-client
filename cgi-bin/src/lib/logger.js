@@ -7,6 +7,7 @@ const process = require('process');
 const _cgiBinIdx = process.argv[1].lastIndexOf('/cgi-bin/');
 const _appDir = _cgiBinIdx >= 0 ? process.argv[1].slice(0, _cgiBinIdx) : null;
 const LOG_DIR = path.join(_appDir, 'logs');
+const PKG_NAME = _appDir ? path.basename(_appDir) : 'neo-pkg-opcua-client';
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
 
