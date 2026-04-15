@@ -228,13 +228,13 @@ runner.run('Handler: collectorPost', {
 // ── collectorGet ─────────────────────────────────────────────────────────────
 
 runner.run('Handler: collectorGet', {
-    'returns config without password': (t) => {
+    'returns config': (t) => {
         const H = makeHandler();
-        mockCGI._configs['col-a'] = { opcua: {}, db: { host: 'h', password: 'secret' } };
+        mockCGI._configs['col-a'] = { opcua: {}, db: 'server-a' };
         let result;
         H.collectorGet('col-a', (r) => { result = r; });
         t.assert(result.ok, 'should be ok');
-        t.assertEqual(result.data.config.db.password, undefined, 'password should be removed');
+        t.assertEqual(result.data.config.db, 'server-a');
         t.assertEqual(result.data.name, 'col-a');
     },
 
@@ -251,30 +251,11 @@ runner.run('Handler: collectorGet', {
 runner.run('Handler: collectorPut', {
     'updates config when not running': (t) => {
         const H = makeHandler();
-        mockCGI._configs['col-a'] = { db: { host: 'h', password: 'secret' } };
+        mockCGI._configs['col-a'] = { db: 'server-a', opcua: {} };
         let result;
-        H.collectorPut('col-a', { db: { host: 'h2' } }, (r) => { result = r; });
+        H.collectorPut('col-a', { db: 'server-b', opcua: {} }, (r) => { result = r; });
         t.assert(result.ok, 'should be ok');
-        t.assertEqual(mockCGI._configs['col-a'].db.host, 'h2');
-        t.assertEqual(mockCGI._configs['col-a'].db.password, 'secret', 'password preserved');
-    },
-
-    'preserves password when new config sets empty string': (t) => {
-        const H = makeHandler();
-        mockCGI._configs['col-a'] = { db: { host: 'h', password: 'secret' } };
-        let result;
-        H.collectorPut('col-a', { db: { host: 'h2', password: '' } }, (r) => { result = r; });
-        t.assert(result.ok, 'should be ok');
-        t.assertEqual(mockCGI._configs['col-a'].db.password, 'secret', 'empty password falls back');
-    },
-
-    'replaces password when explicitly provided': (t) => {
-        const H = makeHandler();
-        mockCGI._configs['col-a'] = { db: { host: 'h', password: 'old' } };
-        let result;
-        H.collectorPut('col-a', { db: { host: 'h2', password: 'new' } }, (r) => { result = r; });
-        t.assert(result.ok, 'should be ok');
-        t.assertEqual(mockCGI._configs['col-a'].db.password, 'new');
+        t.assertEqual(mockCGI._configs['col-a'].db, 'server-b');
     },
 
     'stops and restarts service when running': (t) => {

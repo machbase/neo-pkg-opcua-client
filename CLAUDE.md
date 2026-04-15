@@ -84,14 +84,14 @@ cgi-bin/
 ### GET `/cgi-bin/api/collector?name=xxx`
 
 - 설정 단건 조회
-- `db.password` 는 응답에서 제거
+- collector config의 `db` 필드는 server 이름 string이므로 password 제거 불필요
 
 ### PUT `/cgi-bin/api/collector?name=xxx`
 
 - 설정 파일 수정
 - service가 현재 `RUNNING` 일 때만 `stop -> start`
 - install되지 않았거나 running이 아니면 config만 수정
-- `db.password` 가 없거나 `""` 이면 기존 password 유지
+- collector config의 `db` 필드는 server 이름 string이므로 password 병합 불필요
 
 ### DELETE `/cgi-bin/api/collector?name=xxx`
 
@@ -142,6 +142,27 @@ CREATE TAG TABLE ${table} (
 ```
 
 - 같은 이름의 테이블이 이미 있으면 에러 반환
+
+### GET `/cgi-bin/api/db/table/list?server=xxx`
+
+- 전체 TAG 테이블 목록 반환 (USER_ID 기준으로 소유 유저명 포함)
+- `M$SYS_USERS` 를 조회해 USER_ID → 유저명 매핑
+- 유효하지 않은 user이면 에러 반환
+- 응답 예:
+
+```json
+[
+  { "name": "TAG1", "user": "SYS" },
+  { "name": "TAG2", "user": "ADMIN" }
+]
+```
+
+### GET `/cgi-bin/api/db/table/columns?server=xxx&table=xxx`
+
+- 지정 TAG 테이블의 컬럼 목록 반환
+- `M$SYS_USERS` 로 user 유효성 검사 → user not found 시 에러
+- `M$SYS_TABLES` 에서 table ID 조회 (USER_ID 조건 포함) → table not found / not TAG table 시 에러
+- `M$SYS_COLUMNS` 를 table ID 기준으로 조회
 
 ### GET `/cgi-bin/api/collector/list`
 

@@ -59,13 +59,11 @@ function collectorGet(name, reply) {
     });
     return;
   }
-  const safeConfig = { ...config, db: { ...config.db } };
-  delete safeConfig.db.password;
   reply({
     ok: true,
     data: {
       name,
-      config: safeConfig,
+      config,
     },
   });
 }
@@ -85,12 +83,7 @@ function collectorPut(name, body, reply) {
     });
     return;
   }
-  const nextConfig = { ...body };
-  if (nextConfig.db && currentConfig.db) {
-    if (!nextConfig.db.password) {
-      nextConfig.db = { ...nextConfig.db, password: currentConfig.db.password };
-    }
-  }
+  const nextConfig = body;
   Service.status(name, (statusErr, serviceInfo) => {
     if (statusErr && !Service.isMissingServiceError(statusErr)) {
       reply({
