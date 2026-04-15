@@ -667,26 +667,41 @@ function dbTableList(db, reply) {
  * @param {function} reply
  */
 function dbTableColumns(db, table, reply) {
+  // README: "SYS.TAG" 형식으로 들어올 수 있으므로 user명과 테이블명을 분리한다.
+  // user명이 있으면 해당 USER_ID 소유 테이블만 조회해 동명 테이블 간 충돌을 방지한다.
+  // TODO: 현재는 "user.table" 2단계만 파싱한다.
+  //       Machbase가 "database.user.table" 3단계 형식을 지원할 경우
+  //       database 단위 구분 및 연결 대상 분기 로직 추가 필요.
+  const dotIdx = table.indexOf('.');
+  const tableUser = dotIdx >= 0 ? table.slice(0, dotIdx) : null;
+  const tableName = dotIdx >= 0 ? table.slice(dotIdx + 1) : table;
+
   const client = new MachbaseClient(db);
   try {
     client.connect();
-    if (db.user) {
-      const users = client.selectUsers();
-      const found = users.find((u) => u.NAME === db.user);
+    const users = client.selectUsers();
+
+    let userId = null;
+    const lookupUser = tableUser || db.user;
+    if (lookupUser) {
+      const found = users.find((u) => u.NAME === lookupUser);
       if (!found) {
-        reply({ ok: false, reason: `user '${db.user}' not found` });
+        reply({ ok: false, reason: `user '${lookupUser}' not found` });
         return;
       }
+      userId = found.USER_ID;
     }
-    const rows = client.selectColumnsAndTableTypeByTableName(table);
-    if (rows.length === 0) {
+
+    const meta = client.selectTableMeta(tableName, userId);
+    if (!meta) {
       reply({ ok: false, reason: `table '${table}' not found` });
       return;
     }
-    if (rows[0].TABLE_TYPE !== 6) {
+    if (meta.TYPE !== 6) {
       reply({ ok: false, reason: `table '${table}' is not a TAG table` });
       return;
     }
+    const rows = client.selectColumnsByTableId(meta.ID);
     const columns = rows.map((row) => {
       const col = new Column(row.NAME, ColumnType.fromCode(row.TYPE), row.ID, row.FLAG || 0, row.LENGTH || 0);
       return {

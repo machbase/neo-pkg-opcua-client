@@ -403,6 +403,8 @@ CREATE TAG TABLE {table} (
 
 테이블의 컬럼 목록을 조회합니다. TAG 테이블만 허용됩니다.
 
+`table` 파라미터는 `TAG` 또는 `user.TAG` 형식을 지원합니다. `user.TAG` 형식으로 지정하면 해당 user 소유의 테이블만 조회합니다.
+
 `valueColumn` 설정 시 `summarized: true`인 컬럼 중 하나를 선택해야 합니다.
 
 **응답 (성공)**

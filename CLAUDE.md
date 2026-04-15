@@ -188,8 +188,11 @@ CREATE TAG TABLE ${table} (
 ### GET `/cgi-bin/api/db/table/columns?server=xxx&table=xxx`
 
 - 지정 TAG 테이블의 컬럼 목록 반환
+- `table` 파라미터는 `TAG` 또는 `user.TAG` 형식 지원 — `user.TAG` 형식이면 해당 user의 USER_ID로 소유자 구분
 - `M$SYS_USERS` 로 user 유효성 검사 → user not found 시 에러
-- `M$SYS_COLUMNS JOIN M$SYS_TABLES` 단일 쿼리로 컬럼과 테이블 타입을 함께 조회 → table not found / not TAG table 시 에러
+- `selectTableMeta(tableName, userId)` → table not found / not TAG table 시 에러
+- `selectColumnsByTableId(tableId)` 로 컬럼 조회
+- TODO: `database.user.table` 3단계 형식은 미지원 — Machbase가 지원할 경우 추가 필요
 
 ## Service 관련 구현 메모
 

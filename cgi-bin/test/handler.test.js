@@ -97,6 +97,7 @@ class MockMachbaseClient {
         this.closed = false;
         this.connectError = null;
         this.tableType = 'UNSUPPORTED';
+        this.tableMeta = null;
         this.columns = [];
         this.tables = [];
         this.users = [{ USER_ID: 1, NAME: 'SYS' }];
@@ -110,7 +111,8 @@ class MockMachbaseClient {
     selectTableType(_table) { return { type: this.tableType }; }
     selectUsers() { return this.users; }
     selectAllTables() { return this.tables; }
-    selectColumnsAndTableTypeByTableName(_table) { return this.columns; }
+    selectTableMeta(_table, _userId) { return this.tableMeta; }
+    selectColumnsByTableId(_tableId) { return this.columns; }
     selectColumnsByTableName(_table) { return this.columns; }
     createTagTable(_table, _schema) {
         if (this.createError) throw new Error(this.createError);
@@ -649,10 +651,11 @@ runner.run('Handler: dbTableColumns', {
     'returns columns for existing TAG table': (t) => {
         const H = makeHandler();
         mockMachbaseClient.users = [{ USER_ID: 1, NAME: 'SYS' }];
+        mockMachbaseClient.tableMeta = { ID: 10, TYPE: 6, NAME: 'TAG' };
         mockMachbaseClient.columns = [
-            { NAME: 'NAME', TYPE: 5, ID: 0, FLAG: 0x8000000, LENGTH: 100, TABLE_TYPE: 6 },
-            { NAME: 'TIME', TYPE: 6, ID: 1, FLAG: 0x1000000, LENGTH: 0, TABLE_TYPE: 6 },
-            { NAME: 'VALUE', TYPE: 20, ID: 2, FLAG: 0x2000000, LENGTH: 0, TABLE_TYPE: 6 },
+            { NAME: 'NAME', TYPE: 5, ID: 0, FLAG: 0x8000000, LENGTH: 100 },
+            { NAME: 'TIME', TYPE: 6, ID: 1, FLAG: 0x1000000, LENGTH: 0 },
+            { NAME: 'VALUE', TYPE: 20, ID: 2, FLAG: 0x2000000, LENGTH: 0 },
         ];
         let result;
         H.dbTableColumns({ host: 'h', port: 5656, user: 'SYS', password: 'p' }, 'TAG', (r) => { result = r; });
@@ -677,7 +680,7 @@ runner.run('Handler: dbTableColumns', {
     'returns error when table not found': (t) => {
         const H = makeHandler();
         mockMachbaseClient.users = [{ USER_ID: 1, NAME: 'SYS' }];
-        mockMachbaseClient.columns = [];
+        mockMachbaseClient.tableMeta = null;
         let result;
         H.dbTableColumns({ host: 'h', port: 5656, user: 'SYS', password: 'p' }, 'MISSING', (r) => { result = r; });
         t.assert(!result.ok, 'should not be ok');
@@ -687,9 +690,7 @@ runner.run('Handler: dbTableColumns', {
     'returns error when table is not a TAG table': (t) => {
         const H = makeHandler();
         mockMachbaseClient.users = [{ USER_ID: 1, NAME: 'SYS' }];
-        mockMachbaseClient.columns = [
-            { NAME: 'TIME', TYPE: 6, ID: 0, FLAG: 0, LENGTH: 0, TABLE_TYPE: 0 },
-        ];
+        mockMachbaseClient.tableMeta = { ID: 12, TYPE: 0, NAME: 'LOG1' };
         let result;
         H.dbTableColumns({ host: 'h', port: 5656, user: 'SYS', password: 'p' }, 'LOG1', (r) => { result = r; });
         t.assert(!result.ok, 'should not be ok');

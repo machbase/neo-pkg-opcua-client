@@ -171,19 +171,40 @@ class MachbaseClient {
   }
 
   /**
-   * 테이블 이름 기준으로 M$SYS_COLUMNS + 테이블 TYPE 조회
+   * 테이블명 기준으로 테이블 메타(ID, TYPE) 조회
    * @param {string} tableName
-   * @returns {Array<{ NAME: string, TYPE: number, ID: number, LENGTH: number, FLAG: number, TABLE_TYPE: number }>}
+   * @param {number} [userId] - 지정 시 해당 USER_ID 소유 테이블만 조회
+   * @returns {{ ID: number, TYPE: number, NAME: string }|null}
    */
-  selectColumnsAndTableTypeByTableName(tableName) {
+  selectTableMeta(tableName, userId) {
+    if (userId != null) {
+      const rows = this.query(
+        'SELECT ID, TYPE, NAME FROM M$SYS_TABLES WHERE NAME = ? AND USER_ID = ?',
+        [tableName, userId]
+      );
+      return rows.length > 0 ? rows[0] : null;
+    }
+    const rows = this.query(
+      'SELECT ID, TYPE, NAME FROM M$SYS_TABLES WHERE NAME = ?',
+      [tableName]
+    );
+    return rows.length > 0 ? rows[0] : null;
+  }
+
+  /**
+   * 테이블 ID 기준으로 M$SYS_COLUMNS 조회
+   * @param {number} tableId
+   * @returns {Array<{ NAME: string, TYPE: number, ID: number, LENGTH: number, FLAG: number }>}
+   */
+  selectColumnsByTableId(tableId) {
     const sql = `
-      SELECT c.NAME, c.TYPE, c.ID, c.LENGTH, c.FLAG, t.TYPE AS TABLE_TYPE
-      FROM M$SYS_COLUMNS c, M$SYS_TABLES t
-      WHERE c.TABLE_ID = t.ID AND t.NAME = ?
-        AND c.ID < 65534
-      ORDER BY c.ID ASC
+      SELECT NAME, TYPE, ID, LENGTH, FLAG
+      FROM M$SYS_COLUMNS
+      WHERE TABLE_ID = ?
+        AND ID < 65534
+      ORDER BY ID ASC
     `.trim();
-    return this.query(sql, [tableName]);
+    return this.query(sql, [tableId]);
   }
 
   /**
