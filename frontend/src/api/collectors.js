@@ -46,4 +46,4 @@ export const getLastCollectedTime = async (name) => {
 }
 
 export const browseNodeChildren = (endpoint, nodeId, nodeClassMask = 0) =>
-  request('POST', '/cgi-bin/api/node/children', { endpoint, node: nodeId, nodeClassMask })
+  request('POST', '/cgi-bin/api/opcua/node/descendants', { endpoint, node: nodeId, nodeClassMask })

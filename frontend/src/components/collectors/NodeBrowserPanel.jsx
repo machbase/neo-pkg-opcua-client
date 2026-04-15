@@ -299,35 +299,31 @@ export default function NodeBrowserPanel({ endpoint, existingNodes, onAdd, onClo
                 key={node.nodeId + '-' + i}
                 className={`node-tree-row ${isObject ? 'node-tree-row-folder' : ''} ${alreadyAdded ? 'node-tree-row-disabled' : ''} ${isCycle ? 'node-tree-row-disabled' : ''}`}
                 style={{
-                  paddingLeft: depth * 12 + 8,
+                  paddingLeft: depth * 16,
                   cursor: (alreadyAdded || isCycle) ? 'default' : 'pointer',
                 }}
                 onClick={handleRowClick}
                 title={isCycle ? `${getLabel(node)}  —  ${node.nodeId} (circular reference)` : `${getLabel(node)}  —  ${node.nodeId}`}
               >
-                {isObject ? (
-                  <span className="node-tree-toggle">
-                    {isCycle ? (
+                <span className="node-tree-toggle">
+                  {isObject ? (
+                    isCycle ? (
                       <Icon name="subdirectory_arrow_right" className="icon-sm opacity-30" />
                     ) : (
                       <Icon
                         name={isNodeLoading ? 'more_horiz' : isExpanded ? 'expand_more' : 'chevron_right'}
                         className="icon-sm"
                       />
-                    )}
-                  </span>
-                ) : (
-                  <span className="node-tree-toggle-spacer" />
-                )}
-
-                {!isObject && (
-                  <input
-                    type="checkbox"
-                    checked={isSelected || alreadyAdded}
-                    disabled={alreadyAdded}
-                    readOnly
-                  />
-                )}
+                    )
+                  ) : (
+                    <input
+                      type="checkbox"
+                      checked={isSelected || alreadyAdded}
+                      disabled={alreadyAdded}
+                      readOnly
+                    />
+                  )}
+                </span>
 
                 <span className="node-tree-label">
                   <span className="truncate">{getLabel(node)}</span>

@@ -1,48 +1,58 @@
-import { useNavigate, useLocation } from "react-router";
-import { useApp } from "../../context/AppContext";
 import Icon from "../common/Icon";
 import CollectorListItem from "../collectors/CollectorListItem";
 
-export default function Sidebar({ collectors, onToggleCollector, onInstallCollector, onRefresh }) {
-    const navigate = useNavigate();
-    const location = useLocation();
-    const { selectedCollectorId, setSelectedCollectorId } = useApp();
-
+export default function Sidebar({
+    collectors,
+    selectedCollectorId,
+    onSelectCollector,
+    onNewCollector,
+    onToggleCollector,
+    onInstallCollector,
+    onRefresh,
+    onServerSettings,
+    className = "side h-screen",
+}) {
     return (
-        <aside className="side fixed left-0 top-0 w-64 z-40 border-r border-border max-lg:relative max-lg:w-full max-lg:border-r-0 max-lg:border-b max-lg:h-auto">
+        <aside className={className}>
             <div className="side-header">
                 <Icon name="sensors" className="text-primary shrink-0" />
                 <span className="truncate flex-1">OPC UA Collector</span>
                 <button
-                    onClick={() => navigate("/collectors/new")}
-                    className="side-header-action"
-                    title="New Collector"
+                    onClick={onNewCollector}
+                    className="side-header-action tooltip"
+                    data-tooltip="New Collector"
                 >
-                    <Icon name="add" className="icon-sm" />
+                    <Icon name="add" />
                 </button>
+                {onServerSettings && (
+                    <button
+                        onClick={onServerSettings}
+                        className="side-header-action tooltip"
+                        data-tooltip="Server Settings"
+                    >
+                        <Icon name="dns" />
+                    </button>
+                )}
             </div>
 
-            <div className="side-body max-lg:flex-none">
+            <div className="side-body">
                 <div className="side-section-title">
-                    Collectors
+                    <span className="flex-1">Collectors</span>
                     <button
                         onClick={onRefresh}
-                        className="side-section-action"
-                        title="Refresh"
+                        className="side-section-action tooltip"
+                        data-tooltip="Refresh"
                     >
-                        <Icon name="refresh" className="icon-xs" />
+                        <Icon name="refresh" />
                     </button>
                 </div>
-                <nav className="side-list max-lg:flex max-lg:gap-1 max-lg:overflow-x-auto">
+                <nav className="side-list">
                     {collectors.map((c) => (
                         <CollectorListItem
                             key={c.id}
                             collector={c}
                             selected={selectedCollectorId === c.id}
-                            onSelect={() => {
-                                setSelectedCollectorId(c.id);
-                                if (location.pathname !== "/") navigate("/");
-                            }}
+                            onSelect={() => onSelectCollector(c.id)}
                             onToggle={() => onToggleCollector(c)}
                             onInstall={() => onInstallCollector(c)}
                         />

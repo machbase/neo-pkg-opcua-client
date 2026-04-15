@@ -15,10 +15,10 @@ export default function CollectorListItem({ collector, selected, onSelect, onTog
                         e.stopPropagation();
                         onInstall();
                     }}
-                    className="btn-icon-sm shrink-0 ml-3 tooltip"
-                    data-tooltip="Install"
+                    className="btn-icon-sm shrink-0 ml-4 tooltip"
+                    data-tooltip="Register"
                 >
-                    <Icon name="download" className="icon-sm" />
+                    <Icon name="app_registration" className="icon-sm" />
                 </button>
             ) : (
                 <button
@@ -26,7 +26,7 @@ export default function CollectorListItem({ collector, selected, onSelect, onTog
                         e.stopPropagation();
                         onToggle();
                     }}
-                    className={`switch shrink-0 ml-3 ${isRunning ? "active" : ""}`}
+                    className={`switch shrink-0 ml-4 ${isRunning ? "active" : ""}`}
                 >
                     <div className="switch-thumb" />
                 </button>

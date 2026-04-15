@@ -6,6 +6,7 @@ import Icon from '../components/common/Icon'
 import OpcuaSection from '../components/collectors/OpcuaSection'
 import DbSection from '../components/collectors/DbSection'
 import LogSection from '../components/collectors/LogSection'
+import NodeListEditor from '../components/collectors/NodeListEditor'
 import { koToEn } from '../utils/korean'
 
 const DEFAULTS = {
@@ -17,15 +18,13 @@ const DEFAULTS = {
     nodes: [],
   },
   db: {
-    table: 'TAG',
-    host: '127.0.0.1',
-    port: 5656,
-    user: 'sys',
-    password: '',
+    server: '',
+    table: '',
+    column: '',
   },
   log: {
     level: 'INFO',
-    output: 'console',
+    output: 'file',
     format: 'json',
     file: {
       path: '${CWD}/logs',
@@ -36,7 +35,7 @@ const DEFAULTS = {
   },
 }
 
-export default function CollectorFormPage({ detail, onRefresh, onRefreshDetail }) {
+export default function CollectorFormPage({ detail, onRefresh, onRefreshDetail, servers = [], onOpenServerSettings, onRefreshServers }) {
   const { id } = useParams()
   const navigate = useNavigate()
   const { notify, setSelectedCollectorId } = useApp()
@@ -55,7 +54,11 @@ export default function CollectorFormPage({ detail, onRefresh, onRefreshDetail }
       setForm({
         name: detail.name || id,
         opcua: { ...DEFAULTS.opcua, ...c.opcua, nodes: c.opcua?.nodes || [] },
-        db: { ...DEFAULTS.db, ...c.db },
+        db: {
+          server: typeof c.db === 'string' ? c.db : '',
+          table: c.dbTable || '',
+          column: c.valueColumn || '',
+        },
         log: {
           ...DEFAULTS.log,
           ...c.log,
@@ -92,13 +95,9 @@ export default function CollectorFormPage({ detail, onRefresh, onRefreshDetail }
           readRetryInterval: Number(form.opcua.readRetryInterval),
           nodes: form.opcua.nodes,
         },
-        db: {
-          table: form.db.table,
-          host: form.db.host,
-          port: Number(form.db.port),
-          user: form.db.user,
-          password: form.db.password,
-        },
+        db: form.db.server,
+        dbTable: form.db.table,
+        valueColumn: form.db.column,
         log: {
           level: form.log.level,
           output: form.log.output,
@@ -135,22 +134,17 @@ export default function CollectorFormPage({ detail, onRefresh, onRefreshDetail }
 
   return (
     <div className="page">
-      <div className="page-header">
+      <header className="page-header">
         <div className="page-header-inner">
-          <div className="page-title-group min-w-0 !mb-0">
-            <div className="flex items-center gap-2">
-              <button onClick={() => navigate('/')} className="p-1 hover:bg-surface-hover rounded-base transition-colors shrink-0">
-                <Icon name="arrow_back" />
-              </button>
-              <h2 className="page-title truncate">
-                {isEdit ? 'Edit Collector' : 'New Collector Configuration'}
-              </h2>
-            </div>
-            <p className="page-desc ml-8">
-              Define data acquisition parameters for OPC UA node telemetry.
-            </p>
+          <div className="flex items-center gap-8">
+            <button onClick={() => navigate('/')} className="p-4 hover:bg-surface-hover rounded-base transition-colors shrink-0 tooltip" data-tooltip="Back">
+              <Icon name="arrow_back" />
+            </button>
+            <h2 className="page-title truncate">
+              {isEdit ? 'Edit Collector' : 'New Collector Configuration'}
+            </h2>
           </div>
-          <div className="flex gap-2 shrink-0">
+          <div className="flex gap-8 shrink-0">
             <button
               type="button"
               onClick={() => navigate('/')}
@@ -168,43 +162,64 @@ export default function CollectorFormPage({ detail, onRefresh, onRefreshDetail }
             </button>
           </div>
         </div>
-      </div>
+      </header>
 
       <div className="page-body">
         <div className="page-body-inner">
           <form id="collector-form" onSubmit={handleSubmit}>
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-16">
-              {/* Left column */}
-              <div className="space-y-16">
-                {/* Collector Identity */}
-                <div className="form-card">
-                  <div className="form-card-header">
-                    <Icon name="badge" className="text-primary" />
-                    Collector Identity
-                  </div>
-                  <div>
-                    <label className="form-label">Collector Unique ID</label>
-                    <input
-                      type="text"
-                      required
-                      disabled={isEdit}
-                      value={form.name}
-                      onChange={e => update('name', koToEn(e.target.value).replace(/[^a-zA-Z0-9_-]/g, ''))}
-                      className="w-full disabled:opacity-50"
-                      placeholder="e.g. FLOW-WEST-001"
-                    />
-                  </div>
+            <div className="space-y-16">
+              {/* Collector */}
+              <div className="form-card">
+                <div className="form-card-header">
+                  <span className="section-dot" />
+                  Collector
+                  <Icon name="badge" className="ml-auto text-primary" />
                 </div>
-
-                {/* OPC UA */}
-                <OpcuaSection form={form} update={update} />
+                <div>
+                  <label className="form-label">Name</label>
+                  <input
+                    type="text"
+                    required
+                    disabled={isEdit}
+                    value={form.name}
+                    onChange={e => update('name', koToEn(e.target.value).replace(/[^a-zA-Z0-9_-]/g, ''))}
+                    className="w-full disabled:opacity-50"
+                    placeholder="e.g. FLOW-WEST-001"
+                  />
+                </div>
               </div>
 
-              {/* Right column */}
-              <div className="space-y-16">
-                <DbSection form={form} update={update} />
-                <LogSection form={form} update={update} />
+              {/* OPC UA + Database */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-16">
+                <OpcuaSection
+                  form={form}
+                  update={update}
+                />
+                <DbSection
+                  form={form}
+                  update={update}
+                  servers={servers}
+                  onOpenServerSettings={onOpenServerSettings}
+                  onRefreshServers={onRefreshServers}
+                />
               </div>
+
+              {/* Node Mapping */}
+              <div className="form-card">
+                <div className="form-card-header">
+                  <span className="section-dot" />
+                  Node Mapping
+                  <Icon name="account_tree" className="ml-auto text-primary" />
+                </div>
+                <NodeListEditor
+                  nodes={form.opcua.nodes}
+                  onChange={nodes => update('opcua.nodes', nodes)}
+                  endpoint={form.opcua.endpoint}
+                />
+              </div>
+
+              {/* Logging — very bottom */}
+              <LogSection form={form} update={update} />
             </div>
           </form>
         </div>
