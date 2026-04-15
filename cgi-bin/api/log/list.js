@@ -28,7 +28,19 @@ const handlers = {
       }
     }
     files.sort();
-    reply({ ok: true, data: { files, dir: LOG_DIR } });
+    const fileInfos = files.map((name) => {
+      const filePath = path.join(LOG_DIR, name);
+      let size = 0;
+      let lines = 0;
+      try {
+        const stat = fs.statSync(filePath);
+        size = stat.size;
+        const content = fs.readFileSync(filePath, 'utf8');
+        lines = content ? content.split('\n').filter((_, i, arr) => i < arr.length - 1 || arr[i] !== '').length : 0;
+      } catch (_) {}
+      return { name, size, lines };
+    });
+    reply({ ok: true, data: { files: fileInfos } });
   },
 };
 

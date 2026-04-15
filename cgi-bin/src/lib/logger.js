@@ -31,7 +31,7 @@ const LEVEL_LABEL = {
  *
  * 출력 디렉토리: $HOME/public/logs/{pkg}  (pkg = process.argv[1] 기반 패키지 디렉토리명)
  * 파일명: repli.log  (현재 활성 파일)
- * 로테이션: repli.log 가 MAX_FILE_SIZE 초과 시 repli.2026-04-15T03-42-34-064Z.log 로 rename
+ * 로테이션: repli.log 가 MAX_FILE_SIZE 초과 시 repli_20260415_034234.log 로 rename
  * 파일당 최대 크기: 10 MB
  *
  * 포맷: [LEVEL] YYYY-MM-DD HH:MM:SS.sss  stage  message  (key=value ...)
@@ -128,8 +128,10 @@ class Logger {
 
   // 현재 파일을 datetime 접미사로 rename 후 오래된 rotate 파일 정리
   _rotate() {
-    const ts = new Date().toISOString().replace(/:/g, '-').replace('.', '-');
-    const rotated = path.join(this._fileDir, `${this._name}.${ts}.log`);
+    const now = new Date();
+    const pad = n => String(n).padStart(2, '0');
+    const ts = `${now.getFullYear()}${pad(now.getMonth()+1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+    const rotated = path.join(this._fileDir, `${this._name}_${ts}.log`);
     try {
       fs.renameSync(this._filePath, rotated);
     } catch (_) {}
@@ -140,7 +142,7 @@ class Logger {
   // rotate된 파일이 maxFiles 초과 시 가장 오래된 것부터 삭제
   _purgeOldFiles() {
     try {
-      const prefix = `${this._name}.`;
+      const prefix = `${this._name}_`;
       const files = fs.readdirSync(this._fileDir)
         .filter(f => f !== `${this._name}.log` && f.startsWith(prefix) && f.endsWith('.log'))
         .sort();
