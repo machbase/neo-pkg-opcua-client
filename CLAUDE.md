@@ -22,6 +22,7 @@ Machbase Neo JSH 환경에서 OPC UA 서버 데이터를 주기적으로 읽어 
   - `log.file.path` 를 디렉토리로 입력하면 collector 실행 시 `${name}.log` 생성
   - 예: `${CWD}/log` + `collector-a` -> `<package_root>/log/collector-a.log`
   - legacy 호환: `.../name.log` 형태를 직접 넣으면 그대로 사용
+- 로그 API 경로: `~/public/logs/<pkg-name>/` (log list/content API 기준)
 - rotate 파일명:
   - size: `collector-a.2026-04-08T03-42-34-064Z.log`
   - daily: `collector-a.2026-04-08.log`
@@ -50,24 +51,37 @@ cgi-bin/
 │   │   ├── start.js              # POST   /cgi-bin/api/collector/start?name=xxx
 │   │   └── stop.js               # POST   /cgi-bin/api/collector/stop?name=xxx
 │   ├── db/
-│   │   ├── connect.js            # POST   /cgi-bin/api/db/connect
+│   │   ├── connect.js            # GET    /cgi-bin/api/db/connect?server=xxx
+│   │   ├── server.js             # POST/GET/PUT/DELETE /cgi-bin/api/db/server
+│   │   ├── server/
+│   │   │   └── list.js           # GET    /cgi-bin/api/db/server/list
 │   │   └── table/
-│   │       └── create.js         # POST   /cgi-bin/api/db/table/create
+│   │       ├── create.js         # POST   /cgi-bin/api/db/table/create
+│   │       ├── list.js           # GET    /cgi-bin/api/db/table/list?server=xxx
+│   │       └── columns.js        # GET    /cgi-bin/api/db/table/columns?server=xxx&table=xxx
+│   ├── log/
+│   │   ├── list.js               # GET    /cgi-bin/api/log/list
+│   │   └── content.js            # GET    /cgi-bin/api/log/content?file=xxx
 │   └── opcua/
-│       ├── read.js               # POST   /cgi-bin/api/opcua/read
+│       ├── read.js               # GET    /cgi-bin/api/opcua/read?endpoint=&nodes=
 │       ├── write.js              # POST   /cgi-bin/api/opcua/write
 │       └── node/
 │           └── descendants.js    # POST   /cgi-bin/api/opcua/node/descendants
 ├── src/
 │   ├── collector.js              # polling loop
-│   ├── logger.js                 # logger / rotator
+│   ├── lib/logger.js             # logger / rotator
 │   ├── cgi/cgi_util.js           # config, pid, service helper
-│   ├── db/machbase-client.js     # DB connect / query / create helper
-│   ├── db/machbase-appender.js   # Machbase append wrapper
-│   └── opcua/opcua-client.js     # opcua wrapper
+│   ├── cgi/handler.js            # API 핸들러 함수 모음
+│   ├── cgi/service.js            # service lifecycle 래퍼
+│   ├── db/client.js              # DB connect / query / execute
+│   ├── db/stream.js              # Machbase append 스트림 래퍼
+│   ├── db/table.js               # TagTable / LogTable / TagDataTable
+│   ├── db/types.js               # ColumnType, Column, TableSchema, FLAG_*
+│   └── opcua/opcua-client.js     # opcua 래퍼
 └── test/
     ├── index.js
     ├── runner.js
+    ├── handler.test.js
     ├── machbase-client.test.js
     └── *.test.js
 ```
@@ -121,16 +135,30 @@ cgi-bin/
 
 - install된 service stop
 
-### POST `/cgi-bin/api/db/connect`
+### GET `/cgi-bin/api/collector/list`
 
-- body는 `config.db` 와 같은 구조
-- `table` 없이 DB 연결만 확인
+- 기준은 `conf.d` 목록
+- 각 항목에 대해 `installed`, `running` 상태를 분리해서 반환
+- 즉 config-only 항목도 list에 나타날 수 있음
+
+응답 예:
+
+```json
+[
+  { "name": "collector-a", "installed": true,  "running": true  },
+  { "name": "collector-b", "installed": false, "running": false }
+]
+```
+
+### GET `/cgi-bin/api/db/connect?server=xxx`
+
+- 등록된 server 이름으로 연결 확인
 - 성공 시 `{ connected: true, host, port, user }`
 
 ### POST `/cgi-bin/api/db/table/create`
 
-- body는 `config.db` 와 같은 구조
-- 지정한 DB에 연결해 TAG 테이블 생성
+- body: `{ server: "server-name", table: "TAGDATA" }`
+- 등록된 server에 연결해 TAG 테이블 생성
 - 생성 SQL은 아래 구조로 고정
 
 ```sql
@@ -164,21 +192,6 @@ CREATE TAG TABLE ${table} (
 - `M$SYS_TABLES` 에서 table ID 조회 (USER_ID 조건 포함) → table not found / not TAG table 시 에러
 - `M$SYS_COLUMNS` 를 table ID 기준으로 조회
 
-### GET `/cgi-bin/api/collector/list`
-
-- 기준은 `conf.d` 목록
-- 각 항목에 대해 `installed`, `running` 상태를 분리해서 반환
-- 즉 config-only 항목도 list에 나타날 수 있음
-
-응답 예:
-
-```json
-[
-  { "name": "collector-a", "installed": true,  "running": true  },
-  { "name": "collector-b", "installed": false, "running": false }
-]
-```
-
 ## Service 관련 구현 메모
 
 - service prefix는 `_opc_`
@@ -208,17 +221,19 @@ CREATE TAG TABLE ${table} (
 
 ## Logger 메모
 
-- 전역 logger config는 `init(config.log, options)` 로 초기화
-- collector 실행 진입점 `neo-collector.js` 에서 `{ defaultFileName: "${configName}.log" }` 를 주입
-- `${CWD}` placeholder는 `cgi-bin` parent, 즉 package root 기준으로 치환
-- rotate / purge 는 현재 `stem.timestamp.ext` 패턴을 기준으로 동작
+- 클래스: `src/lib/logger.js` — `Logger`, `init`, `getInstance`, `LOG_DIR` export
+- 로그 디렉토리: `LOG_DIR = ~/public/logs/<pkg-name>/` (process.argv 기반 자동 계산)
+- `neo-collector.js` 에서 `new Logger(config.log, { name: configName })` 로 생성
+  - `options.name` 이 로그 파일 stem — `collector-a.log` 형태
+- rotate: 파일이 10 MB 초과 시 `stem.ISO타임스탬프.log` 로 rename 후 새 파일 생성
+- purge: rotate된 파일이 `maxFiles` 초과 시 오래된 것부터 삭제
+- `LOG_DIR` 은 log list/content API에서도 import해서 사용
 
 예:
 
 ```text
 collector-a.log
 collector-a.2026-04-08T03-42-34-064Z.log
-collector-a.2026-04-08.log
 ```
 
 ## 테스트 / 검증 메모

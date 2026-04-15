@@ -8,23 +8,22 @@ const process = require('process');
 const _argv = process.argv[1];
 const ROOT = _argv.slice(0, _argv.lastIndexOf('/cgi-bin/') + '/cgi-bin'.length);
 const { CGI } = require(path.join(ROOT, 'src', 'cgi', 'cgi_util.js'));
-
-const HOME = process.env.get('HOME');
-const PKG_NAME = path.basename(path.dirname(ROOT));
-const LOG_DIR = path.join(HOME, 'public', 'logs', PKG_NAME);
+const { LOG_DIR } = require(path.join(ROOT, 'src', 'lib', 'logger.js'));
 
 const reply = (r) => CGI.reply(r);
 
 const handlers = {
   GET: () => {
     let files;
+    let dirError = null;
     try {
       files = fs.readdirSync(LOG_DIR).filter((f) => f.endsWith('.log'));
-    } catch (_) {
+    } catch (err) {
       files = [];
+      dirError = err && err.message ? err.message : String(err);
     }
     files.sort();
-    reply({ ok: true, data: files });
+    reply({ ok: true, data: files, dir: LOG_DIR, dirError });
   },
 };
 

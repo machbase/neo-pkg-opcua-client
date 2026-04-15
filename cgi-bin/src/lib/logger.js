@@ -187,4 +187,4 @@ function getInstance() {
   return _instance;
 }
 
-module.exports = { Logger, init, getInstance };
+module.exports = { Logger, init, getInstance, LOG_DIR };

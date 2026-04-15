@@ -447,7 +447,22 @@ CREATE TAG TABLE {table} (
 
 로그 파일 이름 목록을 반환합니다. 파일이 없으면 빈 배열입니다.
 
-**응답 (성공):** `{ "ok": true, "data": ["collector-a.log", "collector-a.2026-04-15T03-42-34-064Z.log"] }`
+**응답 (성공)**
+
+```json
+{
+  "ok": true,
+  "data": ["collector-a.log", "collector-a.2026-04-15T03-42-34-064Z.log"],
+  "dir": "/home/xxx/public/logs/neo-pkg-opcua-client",
+  "dirError": null
+}
+```
+
+| 필드 | 설명 |
+|------|------|
+| `data` | `.log` 파일 이름 목록 (정렬됨) |
+| `dir` | 읽으려는 로그 디렉토리 경로 |
+| `dirError` | 디렉토리 읽기 실패 시 오류 메시지, 성공 시 `null` |
 
 ---
 
