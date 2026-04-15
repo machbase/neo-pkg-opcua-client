@@ -23,9 +23,7 @@ Machbase Neo JSH 환경에서 OPC UA 서버 데이터를 주기적으로 읽어 
   - 예: `${CWD}/log` + `collector-a` -> `<package_root>/log/collector-a.log`
   - legacy 호환: `.../name.log` 형태를 직접 넣으면 그대로 사용
 - 로그 API 경로: `{package_root}/logs/` (log list/content API 기준)
-- rotate 파일명:
-  - size: `collector-a.2026-04-08T03-42-34-064Z.log`
-  - daily: `collector-a.2026-04-08.log`
+- rotate 파일명: `collector-a_20260408_034208.log` (`{name}_YYYYMMDD_HHMMSS.log`)
 
 ## 실행 환경 메모
 
@@ -61,7 +59,7 @@ cgi-bin/
 │   │       └── columns.js        # GET    /cgi-bin/api/db/table/columns?server=xxx&table=xxx
 │   ├── log/
 │   │   ├── list.js               # GET    /cgi-bin/api/log/list
-│   │   └── content.js            # GET    /cgi-bin/api/log/content?file=xxx
+│   │   └── content.js            # GET    /cgi-bin/api/log/content?name=xxx
 │   └── opcua/
 │       ├── read.js               # GET    /cgi-bin/api/opcua/read?endpoint=&nodes=
 │       ├── write.js              # POST   /cgi-bin/api/opcua/write
@@ -227,7 +225,7 @@ CREATE TAG TABLE ${table} (
 - 로그 디렉토리: `LOG_DIR = {package_root}/logs/` (process.argv[1] 기반 자동 계산, fallback: `~/public/logs/neo-pkg-opcua-client`)
 - `neo-collector.js` 에서 `new Logger(config.log, { name: configName })` 로 생성
   - `options.name` 이 로그 파일 stem — `collector-a.log` 형태
-- rotate: 파일이 10 MB 초과 시 `stem.ISO타임스탬프.log` 로 rename 후 새 파일 생성
+- rotate: 파일이 10 MB 초과 시 `stem_YYYYMMDD_HHMMSS.log` 로 rename 후 새 파일 생성
 - purge: rotate된 파일이 `maxFiles` 초과 시 오래된 것부터 삭제
 - `LOG_DIR` 은 log list/content API에서도 import해서 사용
 
@@ -235,7 +233,7 @@ CREATE TAG TABLE ${table} (
 
 ```text
 collector-a.log
-collector-a.2026-04-08T03-42-34-064Z.log
+collector-a_20260408_034208.log
 ```
 
 ## 테스트 / 검증 메모
