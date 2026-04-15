@@ -1,5 +1,5 @@
 /**
- * GET /cgi-bin/api/log/list  -- 로그 파일 이름 목록 조회
+ * GET /cgi-bin/api/log/content/all?name=repli.log  -- 로그 파일 전체 내용 조회
  */
 
 const path = require('path');
@@ -14,30 +14,30 @@ const reply = (r) => CGI.reply(r);
 
 const handlers = {
   GET: () => {
-    let files;
+    const { name } = CGI.parseQuery();
+    if (!name) {
+      reply({ ok: false, reason: 'name is required' });
+      return;
+    }
+
+    // path traversal 방지: 파일명만 허용 (디렉토리 구분자 차단)
+    if (name.indexOf('/') >= 0 || name.indexOf('\\') >= 0 || name.indexOf('..') >= 0) {
+      reply({ ok: false, reason: 'invalid file name' });
+      return;
+    }
+
+    const filePath = path.join(LOG_DIR, name);
+    let content;
     try {
-      files = fs.readdirSync(LOG_DIR).filter((f) => f.endsWith('.log'));
+      content = fs.readFileSync(filePath, 'utf8');
     } catch (err) {
       const msg = err && err.message ? err.message : String(err);
       const notFound = msg.indexOf('ENOENT') >= 0 || msg.indexOf('no such file') >= 0;
-      if (notFound) {
-        files = [];
-      } else {
-        reply({ ok: false, reason: msg });
-        return;
-      }
+      reply({ ok: false, reason: notFound ? 'file not found: ' + name : msg });
+      return;
     }
-    files.sort();
-    const fileInfos = files.map((name) => {
-      const filePath = path.join(LOG_DIR, name);
-      let size = 0;
-      try {
-        const stat = fs.statSync(filePath);
-        size = stat.size;
-      } catch (_) {}
-      return { name, size };
-    });
-    reply({ ok: true, data: { files: fileInfos } });
+
+    reply({ ok: true, data: { name, content } });
   },
 };
 

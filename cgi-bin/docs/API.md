@@ -36,7 +36,8 @@
 | GET    | [/db/table/list?server=](#get-dbtablelistserver) | TAG 테이블 목록 조회 |
 | GET    | [/db/table/columns?server=&table=](#get-dbtablecolumnsservertable) | 테이블 컬럼 조회 |
 | GET    | [/log/list](#get-loglist) | 로그 파일 목록 조회 |
-| GET    | [/log/content?name=](#get-logcontentname) | 로그 파일 내용 조회 |
+| GET    | [/log/content?name=](#get-logcontentname) | 로그 파일 내용 조회 (줄 범위 지정) |
+| GET    | [/log/content/all?name=](#get-logcontentallname) | 로그 파일 전체 내용 조회 |
 | GET    | [/opcua/read?endpoint=&nodes=](#get-opcuareadendpointnodes) | OPC UA 노드 읽기 |
 | POST   | [/opcua/write](#post-opcuawrite) | OPC UA 노드 쓰기 |
 | POST   | [/opcua/node/descendants](#post-opcuanodedescendants) | OPC UA 노드 트리 탐색 |
@@ -456,8 +457,8 @@ CREATE TAG TABLE {table} (
   "ok": true,
   "data": {
     "files": [
-      { "name": "collector-a.log", "size": 4096, "lines": 120 },
-      { "name": "collector-a_20260415_034234.log", "size": 10485760, "lines": 305000 }
+      { "name": "collector-a.log", "size": 4096 },
+      { "name": "collector-a_20260415_034234.log", "size": 10485760 }
     ]
   }
 }
@@ -468,7 +469,6 @@ CREATE TAG TABLE {table} (
 | `data.files` | `.log` 파일 정보 목록 (이름순 정렬). 디렉토리가 없으면 빈 배열 |
 | `data.files[].name` | 파일 이름 |
 | `data.files[].size` | 파일 크기 (bytes) |
-| `data.files[].lines` | 총 줄 수 |
 
 **응답 (실패)**
 
@@ -511,6 +511,32 @@ CREATE TAG TABLE {table} (
 | 경로 구분자 포함 | `"invalid file name"` |
 | 파일 없음 | `"file not found: xxx"` |
 | `start`/`end` 유효하지 않음 | `"invalid start/end"` |
+
+---
+
+### GET /log/content/all?name=
+
+로그 파일 전체 내용을 문자열로 반환합니다. 경로 구분자(`/`, `\`, `..`)는 허용하지 않습니다.
+
+**응답 (성공)**
+
+```json
+{
+  "ok": true,
+  "data": {
+    "name": "collector-a.log",
+    "content": "[INFO] 2026-04-15 ..."
+  }
+}
+```
+
+**응답 (실패)**
+
+| 조건 | reason |
+|------|--------|
+| `name` 누락 | `"name is required"` |
+| 경로 구분자 포함 | `"invalid file name"` |
+| 파일 없음 | `"file not found: xxx"` |
 
 ---
 
