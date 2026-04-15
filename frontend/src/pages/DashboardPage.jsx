@@ -1,16 +1,57 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useNavigate } from "react-router";
 import { useApp } from "../context/AppContext";
 import * as api from "../api/collectors";
 import StatusBadge from "../components/common/StatusBadge";
 import ConfirmDialog from "../components/common/ConfirmDialog";
+import LogViewerModal from "../components/logs/LogViewerModal";
+// import LiveLogs from "../components/logs/LiveLogs";
 import Icon from "../components/common/Icon";
+
+const LEVEL_ORDER = ["TRACE", "DEBUG", "INFO", "WARN", "ERROR"];
+
+const LEVEL_COLOR = {
+    TRACE: "var(--color-on-surface-disabled)",
+    DEBUG: "var(--color-primary-hover)",
+    INFO: "var(--color-success)",
+    WARN: "var(--color-warning)",
+    ERROR: "var(--color-error)",
+};
+
+const LEVEL_BADGE_CLASS = {
+    TRACE: "badge badge-muted",
+    DEBUG: "badge badge-primary",
+    INFO: "badge badge-success",
+    WARN: "badge badge-warning",
+    ERROR: "badge badge-error",
+};
+
+function recordedLevels(level) {
+    const idx = LEVEL_ORDER.indexOf(level);
+    if (idx === -1) return [];
+    return LEVEL_ORDER.slice(idx);
+}
+
+function formatTransform(node) {
+    const bias = node.bias != null ? Number(node.bias) : null;
+    const mult = node.multiplier != null ? Number(node.multiplier) : null;
+    const hasBias = bias != null && !Number.isNaN(bias) && bias !== 0;
+    const hasMult = mult != null && !Number.isNaN(mult) && mult !== 1;
+    if (!hasBias && !hasMult) return null;
+    if (hasBias && hasMult) return `(value + ${bias}) × ${mult}`;
+    if (hasBias) return `value + ${bias}`;
+    return `value × ${mult}`;
+}
 
 export default function DashboardPage({ collectors, detail, onDelete }) {
     const navigate = useNavigate();
     const { selectedCollectorId, setSelectedCollectorId } = useApp();
     const [confirmDelete, setConfirmDelete] = useState(false);
+    const [showLogs, setShowLogs] = useState(false);
     const [lastCollectedAt, setLastCollectedAt] = useState(null);
+    const [nodeFilter, setNodeFilter] = useState("");
+    const [sortKey, setSortKey] = useState("name");
+    const [sortDir, setSortDir] = useState("asc");
     const intervalRef = useRef(null);
 
     const collector = collectors.find((c) => c.id === selectedCollectorId);
@@ -33,12 +74,42 @@ export default function DashboardPage({ collectors, detail, onDelete }) {
         return () => clearInterval(intervalRef.current);
     }, [collector?.id, fetchLastTime]);
 
+    const config = detail?.config;
+    const opcua = config?.opcua;
+    const dbServer = typeof config?.db === "string" ? config.db : "";
+    const dbTable = config?.dbTable || "";
+    const valueColumn = config?.valueColumn || "";
+    const nodes = opcua?.nodes || [];
+    const logLevel = (config?.log?.level || "INFO").toUpperCase();
+    const logLevels = recordedLevels(logLevel);
+    const logMaxFiles = config?.log?.file?.maxFiles;
+
+    const displayNodes = useMemo(() => {
+        const q = nodeFilter.trim().toLowerCase();
+        const filtered = q
+            ? nodes.filter(
+                  (n) =>
+                      (n.name || "").toLowerCase().includes(q) ||
+                      (n.nodeId || "").toLowerCase().includes(q)
+              )
+            : nodes.slice();
+        const dir = sortDir === "asc" ? 1 : -1;
+        filtered.sort((a, b) => {
+            const av = (a[sortKey] || "").toString().toLowerCase();
+            const bv = (b[sortKey] || "").toString().toLowerCase();
+            if (av < bv) return -1 * dir;
+            if (av > bv) return 1 * dir;
+            return 0;
+        });
+        return filtered;
+    }, [nodes, nodeFilter, sortKey, sortDir]);
+
     if (!collector) {
         return (
             <div className="empty-state flex flex-col items-center justify-center h-full">
-                <Icon name="inbox" className="icon-lg opacity-30 mb-3" />
+                <Icon name="inbox" className="icon-lg opacity-30 mb-12" />
                 <p className="text-md font-medium text-on-surface-tertiary">{collectors.length === 0 ? "No collectors yet" : "Select a collector from the sidebar"}</p>
-                {collectors.length === 0 && <p className="text-sm mt-1">Click "New" to get started</p>}
+                {collectors.length === 0 && <p className="text-sm mt-4">Click "New" to get started</p>}
             </div>
         );
     }
@@ -49,27 +120,29 @@ export default function DashboardPage({ collectors, detail, onDelete }) {
         setConfirmDelete(false);
     };
 
-    const config = detail?.config;
-    const opcua = config?.opcua;
-    const db = config?.db;
-    const nodes = opcua?.nodes || [];
+    const toggleSort = (key) => {
+        if (sortKey === key) {
+            setSortDir(sortDir === "asc" ? "desc" : "asc");
+        } else {
+            setSortKey(key);
+            setSortDir("asc");
+        }
+    };
+
+    const sortIcon = (key) => {
+        if (sortKey !== key) return "unfold_more";
+        return sortDir === "asc" ? "arrow_upward" : "arrow_downward";
+    };
 
     return (
         <div className="page">
-            <div className="page-header">
+            <header className="page-header">
                 <div className="page-header-inner">
-                    <div className="page-title-group min-w-0 !mb-0">
-                        <div className="flex items-center gap-3">
-                            <h1 className="page-title truncate">{collector.id}</h1>
-                            <StatusBadge status={collector.status} />
-                        </div>
-                        <p className="page-desc">
-                            {collector.status === "running"
-                                ? "Active session connected. Collecting data from OPC UA server."
-                                : "Collector is stopped. Configuration available for editing."}
-                        </p>
+                    <div className="flex items-center gap-12">
+                        <h2 className="page-title truncate">{collector.id}</h2>
+                        <StatusBadge status={collector.status} />
                     </div>
-                    <div className="flex gap-2 shrink-0">
+                    <div className="flex gap-8 shrink-0">
                         <button
                             disabled={collector.status === "running"}
                             onClick={() => navigate(`/collectors/${encodeURIComponent(collector.id)}/edit`)}
@@ -84,66 +157,78 @@ export default function DashboardPage({ collectors, detail, onDelete }) {
                         </button>
                     </div>
                 </div>
-            </div>
+            </header>
             <div className="page-body">
-              <div className="page-body-inner">
+                <div className="page-body-inner">
             {config && (
-                <div className="space-y-4">
-                    {/* Row 1: OPC UA + Database */}
-                    <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
-                        {/* OPC UA — 3/5 */}
-                        <div className="form-card lg:col-span-3">
-                            <div className="form-card-header">
+                <div className="space-y-16">
+                    {/* Row 1: Hero Summary — OPC UA / Nodes / Database */}
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-16">
+                        {/* OPC UA Server */}
+                        <div className="form-card flex flex-col">
+                            <div className="flex items-start justify-between mb-16">
+                                <div className="form-card-header !mb-0">OPC UA</div>
                                 <Icon name="sensors" className="text-primary" />
-                                OPC UA Configuration
                             </div>
-                            <div className="space-y-6">
-                                {/* Row 1: Interval / ReadRetry */}
-                                <div className="flex gap-10">
-                                    <div>
-                                        <div className="form-label">Interval</div>
-                                        <div className="flex items-baseline gap-1">
-                                            <span className="text-xl font-bold">{opcua?.interval || "-"}</span>
-                                            <span className="text-sm text-on-surface-disabled">ms</span>
-                                        </div>
-                                    </div>
-                                    <div>
-                                        <div className="form-label">Read Retry</div>
-                                        <div className="flex items-baseline gap-1">
-                                            <span className="text-xl font-bold">{opcua?.readRetryInterval ?? 100}</span>
-                                            <span className="text-sm text-on-surface-disabled">ms</span>
-                                        </div>
+                            <div className="form-label">Server</div>
+                            <div className="text-lg font-bold truncate mb-20" title={opcua?.endpoint}>
+                                {opcua?.endpoint || "-"}
+                            </div>
+                            <div className="flex gap-24 mt-auto">
+                                <div>
+                                    <div className="form-label">Interval</div>
+                                    <div className="flex items-baseline gap-4">
+                                        <span className="text-base font-mono font-semibold">{opcua?.interval || "-"}</span>
+                                        <span className="text-xs text-on-surface-disabled">ms</span>
                                     </div>
                                 </div>
-
-                                {/* Row 2: Endpoint */}
                                 <div>
-                                    <div className="form-label">Endpoint URL</div>
-                                    <div className="dash-field-box w-full font-mono">{opcua?.endpoint || "-"}</div>
+                                    <div className="form-label">Read Retry</div>
+                                    <div className="flex items-baseline gap-4">
+                                        <span className="text-base font-mono font-semibold">{opcua?.readRetryInterval ?? 100}</span>
+                                        <span className="text-xs text-on-surface-disabled">ms</span>
+                                    </div>
                                 </div>
                             </div>
                         </div>
 
-                        {/* Database — 2/5 */}
-                        <div className="form-card lg:col-span-2">
-                            <div className="form-card-header">
-                                <Icon name="database" className="text-primary" />
-                                Database Sync
-                            </div>
-                            <div className="space-y-4">
-                                <div className="flex justify-between items-center">
-                                    <span className="form-label !mb-0">Target Table</span>
-                                    <span className="font-bold">{db?.table || "-"}</span>
-                                </div>
-                                <div className="flex justify-between items-center">
-                                    <span className="form-label !mb-0">Host Address</span>
+                        {/* Nodes Monitored */}
+                        <div className="form-card flex flex-col items-center justify-center text-center">
+                            <div className="text-5xl font-bold text-primary leading-none mb-12">{nodes.length}</div>
+                            <div className="form-label">Nodes Monitored</div>
+                            <div className="flex items-center gap-6 text-xs text-on-surface-disabled">
+                                <Icon name="timer" className="icon-sm" />
+                                <span>
+                                    LAST UPDATED AT:{" "}
                                     <span className="font-mono">
-                                        {db?.host || "127.0.0.1"}:{db?.port || 5656}
+                                        {lastCollectedAt ? new Date(lastCollectedAt).toLocaleString() : "-"}
                                     </span>
+                                </span>
+                            </div>
+                        </div>
+
+                        {/* Database */}
+                        <div className="form-card flex flex-col">
+                            <div className="flex items-start justify-between mb-16">
+                                <div className="form-card-header !mb-0">Database</div>
+                                <Icon name="database" className="text-primary" />
+                            </div>
+                            <div className="form-label">Server</div>
+                            <div className="text-lg font-bold truncate mb-20" title={dbServer}>
+                                {dbServer || "-"}
+                            </div>
+                            <div className="flex gap-24 mt-auto">
+                                <div className="min-w-0 flex-1">
+                                    <div className="form-label">Table</div>
+                                    <div className="text-base font-mono font-semibold truncate" title={dbTable}>
+                                        {dbTable || "-"}
+                                    </div>
                                 </div>
-                                <div className="flex justify-between items-center">
-                                    <span className="form-label !mb-0">User Authority</span>
-                                    <span className="font-semibold">{db?.user || "sys"}</span>
+                                <div className="min-w-0 flex-1">
+                                    <div className="form-label">Column</div>
+                                    <div className="text-base font-mono font-semibold truncate" title={valueColumn}>
+                                        {valueColumn || "-"}
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -151,31 +236,112 @@ export default function DashboardPage({ collectors, detail, onDelete }) {
 
                     {/* Row 2: Monitored Nodes — full width */}
                     <div className="form-card">
-                        <div className="form-card-header justify-between">
-                            <div className="flex items-center gap-2">
+                        <div className="flex items-center justify-between mb-16">
+                            <div className="form-card-header !mb-0">
                                 <Icon name="account_tree" className="text-primary" />
                                 Monitored Nodes
-                                <span className="badge badge-primary ml-2">{nodes.length} Nodes</span>
+                                <span className="badge badge-primary ml-8">{nodes.length} Nodes</span>
                             </div>
-                            {lastCollectedAt != null && (
-                                <span className="text-xs text-on-surface-disabled font-normal">
-                                    Last collected: {new Date(lastCollectedAt).toLocaleString()}
-                                </span>
+                            {nodes.length > 0 && (
+                                <input
+                                    type="text"
+                                    value={nodeFilter}
+                                    onChange={(e) => setNodeFilter(e.target.value)}
+                                    className="w-[240px]"
+                                    placeholder="Filter nodes..."
+                                />
                             )}
                         </div>
                         {nodes.length > 0 ? (
-                            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-3">
-                                {nodes.map((node, i) => (
-                                    <div key={i} className="px-4 py-3 bg-surface-alt border border-border rounded-base overflow-hidden">
-                                        <div className="font-semibold mb-1 truncate" title={node.name}>{node.name}</div>
-                                        <div className="text-xs text-on-surface-disabled font-mono truncate" title={node.nodeId}>{node.nodeId}</div>
-                                    </div>
-                                ))}
+                            <div className="max-h-[420px] overflow-y-auto">
+                                <table className="table-clean">
+                                    <thead>
+                                        <tr>
+                                            <th>
+                                                <button type="button" className={`th-sort${sortKey === "name" ? " is-active" : ""}`} onClick={() => toggleSort("name")}>
+                                                    Tag Name
+                                                    <Icon name={sortIcon("name")} className="icon-sm" />
+                                                </button>
+                                            </th>
+                                            <th>
+                                                <button type="button" className={`th-sort${sortKey === "nodeId" ? " is-active" : ""}`} onClick={() => toggleSort("nodeId")}>
+                                                    Node ID
+                                                    <Icon name={sortIcon("nodeId")} className="icon-sm" />
+                                                </button>
+                                            </th>
+                                            <th>Transform</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {displayNodes.map((node, i) => {
+                                            const transform = formatTransform(node);
+                                            return (
+                                                <tr key={`${node.nodeId}-${i}`}>
+                                                    <td className="font-semibold" title={node.name}>{node.name}</td>
+                                                    <td className="mono" title={node.nodeId}>{node.nodeId}</td>
+                                                    <td className="mono" style={{ color: "var(--color-primary-hover)" }} title={transform || undefined}>{transform || "—"}</td>
+                                                </tr>
+                                            );
+                                        })}
+                                    </tbody>
+                                </table>
+                                {nodeFilter && displayNodes.length === 0 && (
+                                    <div className="empty-state">No nodes matching "{nodeFilter}"</div>
+                                )}
                             </div>
                         ) : (
                             <p className="text-sm text-on-surface-disabled">No nodes configured</p>
                         )}
                     </div>
+
+                    {/* Row 3: Logging Controls — summary bar */}
+                    <div className="form-card" style={{ paddingTop: 16, paddingBottom: 16 }}>
+                        <div className="flex items-center justify-between gap-24 flex-wrap">
+                            <div className="form-card-header !mb-0">
+                                <Icon name="terminal" className="text-primary" />
+                                Logging Controls
+                            </div>
+                            <div className="flex items-center gap-24 flex-wrap">
+                                <div className="flex items-center gap-8">
+                                    <span className="form-label !mb-0">Log Level</span>
+                                    <span className={LEVEL_BADGE_CLASS[logLevel] || "badge badge-muted"}>
+                                        {logLevel}
+                                    </span>
+                                </div>
+                                {logLevels.length > 0 && (
+                                    <span className="text-sm text-on-surface-tertiary">
+                                        Records{" "}
+                                        {logLevels.map((lvl, i) => (
+                                            <span key={lvl}>
+                                                <span style={{ color: LEVEL_COLOR[lvl], fontWeight: 600 }}>
+                                                    {lvl}
+                                                </span>
+                                                {i < logLevels.length - 1 ? ", " : ""}
+                                            </span>
+                                        ))}
+                                        {" "}messages
+                                    </span>
+                                )}
+                                <div className="flex items-center gap-8">
+                                    <span className="form-label !mb-0">File Limit</span>
+                                    <span className="text-base font-mono font-semibold">
+                                        {logMaxFiles ?? "-"}
+                                    </span>
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={() => setShowLogs(true)}
+                                    className="btn btn-sm btn-primary-outline"
+                                >
+                                    <Icon name="description" className="icon-sm" />
+                                    View Logs
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Row 4: Live Logs */}
+                    {/* <LiveLogs collectorId={collector.id} /> */}
 
                 </div>
             )}
@@ -185,8 +351,15 @@ export default function DashboardPage({ collectors, detail, onDelete }) {
                 <ConfirmDialog
                     title="Delete Collector"
                     message={`Are you sure you want to delete "${collector.id}"? This action cannot be undone.`}
+                    confirmLabel="Delete"
                     onConfirm={handleDelete}
                     onCancel={() => setConfirmDelete(false)}
+                />
+            )}
+            {showLogs && (
+                <LogViewerModal
+                    collectorId={collector.id}
+                    onClose={() => setShowLogs(false)}
                 />
             )}
         </div>

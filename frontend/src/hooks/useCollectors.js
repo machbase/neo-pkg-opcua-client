@@ -5,14 +5,19 @@ import { useApp } from "../context/AppContext";
 export default function useCollectors() {
     const [collectors, setCollectors] = useState([]);
     const [loading, setLoading] = useState(true);
-    const { notify } = useApp();
+    const { notify, setSelectedCollectorId } = useApp();
     const intervalRef = useRef(null);
     const lastErrorRef = useRef(null);
+    const initialSelectedRef = useRef(false);
 
     const fetchCollectors = useCallback(async () => {
         try {
             const data = await api.listCollectors();
             setCollectors(data);
+            if (!initialSelectedRef.current && data.length > 0) {
+                initialSelectedRef.current = true;
+                setSelectedCollectorId(data[0].id);
+            }
             lastErrorRef.current = null;
         } catch (e) {
             const msg = e.reason || e.message;
@@ -23,7 +28,7 @@ export default function useCollectors() {
         } finally {
             setLoading(false);
         }
-    }, [notify]);
+    }, [notify, setSelectedCollectorId]);
 
     useEffect(() => {
         fetchCollectors();

@@ -1,10 +1,12 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { Routes, Route, useNavigate } from 'react-router'
 import useCollectors from './hooks/useCollectors'
+import useServers from './hooks/useServers'
 import { useApp } from './context/AppContext'
 import * as api from './api/collectors'
 import DashboardPage from './pages/DashboardPage'
 import CollectorFormPage from './pages/CollectorFormPage'
+import ServerSettingsModal from './components/servers/ServerSettingsModal'
 import Toast from './components/common/Toast'
 
 const CHANNEL_NAME = 'app:neo-opcua-collector'
@@ -13,7 +15,20 @@ export default function App() {
   const navigate = useNavigate()
   const { selectedCollectorId, setSelectedCollectorId, notify } = useApp()
   const { collectors, toggleCollector, installCollector, removeCollector, refreshCollectors } = useCollectors()
+  const { servers, loading: serversLoading, addServer, editServer, removeServer, healthCheck, refreshServers } = useServers()
   const [detail, setDetail] = useState(null)
+  const [showServerSettings, setShowServerSettings] = useState(false)
+  const [autoOpenForm, setAutoOpenForm] = useState(false)
+
+  const openServerSettings = useCallback((openForm = false) => {
+    setAutoOpenForm(Boolean(openForm))
+    setShowServerSettings(true)
+  }, [])
+
+  const closeServerSettings = useCallback(() => {
+    setShowServerSettings(false)
+    setAutoOpenForm(false)
+  }, [])
 
   const fetchDetail = useCallback((id) => {
     if (!id) { setDetail(null); return Promise.resolve() }
@@ -46,6 +61,9 @@ export default function App() {
     installCollector: (payload) => {
       const c = collectors.find(c => c.id === payload.collectorId)
       if (c) installCollector(c)
+    },
+    openServerSettings: () => {
+      openServerSettings()
     },
     requestReady: () => {
       const ch = channelRef.current
@@ -88,15 +106,40 @@ export default function App() {
               <DashboardPage collectors={collectors} detail={detail} onDelete={removeCollector} />
             } />
             <Route path="/collectors/new" element={
-              <CollectorFormPage onRefresh={refreshCollectors} />
+              <CollectorFormPage
+                onRefresh={refreshCollectors}
+                servers={servers}
+                onOpenServerSettings={openServerSettings}
+                onRefreshServers={refreshServers}
+              />
             } />
             <Route path="/collectors/:id/edit" element={
-              <CollectorFormPage detail={detail} onRefresh={refreshCollectors} onRefreshDetail={() => fetchDetail(selectedCollectorId)} />
+              <CollectorFormPage
+                detail={detail}
+                onRefresh={refreshCollectors}
+                onRefreshDetail={() => fetchDetail(selectedCollectorId)}
+                servers={servers}
+                onOpenServerSettings={openServerSettings}
+                onRefreshServers={refreshServers}
+              />
             } />
           </Routes>
         </main>
       </div>
       <Toast />
+      {showServerSettings && (
+        <ServerSettingsModal
+          servers={servers}
+          loading={serversLoading}
+          onAdd={addServer}
+          onEdit={editServer}
+          onDelete={removeServer}
+          onHealthCheck={healthCheck}
+          onRefresh={refreshServers}
+          onClose={closeServerSettings}
+          autoOpenForm={autoOpenForm}
+        />
+      )}
     </>
   )
 }

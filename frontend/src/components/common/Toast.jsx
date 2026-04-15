@@ -19,7 +19,7 @@ export default function Toast() {
   if (notifications.length === 0) return null
 
   return (
-    <div className="fixed bottom-4 right-4 z-[1000] space-y-2">
+    <div className="fixed bottom-16 right-16 z-[1000] space-y-8">
       {notifications.map(n => (
         <div
           key={n.id}

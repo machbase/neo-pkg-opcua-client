@@ -1,85 +1,233 @@
-import { useState } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import Icon from "../common/Icon";
-import { koToEn } from "../../utils/korean";
+import * as serversApi from "../../api/servers";
 import { useApp } from "../../context/AppContext";
-import * as api from "../../api/collectors";
 
-export default function DbSection({ form, update }) {
+const NUMERIC_TYPES = new Set(["SHORT", "INTEGER", "LONG", "FLOAT", "DOUBLE"]);
+
+function isNumericColumn(col) {
+    if (!col || !col.type) return false;
+    return NUMERIC_TYPES.has(col.type.toUpperCase());
+}
+
+function displayTableName(user, name) {
+    return user && user !== "SYS" ? `${user}.${name}` : name;
+}
+
+function groupTablesByUser(tables) {
+    const map = new Map();
+    for (const t of tables) {
+        const user = t.user || "SYS";
+        if (!map.has(user)) map.set(user, []);
+        map.get(user).push(t);
+    }
+    return [...map.entries()].sort(([a], [b]) => {
+        if (a === "SYS") return -1;
+        if (b === "SYS") return 1;
+        return a.localeCompare(b);
+    });
+}
+
+export default function DbSection({
+    form,
+    update,
+    servers = [],
+    onOpenServerSettings,
+    onRefreshServers,
+}) {
     const { notify } = useApp();
-    const [testing, setTesting] = useState(false);
-    const [creating, setCreating] = useState(false);
-
     const db = form.db;
-    const dbReady = !!(db.host && db.port && db.table && db.user && db.password);
 
-    const handleTestConnection = async () => {
-        setTesting(true);
+    const [tables, setTables] = useState([]);
+    const [columns, setColumns] = useState([]);
+    const [loadingTables, setLoadingTables] = useState(false);
+    const [loadingColumns, setLoadingColumns] = useState(false);
+
+    useEffect(() => {
+        if (!db.server && servers.length > 0) {
+            update("db.server", servers[0].name);
+        }
+    }, [servers, db.server, update]);
+
+    const fetchTables = useCallback(async () => {
+        if (!db.server) {
+            setTables([]);
+            return;
+        }
+        setLoadingTables(true);
         try {
-            await api.testDbConnection(db);
-            notify("Connection successful", "success");
+            const data = await serversApi.listTables(db.server);
+            setTables(data || []);
         } catch (e) {
             notify(e.reason || e.message, "error");
+            setTables([]);
         } finally {
-            setTesting(false);
+            setLoadingTables(false);
         }
-    };
+    }, [db.server, notify]);
 
-    const handleCreateTable = async () => {
-        setCreating(true);
+    const fetchColumns = useCallback(async () => {
+        if (!db.server || !db.table) {
+            setColumns([]);
+            return;
+        }
+        setLoadingColumns(true);
         try {
-            await api.createDbTable(db);
-            notify(`Table '${db.table}' created`, "success");
+            const data = await serversApi.listColumns(db.server, db.table);
+            setColumns((data?.columns || []).filter(isNumericColumn));
         } catch (e) {
             notify(e.reason || e.message, "error");
+            setColumns([]);
         } finally {
-            setCreating(false);
+            setLoadingColumns(false);
         }
+    }, [db.server, db.table, notify]);
+
+    useEffect(() => {
+        fetchTables();
+    }, [fetchTables]);
+
+    useEffect(() => {
+        fetchColumns();
+    }, [fetchColumns]);
+
+    const handleServerChange = (e) => {
+        const name = e.target.value;
+        update("db.server", name);
+        update("db.table", "");
+        update("db.column", "");
     };
+
+    const handleTableChange = (e) => {
+        update("db.table", e.target.value);
+        update("db.column", "");
+    };
+
+    const handleColumnChange = (e) => {
+        update("db.column", e.target.value);
+    };
+
+    const hasServer = Boolean(db.server);
+    const hasTable = Boolean(db.table);
+    const groupedTables = useMemo(() => groupTablesByUser(tables), [tables]);
+    const tableInList = useMemo(
+        () =>
+            tables.some(
+                (t) => displayTableName(t.user || "SYS", t.name) === db.table
+            ),
+        [tables, db.table]
+    );
 
     return (
         <div className="form-card">
             <div className="form-card-header">
-                <Icon name="database" className="text-primary" />
-                Database Target
+                <span className="section-dot" />
+                Database
+                <Icon name="database" className="ml-auto text-primary" />
             </div>
 
             <div className="space-y-20">
                 <div>
-                    <label className="form-label">Host Address</label>
-                    <input type="text" value={db.host} onChange={(e) => update("db.host", e.target.value)} className="w-full" placeholder="127.0.0.1" />
+                    <label className="form-label">Database Server</label>
+                    <div className="flex gap-8">
+                        <select
+                            value={db.server || ""}
+                            onChange={handleServerChange}
+                            onMouseDown={() => onRefreshServers?.()}
+                            className="flex-1"
+                        >
+                            {servers.length === 0 && (
+                                <option value="">No servers configured</option>
+                            )}
+                            {!db.server && servers.length > 0 && (
+                                <option value="" disabled>
+                                    Select a database server...
+                                </option>
+                            )}
+                            {servers.map((s) => (
+                                <option key={s.name} value={s.name}>
+                                    {s.name}
+                                </option>
+                            ))}
+                        </select>
+                        <button
+                            type="button"
+                            onClick={() => onOpenServerSettings?.(true)}
+                            className="btn btn-primary-outline btn-icon shrink-0"
+                            title="Add database server"
+                        >
+                            <Icon name="add" />
+                        </button>
+                    </div>
                 </div>
 
                 <div className="grid grid-cols-2 gap-12">
                     <div>
-                        <label className="form-label">Port</label>
-                        <input type="number" value={db.port} onChange={(e) => update("db.port", e.target.value)} className="w-full" placeholder="5656" />
+                        <label className="form-label">Table</label>
+                        <select
+                            required
+                            value={db.table || ""}
+                            onChange={handleTableChange}
+                            onMouseDown={() => hasServer && fetchTables()}
+                            disabled={!hasServer}
+                            className="w-full"
+                        >
+                            <option value="" disabled>
+                                {!hasServer
+                                    ? "Select a database server first"
+                                    : loadingTables
+                                    ? "Loading..."
+                                    : "Select a table..."}
+                            </option>
+                            {db.table && !tableInList && (
+                                <option value={db.table}>{db.table}</option>
+                            )}
+                            {groupedTables.map(([user, list]) => (
+                                <optgroup key={user} label={user}>
+                                    {list.map((t) => {
+                                        const label = displayTableName(user, t.name);
+                                        return (
+                                            <option key={label} value={label}>
+                                                {label}
+                                            </option>
+                                        );
+                                    })}
+                                </optgroup>
+                            ))}
+                        </select>
                     </div>
+
                     <div>
-                        <label className="form-label">Table Name</label>
-                        <input type="text" required value={db.table} onChange={(e) => update("db.table", koToEn(e.target.value).replace(/[^a-zA-Z0-9_]/g, ""))} className="w-full" placeholder="TAG" />
+                        <label className="form-label">Value Column</label>
+                        <select
+                            required
+                            value={db.column || ""}
+                            onChange={handleColumnChange}
+                            onMouseDown={() => hasTable && fetchColumns()}
+                            disabled={!hasTable}
+                            className="w-full"
+                        >
+                            <option value="" disabled>
+                                {!hasTable
+                                    ? "Select a table first"
+                                    : loadingColumns
+                                    ? "Loading..."
+                                    : "Select a column..."}
+                            </option>
+                            {db.column && !columns.find((c) => c.name === db.column) && (
+                                <option value={db.column}>{db.column}</option>
+                            )}
+                            {columns.map((c) => (
+                                <option key={c.name} value={c.name}>
+                                    {c.name} ({c.type})
+                                </option>
+                            ))}
+                        </select>
                     </div>
                 </div>
-
-                <div>
-                    <label className="form-label">User</label>
-                    <input type="text" value={db.user} onChange={(e) => update("db.user", e.target.value)} className="w-full" placeholder="sys" />
-                </div>
-
-                <div>
-                    <label className="form-label">Password</label>
-                    <input type="password" value={db.password} onChange={(e) => update("db.password", e.target.value)} className="w-full" placeholder="Enter password" />
-                </div>
-
-                <div className="flex gap-8 pt-5 border-t border-border">
-                    <button type="button" disabled={!dbReady || testing} onClick={handleTestConnection} className="btn btn-sm btn-success">
-                        <Icon name="cable" className="icon-xs" />
-                        {testing ? "Testing..." : "Test Connection"}
-                    </button>
-                    <button type="button" disabled={!dbReady || creating} onClick={handleCreateTable} className="btn btn-sm btn-info">
-                        <Icon name="add_box" className="icon-xs" />
-                        {creating ? "Creating..." : "Create Table"}
-                    </button>
-                </div>
+                <p className="text-xs text-on-surface-tertiary mt-4 text-right">
+                    All node values will be written to the selected column.
+                </p>
             </div>
         </div>
     );
