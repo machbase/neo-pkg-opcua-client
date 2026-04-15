@@ -52,6 +52,22 @@ function collectorStart(name, reply) {
 module.exports = { collectorStart, ... };
 ```
 
+## Machbase TAG 테이블 제약
+
+### 대상 테이블
+이 패키지는 TAG 테이블(`TYPE = 6`)만 대상으로 한다. LOG 테이블은 수집·조회 대상에서 제외.
+
+### SUMMARIZED 컬럼과 null append
+`SUMMARIZED` 플래그가 지정된 컬럼에는 null을 append할 수 없다. Machbase 제약.
+
+`MachbaseStream`은 `open()` 시점에 `valueColumn`(수집값 컬럼) 외에 `SUMMARIZED` 컬럼이 존재하면 오류를 반환한다.
+
+```
+table 'TAG' has other SUMMARIZED columns that cannot be null: COL_NAME. Use one of these as valueColumn instead.
+```
+
+따라서 TAG 테이블에 SUMMARIZED 컬럼이 여러 개 있을 경우, collector 설정의 `valueColumn`에 반드시 해당 컬럼 중 하나를 지정해야 한다. 미지정 시 수집이 시작되지 않는다.
+
 ## 코드 스타일
 
 `try/catch`, `if`, object 리터럴은 한 줄로 압축하지 않는다.

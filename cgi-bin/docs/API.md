@@ -33,6 +33,7 @@
 | GET    | [/db/server/list](#get-dbserverlist) | DB 서버 목록 조회 |
 | GET    | [/db/connect?server=](#get-dbconnectserver) | DB 연결 테스트 |
 | POST   | [/db/table/create](#post-dbtablecreate) | TAG 테이블 생성 |
+| GET    | [/db/table/list?server=](#get-dbtablelistserver) | TAG 테이블 목록 조회 |
 | GET    | [/db/table/columns?server=&table=](#get-dbtablecolumnsservertable) | 테이블 컬럼 조회 |
 | GET    | [/log/list](#get-loglist) | 로그 파일 목록 조회 |
 | GET    | [/log/content?file=](#get-logcontentfile) | 로그 파일 내용 조회 |
@@ -370,6 +371,16 @@ CREATE TAG TABLE {table} (
 | 필드 누락 | `"xxx is required"` |
 | 해당 서버 없음 | `"server 'xxx' not found"` |
 | 테이블 이미 존재 | `"table 'xxx' already exists"` |
+
+---
+
+### GET /db/table/list?server=
+
+지정한 서버의 TAG 테이블 목록을 조회합니다.
+
+**응답 (성공):** `{ "ok": true, "data": [{ "name": "TAG" }, { "name": "SENSOR" }] }`
+
+**응답 (실패):** `{ "ok": false, "reason": "..." }`
 
 ---
 
