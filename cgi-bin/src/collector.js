@@ -30,11 +30,10 @@ class Collector {
     }
 
     _normalizeValue(value, node) {
-        if (typeof value === "boolean") {
-            value = value ? 1 : 0;
-        }
-        value = (value + (node.add != null ? node.add : 0)) * (node.multiply != null ? node.multiply : 1);
-        return value;
+        const num = typeof value === "boolean" ? (value ? 1 : 0) : Number(value);
+        const add = node.add != null ? node.add : 0;
+        const multiply = node.multiply != null ? node.multiply : 1;
+        return (num + add) * multiply;
     }
 
     _isDbOpen() {
@@ -46,7 +45,7 @@ class Collector {
             const { client, stream } = this._injectedDb;
             const err = stream.open(client, this._table, this._valueColumn);
             if (err) {
-                this._logger.error("db open failed", { error: err.message });
+                this._logger.warn("db open failed", { error: err.message });
                 return;
             }
             this._dbClient = client;
@@ -60,7 +59,7 @@ class Collector {
             const stream = new MachbaseStream();
             const err = stream.open(client, this._table, this._valueColumn);
             if (err) {
-                this._logger.error("db open failed", { error: err.message });
+                this._logger.warn("db open failed", { error: err.message });
                 try {
                     client.close();
                 } catch (_) {}
@@ -70,7 +69,7 @@ class Collector {
             this._dbStream = stream;
             this._logger.debug("db opened", { table: this._table, columns: this._dbStream.columnNames.join(', '), nameIdx: this._dbStream.nameIdx, timeIdx: this._dbStream.timeIdx, valueIdx: this._dbStream.valueIdx });
         } catch (e) {
-            this._logger.error("db open failed", { error: e.message });
+            this._logger.warn("db open failed", { error: e.message });
         }
     }
 
@@ -79,7 +78,7 @@ class Collector {
         if (this._dbStream) {
             const closeErr = this._dbStream.close();
             if (closeErr) {
-                this._logger.error("db stream close failed", { error: closeErr.message, table: this._table });
+                this._logger.warn("db stream close failed", { error: closeErr.message, table: this._table });
             }
             this._dbStream = null;
         }
@@ -114,7 +113,7 @@ class Collector {
         try {
             this._lastCollectedAtWriter(this.collectorName, ts.getTime(), (err) => {
                 if (err) {
-                    this._logger.warn("failed to update service detail", {
+                    this._logger.debug("failed to update service detail", {
                         name: this.collectorName,
                         error: err.message,
                     });
@@ -182,7 +181,7 @@ class Collector {
         } catch (e) {
             this._logger.error("collect error", { error: e.message });
             if (this._opcuaConnected) {
-                this._logger.debug("opcua disconnected", { endpoint: this.opcua.endpoint });
+                this._logger.warn("opcua disconnected", { endpoint: this.opcua.endpoint });
             }
             this.opcua.close();
             this._opcuaConnected = false;
