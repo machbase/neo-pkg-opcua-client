@@ -221,23 +221,23 @@ runner.run('Collector._isDbOpen', {
 // ── _normalizeValue ────────────────────────────────────────────────────────────
 
 runner.run('Collector._normalizeValue', (() => {
-    function norm(value, add, multiply) {
+    function norm(value, bias, multiplier) {
         const { c } = makeCollector();
-        return c._normalizeValue(value, { add, multiply });
+        return c._normalizeValue(value, { bias, multiplier });
     }
 
     return {
         // boolean
         'boolean true → 1': (t) => t.assertEqual(norm(true), 1),
         'boolean false → 0': (t) => t.assertEqual(norm(false), 0),
-        'boolean true with add and multiply': (t) => t.assertEqual(norm(true, 10, 2), 22),
-        'boolean false with add and multiply': (t) => t.assertEqual(norm(false, 10, 2), 20),
+        'boolean true with bias and multiplier': (t) => t.assertEqual(norm(true, 10, 2), 22),
+        'boolean false with bias and multiplier': (t) => t.assertEqual(norm(false, 10, 2), 20),
 
         // float
         'float value passes through': (t) => t.assertEqual(norm(3.14, 0, 1), 3.14),
-        'float with add': (t) => t.assertEqual(norm(1.5, 10000, 1), 10001.5),
-        'float with multiply': (t) => t.assertEqual(norm(2.0, 0, 3.5), 7.0),
-        'add and multiply order: (value + add) * multiply': (t) => t.assertEqual(norm(2, 3, 4), 20),
+        'float with bias': (t) => t.assertEqual(norm(1.5, 10000, 1), 10001.5),
+        'float with multiplier': (t) => t.assertEqual(norm(2.0, 0, 3.5), 7.0),
+        'bias and multiplier order: (value + bias) * multiplier': (t) => t.assertEqual(norm(2, 3, 4), 20),
 
         // int8
         'int8 min (-128)': (t) => t.assertEqual(norm(-128, 0, 1), -128),
@@ -260,15 +260,15 @@ runner.run('Collector._normalizeValue', (() => {
         'uint16 max (65535)': (t) => t.assertEqual(norm(65535, 0, 1), 65535),
         'uint32 max (4294967295)': (t) => t.assertEqual(norm(4294967295, 0, 1), 4294967295),
 
-        // add/multiply defaults
-        'add null treated as 0': (t) => t.assertEqual(norm(5, null, null), 5),
-        'add undefined treated as 0': (t) => t.assertEqual(norm(5, undefined, undefined), 5),
-        'add=10000 applied correctly': (t) => t.assertEqual(norm(5, 10000, 1), 10005),
-        'multiply=0.001 applied correctly': (t) => t.assertEqual(norm(1000, 0, 0.001), 1.0),
+        // bias/multiplier defaults
+        'bias null treated as 0': (t) => t.assertEqual(norm(5, null, null), 5),
+        'bias undefined treated as 0': (t) => t.assertEqual(norm(5, undefined, undefined), 5),
+        'bias=10000 applied correctly': (t) => t.assertEqual(norm(5, 10000, 1), 10005),
+        'multiplier=0.001 applied correctly': (t) => t.assertEqual(norm(1000, 0, 0.001), 1.0),
 
         // numeric string coercion
         'numeric string is coerced to number': (t) => t.assertEqual(norm('42', 0, 1), 42),
-        'numeric string with add': (t) => t.assertEqual(norm('5', 10000, 1), 10005),
+        'numeric string with bias': (t) => t.assertEqual(norm('5', 10000, 1), 10005),
 
         // NaN
         'non-numeric string produces NaN': (t) => t.assert(isNaN(norm('abc', 0, 1)), 'should be NaN'),

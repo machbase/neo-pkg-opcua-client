@@ -211,14 +211,14 @@ CREATE TAG TABLE ${table} (
 `_normalizeValue(value, node)` 동작:
 
 1. `boolean` → 1/0 변환, 그 외 → `Number(value)` 강제 변환
-2. `(num + node.add) * node.multiply` 적용 (add/multiply 미지정 시 기본값 0/1)
+2. `(num + node.bias) * node.multiplier` 적용 (bias/multiplier 미지정 시 기본값 0/1)
 
 `config.opcua.nodes[]` 선택 필드:
 
 | 필드 | 기본값 | 설명 |
 |------|--------|------|
-| `add` | `0` | 값에 더할 오프셋 |
-| `multiply` | `1` | 값에 곱할 배율 |
+| `bias` | `0` | 값에 더할 오프셋 |
+| `multiplier` | `1` | 값에 곱할 배율 |
 | `onChanged` | `false` | `true`이면 이전 값과 달라졌을 때만 append. Collector는 `_previousValues`로 직전 값을 추적하며, 모든 노드가 skip되면 `append()` 및 `_recordLastCollectedAt()` 미호출 |
 
 로그 레벨 정책:

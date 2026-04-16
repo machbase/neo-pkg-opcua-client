@@ -32,8 +32,8 @@ class Collector {
 
     _normalizeValue(value, node) {
         const num = typeof value === "boolean" ? (value ? 1 : 0) : Number(value);
-        const add = node.add != null ? node.add : 0;
-        const multiply = node.multiply != null ? node.multiply : 1;
+        const add = node.bias != null ? node.bias : 0;
+        const multiply = node.multiplier != null ? node.multiplier : 1;
         return (num + add) * multiply;
     }
 
