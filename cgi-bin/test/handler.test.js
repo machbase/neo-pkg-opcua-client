@@ -210,7 +210,7 @@ runner.run('Handler: collectorPost', {
         const H = makeHandler();
         mockCGI._configs['col-a'] = {};
         let result;
-        H.collectorPost('col-a', {}, (r) => { result = r; });
+        H.collectorPost('col-a', { opcua: {} }, (r) => { result = r; });
         t.assert(!result.ok, 'should not be ok');
         t.assert(result.reason.includes('already exists'));
     },

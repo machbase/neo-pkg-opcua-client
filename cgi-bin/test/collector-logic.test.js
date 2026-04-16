@@ -221,58 +221,61 @@ runner.run('Collector._isDbOpen', {
 // ── _normalizeValue ────────────────────────────────────────────────────────────
 
 runner.run('Collector._normalizeValue', (() => {
-    function norm(value, bias, multiplier) {
+    function norm(value, formula) {
+        const config = {
+            ...baseConfig,
+            opcua: { ...baseConfig.opcua, nodes: [{ nodeId: 'ns=1;s=Tag1', name: 'test', formula }] },
+        };
+        const { c } = makeCollector(config);
+        return c._normalizeValue(value, c.nodes[0]);
+    }
+
+    function normNoFormula(value) {
         const { c } = makeCollector();
-        return c._normalizeValue(value, { bias, multiplier });
+        return c._normalizeValue(value, { nodeId: 'ns=1;s=Tag1', name: 'test' });
     }
 
     return {
-        // boolean
-        'boolean true → 1': (t) => t.assertEqual(norm(true), 1),
-        'boolean false → 0': (t) => t.assertEqual(norm(false), 0),
-        'boolean true with bias and multiplier': (t) => t.assertEqual(norm(true, 10, 2), 22),
-        'boolean false with bias and multiplier': (t) => t.assertEqual(norm(false, 10, 2), 20),
+        // no formula — pass-through
+        'boolean true → 1': (t) => t.assertEqual(normNoFormula(true), 1),
+        'boolean false → 0': (t) => t.assertEqual(normNoFormula(false), 0),
+        'float value passes through': (t) => t.assertEqual(normNoFormula(3.14), 3.14),
+        'int8 min (-128)': (t) => t.assertEqual(normNoFormula(-128), -128),
+        'int8 max (127)': (t) => t.assertEqual(normNoFormula(127), 127),
+        'int16 min (-32768)': (t) => t.assertEqual(normNoFormula(-32768), -32768),
+        'int16 max (32767)': (t) => t.assertEqual(normNoFormula(32767), 32767),
+        'int32 min': (t) => t.assertEqual(normNoFormula(-2147483648), -2147483648),
+        'int32 max': (t) => t.assertEqual(normNoFormula(2147483647), 2147483647),
+        'int64 large positive': (t) => t.assertEqual(normNoFormula(9007199254740991), 9007199254740991),
+        'int64 large negative': (t) => t.assertEqual(normNoFormula(-9007199254740991), -9007199254740991),
+        'uint8 max (255)': (t) => t.assertEqual(normNoFormula(255), 255),
+        'uint16 max (65535)': (t) => t.assertEqual(normNoFormula(65535), 65535),
+        'uint32 max (4294967295)': (t) => t.assertEqual(normNoFormula(4294967295), 4294967295),
+        'numeric string is coerced to number': (t) => t.assertEqual(normNoFormula('42'), 42),
+        'non-numeric string produces NaN': (t) => t.assert(isNaN(normNoFormula('abc')), 'should be NaN'),
+        'null produces 0 (Number(null) === 0)': (t) => t.assertEqual(normNoFormula(null), 0),
 
-        // float
-        'float value passes through': (t) => t.assertEqual(norm(3.14, 0, 1), 3.14),
-        'float with bias': (t) => t.assertEqual(norm(1.5, 10000, 1), 10001.5),
-        'float with multiplier': (t) => t.assertEqual(norm(2.0, 0, 3.5), 7.0),
-        'bias and multiplier order: (value + bias) * multiplier': (t) => t.assertEqual(norm(2, 3, 4), 20),
+        // formula — basic
+        'formula: value * 2': (t) => t.assertEqual(norm(5, 'value * 2'), 10),
+        'formula: (value + 100) * 0.001': (t) => t.assertEqual(norm(1000, '(value + 100) * 0.001'), 1.1),
+        'formula: value / 4096 * 100': (t) => t.assertEqual(norm(4096, 'value / 4096 * 100'), 100),
+        'formula: boolean true → 1 then formula applied': (t) => t.assertEqual(norm(true, 'value * 10'), 10),
+        'formula: boolean false → 0 then formula applied': (t) => t.assertEqual(norm(false, 'value * 10'), 0),
+        'formula: Math.round allowed': (t) => t.assertEqual(norm(1.6, 'Math.round(value)'), 2),
 
-        // int8
-        'int8 min (-128)': (t) => t.assertEqual(norm(-128, 0, 1), -128),
-        'int8 max (127)': (t) => t.assertEqual(norm(127, 0, 1), 127),
+        // formula — empty/blank: treated same as no formula → pass-through
+        'empty formula string → pass-through': (t) => t.assertEqual(norm(5, ''), 5),
+        'blank formula string → pass-through': (t) => t.assertEqual(norm(5, '   '), 5),
 
-        // int16
-        'int16 min (-32768)': (t) => t.assertEqual(norm(-32768, 0, 1), -32768),
-        'int16 max (32767)': (t) => t.assertEqual(norm(32767, 0, 1), 32767),
-
-        // int32
-        'int32 min': (t) => t.assertEqual(norm(-2147483648, 0, 1), -2147483648),
-        'int32 max': (t) => t.assertEqual(norm(2147483647, 0, 1), 2147483647),
-
-        // int64 (JS safe integer range)
-        'int64 large positive': (t) => t.assertEqual(norm(9007199254740991, 0, 1), 9007199254740991),
-        'int64 large negative': (t) => t.assertEqual(norm(-9007199254740991, 0, 1), -9007199254740991),
-
-        // uint
-        'uint8 max (255)': (t) => t.assertEqual(norm(255, 0, 1), 255),
-        'uint16 max (65535)': (t) => t.assertEqual(norm(65535, 0, 1), 65535),
-        'uint32 max (4294967295)': (t) => t.assertEqual(norm(4294967295, 0, 1), 4294967295),
-
-        // bias/multiplier defaults
-        'bias null treated as 0': (t) => t.assertEqual(norm(5, null, null), 5),
-        'bias undefined treated as 0': (t) => t.assertEqual(norm(5, undefined, undefined), 5),
-        'bias=10000 applied correctly': (t) => t.assertEqual(norm(5, 10000, 1), 10005),
-        'multiplier=0.001 applied correctly': (t) => t.assertEqual(norm(1000, 0, 0.001), 1.0),
-
-        // numeric string coercion
-        'numeric string is coerced to number': (t) => t.assertEqual(norm('42', 0, 1), 42),
-        'numeric string with bias': (t) => t.assertEqual(norm('5', 10000, 1), 10005),
-
-        // NaN
-        'non-numeric string produces NaN': (t) => t.assert(isNaN(norm('abc', 0, 1)), 'should be NaN'),
-        'null produces 0 (Number(null) === 0)': (t) => t.assertEqual(norm(null, 0, 1), 0),
+        // formula — invalid formula: _formulaFn is null → pass-through
+        'invalid formula: compilation error → returns raw num': (t) => {
+            const config = {
+                ...baseConfig,
+                opcua: { ...baseConfig.opcua, nodes: [{ nodeId: 'ns=1;s=Tag1', name: 'test', formula: '??invalid??' }] },
+            };
+            const { c } = makeCollector(config);
+            return t.assertEqual(c._normalizeValue(5, c.nodes[0]), 5);
+        },
     };
 })());
 

@@ -28,13 +28,32 @@ class Collector {
         this._opcuaConnected = false;
         this._previousValues = {};
         this._logger = logger || new Logger();
+        this._compileFormulas();
+    }
+
+    _compileFormulas() {
+        this.nodes.forEach((node) => {
+            if (node.formula == null || String(node.formula).trim() === '') return;
+            try {
+                node._formulaFn = new Function('value', 'return (' + node.formula + ')');
+            } catch (e) {
+                this._logger.warn("invalid formula, fallback to identity", { node: node.name, formula: node.formula, error: e.message });
+                node._formulaFn = null;
+            }
+        });
     }
 
     _normalizeValue(value, node) {
         const num = typeof value === "boolean" ? (value ? 1 : 0) : Number(value);
-        const add = node.bias != null ? node.bias : 0;
-        const multiply = node.multiplier != null ? node.multiplier : 1;
-        return (num + add) * multiply;
+        if (node._formulaFn != null) {
+            try {
+                return node._formulaFn(num);
+            } catch (e) {
+                this._logger.warn("formula eval error", { node: node.name, error: e.message });
+                return NaN;
+            }
+        }
+        return num;
     }
 
     _isDbOpen() {
