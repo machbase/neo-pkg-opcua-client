@@ -14,6 +14,29 @@ function errorMessage(err) {
 
 // ── Collector CRUD ──────────────────────────────────────────────────────────
 
+const MIN_INTERVAL_MS = 1000;
+const DEFAULT_INTERVAL_MS = 1000;
+
+/**
+ * Validates and normalizes a collector config in-place.
+ * @param {object} config
+ * @returns {string|null} error message or null
+ */
+function validateConfig(config) {
+  if (!config.opcua) {
+    return 'config.opcua is required';
+  }
+  if (config.opcua.interval === undefined || config.opcua.interval === null) {
+    config.opcua.interval = DEFAULT_INTERVAL_MS;
+  }
+  const interval = Number(config.opcua.interval);
+  if (!Number.isFinite(interval) || interval < MIN_INTERVAL_MS) {
+    return `config.opcua.interval must be >= ${MIN_INTERVAL_MS} (ms)`;
+  }
+  config.opcua.interval = interval;
+  return null;
+}
+
 /**
  * POST /cgi-bin/api/collector
  * @param {string} name
@@ -21,6 +44,11 @@ function errorMessage(err) {
  * @param {function} reply
  */
 function collectorPost(name, config, reply) {
+  const validErr = validateConfig(config);
+  if (validErr) {
+    reply({ ok: false, reason: validErr });
+    return;
+  }
   if (CGI.getConfig(name)) {
     reply({
       ok: false,
