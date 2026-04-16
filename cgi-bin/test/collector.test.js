@@ -247,4 +247,69 @@ runner.run("Collector", {
     },
 });
 
+runner.run("Collector._normalizeValue", (() => {
+    function norm(value, add, multiply) {
+        const c = makeCollector().c;
+        return c._normalizeValue(value, { add, multiply });
+    }
+
+    const cases = {
+        // boolean
+        "boolean true → 1": (t) => t.assertEqual(norm(true), 1),
+        "boolean false → 0": (t) => t.assertEqual(norm(false), 0),
+        "boolean true + add/multiply": (t) => t.assertEqual(norm(true, 10, 2), 22),
+        "boolean false + add/multiply": (t) => t.assertEqual(norm(false, 10, 2), 20),
+
+        // float32 / float64
+        "float32 value": (t) => t.assertEqual(norm(3.14, 0, 1), 3.14),
+        "float64 value": (t) => t.assertEqual(norm(1.7976931348623157e+308, 0, 1), 1.7976931348623157e+308),
+        "float with add": (t) => t.assertEqual(norm(1.5, 10000, 1), 10001.5),
+        "float with multiply": (t) => t.assertEqual(norm(2.0, 0, 3.5), 7.0),
+        "float with add and multiply": (t) => t.assertEqual(norm(1.0, 1.0, 2.0), 4.0),
+
+        // int8 (-128 ~ 127)
+        "int8 min": (t) => t.assertEqual(norm(-128, 0, 1), -128),
+        "int8 max": (t) => t.assertEqual(norm(127, 0, 1), 127),
+
+        // int16 (-32768 ~ 32767)
+        "int16 min": (t) => t.assertEqual(norm(-32768, 0, 1), -32768),
+        "int16 max": (t) => t.assertEqual(norm(32767, 0, 1), 32767),
+
+        // int32 (-2147483648 ~ 2147483647)
+        "int32 min": (t) => t.assertEqual(norm(-2147483648, 0, 1), -2147483648),
+        "int32 max": (t) => t.assertEqual(norm(2147483647, 0, 1), 2147483647),
+
+        // int64 (JS number 정밀도 한계 내)
+        "int64 large positive": (t) => t.assertEqual(norm(9007199254740991, 0, 1), 9007199254740991),
+        "int64 large negative": (t) => t.assertEqual(norm(-9007199254740991, 0, 1), -9007199254740991),
+
+        // uint8 (0 ~ 255)
+        "uint8 min": (t) => t.assertEqual(norm(0, 0, 1), 0),
+        "uint8 max": (t) => t.assertEqual(norm(255, 0, 1), 255),
+
+        // uint16 (0 ~ 65535)
+        "uint16 max": (t) => t.assertEqual(norm(65535, 0, 1), 65535),
+
+        // uint32 (0 ~ 4294967295)
+        "uint32 max": (t) => t.assertEqual(norm(4294967295, 0, 1), 4294967295),
+
+        // uint64 (JS number 정밀도 한계 내)
+        "uint64 large": (t) => t.assertEqual(norm(9007199254740991, 0, 1), 9007199254740991),
+
+        // add/multiply 적용 검증
+        "add=10000 is applied": (t) => t.assertEqual(norm(5, 10000, 1), 10005),
+        "multiply=0.001 is applied": (t) => t.assertEqual(norm(1000, 0, 0.001), 1.0),
+        "add and multiply order: (value + add) * multiply": (t) => t.assertEqual(norm(2, 3, 4), 20),
+
+        // add/multiply 미지정 시 기본값
+        "add null uses 0": (t) => t.assertEqual(norm(5, null, null), 5),
+        "add undefined uses 0": (t) => t.assertEqual(norm(5, undefined, undefined), 5),
+
+        // numeric string (OPC UA에서 string으로 넘어오는 경우)
+        "numeric string is coerced": (t) => t.assertEqual(norm("42", 0, 1), 42),
+        "numeric string with add": (t) => t.assertEqual(norm("5", 10000, 1), 10005),
+    };
+    return cases;
+})());
+
 runner.summary();
