@@ -70,7 +70,8 @@ cgi-bin/
 │   │       ├── list.js           # GET    /cgi-bin/api/db/table/list?server=xxx
 │   │       └── columns.js        # GET    /cgi-bin/api/db/table/columns?server=xxx&table=xxx
 │   ├── log/
-│   │   ├── list.js               # GET    /cgi-bin/api/log/list
+│   │   ├── all.js                # GET    /cgi-bin/api/log/all
+│   │   ├── list.js               # GET    /cgi-bin/api/log/list?name=xxx
 │   │   ├── content.js            # GET    /cgi-bin/api/log/content?name=xxx
 │   │   └── content/
 │   │       └── all.js            # GET    /cgi-bin/api/log/content/all?name=xxx

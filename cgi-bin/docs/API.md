@@ -46,7 +46,8 @@
 | POST   | [/db/table/create](#post-dbtablecreate) | TAG 테이블 생성 |
 | GET    | [/db/table/list?server=](#get-dbtablelistserver) | TAG 테이블 목록 조회 |
 | GET    | [/db/table/columns?server=&table=](#get-dbtablecolumnsservertable) | 테이블 컬럼 조회 |
-| GET    | [/log/list](#get-loglist) | 로그 파일 목록 조회 |
+| GET    | [/log/all](#get-logall) | 패키지 전체 로그 파일 목록 조회 |
+| GET    | [/log/list?name=](#get-loglistname) | 특정 collector 로그 파일 목록 조회 |
 | GET    | [/log/content?name=](#get-logcontentname) | 로그 파일 내용 조회 (줄 범위 지정) |
 | GET    | [/log/content/all?name=](#get-logcontentallname) | 로그 파일 전체 내용 조회 |
 | GET    | [/opcua/read?endpoint=&nodes=](#get-opcuareadendpointnodes) | OPC UA 노드 읽기 |
@@ -654,9 +655,46 @@ CREATE TAG TABLE {table} (
 
 ## 로그
 
-### GET /log/list
+### GET /log/all
 
-로그 파일 목록을 반환합니다. 파일이 없으면 빈 배열입니다.
+패키지 전체 로그 파일 목록을 반환합니다. collector 구분 없이 모든 `.log` 파일을 반환합니다. 파일이 없으면 빈 배열입니다.
+
+**응답 (성공)**
+
+```json
+{
+  "ok": true,
+  "data": {
+    "files": [
+      { "name": "collector-a.log",                    "size": 4096     },
+      { "name": "collector-a_20260415_034234.log",    "size": 10485760 },
+      { "name": "collector-b.log",                    "size": 2048     }
+    ]
+  }
+}
+```
+
+| 필드 | 설명 |
+|------|------|
+| `data.files` | `.log` 파일 정보 목록 (이름순 정렬). 디렉토리가 없으면 빈 배열 |
+| `data.files[].name` | 파일 이름 |
+| `data.files[].size` | 파일 크기 (bytes) |
+
+**응답 (실패)**
+
+| 조건 | reason |
+|------|--------|
+| 디렉토리 읽기 실패 (권한 등) | 시스템 오류 메시지 |
+
+---
+
+### GET /log/list?name=
+
+특정 collector에 속한 로그 파일 목록을 반환합니다. 현재 로그(`{name}.log`)와 rotated 파일(`{name}_YYYYMMDD_HHMMSS.log`)만 포함합니다. 파일이 없으면 빈 배열입니다.
+
+| 파라미터 | 필수 | 설명 |
+|----------|------|------|
+| `name` | Y | collector 이름 |
 
 **응답 (성공)**
 
@@ -682,6 +720,7 @@ CREATE TAG TABLE {table} (
 
 | 조건 | reason |
 |------|--------|
+| `name` 누락 | `"name is required"` |
 | 디렉토리 읽기 실패 (권한 등) | 시스템 오류 메시지 |
 
 ---
