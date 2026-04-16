@@ -26,8 +26,14 @@ runner.run("Logger", {
 
     "_format contains key=value pairs": (t) => {
         const logger = new Logger({ level: "debug" });
+        const line = logger._format("error", "stage", { code: "E001" });
+        t.assert(line.indexOf("code=E001") >= 0, "should contain key=value");
+    },
+
+    "_format quotes values that contain spaces": (t) => {
+        const logger = new Logger({ level: "debug" });
         const line = logger._format("error", "stage", { error: "bad input" });
-        t.assert(line.indexOf("error=bad input") >= 0, "should contain key=value");
+        t.assert(line.indexOf('error="bad input"') >= 0, "value with space should be double-quoted");
     },
 
     "_format quotes values with spaces": (t) => {
@@ -55,10 +61,15 @@ runner.run("Logger", {
         t.assertEqual(logger._minLevel, 0, "minLevel should be 0 (debug)");
     },
 
-    "trace level is below debug": (t) => {
-        const logger = new Logger({ level: "debug" });
-        // LEVELS.trace = -1
-        t.assert(-1 < logger._minLevel === false, "trace (-1) is below debug (0)");
+    "trace level has minLevel -1": (t) => {
+        const logger = new Logger({ level: "trace" });
+        t.assertEqual(logger._minLevel, -1, "minLevel should be -1 (trace)");
+    },
+
+    "trace minLevel is below debug minLevel": (t) => {
+        const trace = new Logger({ level: "trace" });
+        const debug = new Logger({ level: "debug" });
+        t.assert(trace._minLevel < debug._minLevel, "trace (-1) should be below debug (0)");
     },
 
     "disabled logger sets _disabled flag": (t) => {
@@ -81,10 +92,10 @@ runner.run("Logger", {
         t.assertEqual(logger._maxFiles, 10, "maxFiles 0 should fall back to 10");
     },
 
-    "_activeFilePath returns name.log": (t) => {
-        const logger = new Logger({});
+    "_activeFilePath returns <name>.log": (t) => {
+        const logger = new Logger({}, { name: "my-collector" });
         const p = logger._activeFilePath();
-        t.assert(p.endsWith("repli.log"), "active file should be repli.log");
+        t.assert(p.endsWith("my-collector.log"), "active file should use options.name as stem");
     },
 
     "init() replaces singleton instance": (t) => {
