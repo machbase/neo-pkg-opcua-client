@@ -90,7 +90,13 @@ neo-tools/
     │   │   ├── connect.js      # GET    /cgi-bin/api/db/connect?server=xxx
     │   │   └── table/
     │   │       ├── create.js   # POST   /cgi-bin/api/db/table/create
+    │   │       ├── list.js     # GET    /cgi-bin/api/db/table/list?server=xxx
     │   │       └── columns.js  # GET    /cgi-bin/api/db/table/columns?server=xxx&table=xxx
+    │   ├── log/
+    │   │   ├── list.js         # GET    /cgi-bin/api/log/list
+    │   │   ├── content.js      # GET    /cgi-bin/api/log/content?name=xxx
+    │   │   └── content/
+    │   │       └── all.js      # GET    /cgi-bin/api/log/content/all?name=xxx
     │   └── opcua/
     │       ├── read.js         # GET    /cgi-bin/api/opcua/read?endpoint=xxx&nodes=id1,id2
     │       ├── write.js        # POST   /cgi-bin/api/opcua/write
@@ -109,6 +115,7 @@ neo-tools/
     │   ├── db/
     │   │   ├── client.js           # MachbaseClient (connect / query / close)
     │   │   ├── stream.js           # MachbaseStream (open / append / close)
+    │   │   ├── table.js            # TagTable / LogTable / TagDataTable
     │   │   └── types.js            # Column, TableSchema, ColumnType 등
     │   └── opcua/
     │       └── opcua-client.js     # OpcuaClient (open/read/write/browse/browseNext/close)
@@ -156,8 +163,9 @@ machbase-neo jsh -v /app=/path/to/neo-tools /app/cgi-bin/neo-collector.js /app/c
 | GET | `/cgi-bin/api/db/connect?server=xxx` | DB 접속 유효성 검사 |
 | POST | `/cgi-bin/api/db/table/create` | TAG 테이블 생성 (body: `{ server, table }`) |
 | GET | `/cgi-bin/api/db/table/columns?server=xxx&table=xxx` | 테이블 컬럼 목록 조회 |
-| GET | `/cgi-bin/api/log/list` | 로그 파일 목록 조회 (name, size, lines 포함) |
+| GET | `/cgi-bin/api/log/list` | 로그 파일 목록 조회 (name, size 포함) |
 | GET | `/cgi-bin/api/log/content?name=xxx` | 로그 파일 내용 조회 (start/end 줄 범위 지원) |
+| GET | `/cgi-bin/api/log/content/all?name=xxx` | 로그 파일 전체 내용 조회 |
 | GET | `/cgi-bin/api/opcua/read?endpoint=xxx&nodes=id1,id2` | OPC UA 노드 일회성 읽기 |
 | POST | `/cgi-bin/api/opcua/write` | OPC UA 노드 일회성 쓰기 (body: `{ endpoint, writes: [{ node, value }] }`) |
 | POST | `/cgi-bin/api/opcua/node/descendants` | OPC UA 노드 BFS 하위 탐색 (body: `{ endpoint, node }`) |

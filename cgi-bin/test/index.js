@@ -2,10 +2,9 @@ const process = require("process");
 
 const suites = [
     "./logger.test.js",
-    "./opcua-client.test.js",
-    "./machbase-client.test.js",
     "./machbase-stream.test.js",
-    "./collector.test.js",
+    "./types.test.js",
+    "./collector-logic.test.js",
     "./handler.test.js",
 ];
 

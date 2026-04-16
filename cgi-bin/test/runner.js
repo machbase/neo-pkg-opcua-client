@@ -30,6 +30,14 @@ class TestRunner {
         }
     }
 
+    assertDeepEqual(actual, expected, message) {
+        const a = JSON.stringify(actual);
+        const e = JSON.stringify(expected);
+        if (a !== e) {
+            throw new Error((message || "assertDeepEqual") + " => expected " + e + ", got " + a);
+        }
+    }
+
     assertThrows(fn, expectedMessage) {
         try {
             fn();

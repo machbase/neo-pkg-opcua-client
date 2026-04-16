@@ -144,6 +144,23 @@ runner.run("MachbaseStream", {
         t.assertNull(stream.stream, "stream should be null even after flush error");
     },
 
+    "append() writes multiple rows in order": (t) => {
+        const mock = makeMockClient();
+        const stream = new MachbaseStream();
+        stream.open(mock, "TAG", "VALUE");
+        const ts1 = new Date(1000);
+        const ts2 = new Date(2000);
+        stream.append([
+            ["sensor.a", ts1, 1.1],
+            ["sensor.b", ts2, 2.2],
+        ]);
+        t.assertEqual(mock._appender.appended.length, 2, "two rows should be written");
+        t.assertEqual(mock._appender.appended[0][0], "sensor.a", "first row NAME");
+        t.assertEqual(mock._appender.appended[0][2], 1.1,        "first row VALUE");
+        t.assertEqual(mock._appender.appended[1][0], "sensor.b", "second row NAME");
+        t.assertEqual(mock._appender.appended[1][2], 2.2,        "second row VALUE");
+    },
+
     "append() returns error when stream is not open": (t) => {
         const stream = new MachbaseStream();
         const err = stream.append([["tag", new Date(), 1.0]]);

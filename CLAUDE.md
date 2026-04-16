@@ -1,5 +1,17 @@
 # CLAUDE.md
 
+## Skills 우선순위
+
+`custom-` 접두사 skill은 같은 맥락의 범용 skill보다 항상 우선 적용한다.
+
+| 범용 skill | 우선 적용 custom skill |
+|---|---|
+| `api-design` | `custom-cgi-conventions` |
+| `coding-standards` | `custom-js-style` |
+| `backend-patterns` | `custom-jsh-guidelines` |
+
+범용 skill은 대응되는 `custom-` skill이 없는 영역에서만 참조한다.
+
 ## 프로젝트 개요
 
 Machbase Neo JSH 환경에서 OPC UA 서버 데이터를 주기적으로 읽어 Machbase TAG 테이블에 적재하는 collector 패키지.
@@ -59,7 +71,9 @@ cgi-bin/
 │   │       └── columns.js        # GET    /cgi-bin/api/db/table/columns?server=xxx&table=xxx
 │   ├── log/
 │   │   ├── list.js               # GET    /cgi-bin/api/log/list
-│   │   └── content.js            # GET    /cgi-bin/api/log/content?name=xxx
+│   │   ├── content.js            # GET    /cgi-bin/api/log/content?name=xxx
+│   │   └── content/
+│   │       └── all.js            # GET    /cgi-bin/api/log/content/all?name=xxx
 │   └── opcua/
 │       ├── read.js               # GET    /cgi-bin/api/opcua/read?endpoint=&nodes=
 │       ├── write.js              # POST   /cgi-bin/api/opcua/write
@@ -192,6 +206,25 @@ CREATE TAG TABLE ${table} (
 - `selectColumnsByTableId(tableId)` 로 컬럼 조회
 - TODO: `database.user.table` 3단계 형식은 미지원 — Machbase가 지원할 경우 추가 필요
 
+## Collector 값 정규화 메모
+
+`_normalizeValue(value, node)` 동작:
+
+1. `boolean` → 1/0 변환, 그 외 → `Number(value)` 강제 변환
+2. `(num + node.bias) * node.multiplier` 적용 (bias/multiplier 미지정 시 기본값 0/1)
+
+`config.opcua.nodes[]` 선택 필드:
+
+| 필드 | 기본값 | 설명 |
+|------|--------|------|
+| `bias` | `0` | 값에 더할 오프셋 |
+| `multiplier` | `1` | 값에 곱할 배율 |
+| `onChanged` | `false` | `true`이면 이전 값과 달라졌을 때만 append. Collector는 `_previousValues`로 직전 값을 추적하며, 모든 노드가 skip되면 `append()` 및 `_recordLastCollectedAt()` 미호출 |
+
+로그 레벨 정책:
+- `db open/close failed` 는 **warn** 레벨 사용 (error 아님)
+- 재연결 가능한 일시 장애이므로 fatal 처리하지 않는다
+
 ## Service 관련 구현 메모
 
 - service prefix는 `_opc_`
@@ -262,7 +295,7 @@ collector-a_20260408_034208.log
 
 ## 다음 작업자 체크리스트
 
-1. `README.md`, `AGENTS.md`, `CLAUDE.md`, `CLAUDE.md` 를 먼저 읽는다.
+1. `README.md`, `CLAUDE.md` 를 먼저 읽는다.
 2. `machbase-neo` 실행 경로를 사용자에게 확인한다.
 3. 현재 환경의 실제 JSH 호출 형식을 확인한다.
 4. config 이름과 service 이름 `_opc_${name}` 을 구분한다.

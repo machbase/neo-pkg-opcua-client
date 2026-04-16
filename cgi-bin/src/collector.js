@@ -26,13 +26,14 @@ class Collector {
         });
         this.timer = null;
         this._opcuaConnected = false;
+        this._previousValues = {};
         this._logger = logger || new Logger();
     }
 
     _normalizeValue(value, node) {
         const num = typeof value === "boolean" ? (value ? 1 : 0) : Number(value);
-        const add = node.add != null ? node.add : 0;
-        const multiply = node.multiply != null ? node.multiply : 1;
+        const add = node.bias != null ? node.bias : 0;
+        const multiply = node.multiplier != null ? node.multiplier : 1;
         return (num + add) * multiply;
     }
 
@@ -159,14 +160,26 @@ class Collector {
                 const ts = r.sourceTimestamp ? new Date(r.sourceTimestamp) : new Date();
                 const rawValue = r.value;
                 const value = this._normalizeValue(rawValue, node);
-                if (lastTs === null || ts.getTime() > lastTs.getTime()) {
-                    lastTs = ts;
-                }
                 const fields = { nodeId: node.nodeId, name: node.name, value, ts: ts.toISOString() };
                 if (rawValue !== value) fields.rawValue = rawValue;
                 this._logger.trace("read", fields);
+                if (node.onChanged === true) {
+                    if (node.name in this._previousValues && Object.is(this._previousValues[node.name], value)) {
+                        this._logger.trace("skip unchanged", { name: node.name, value });
+                        return;
+                    }
+                    this._previousValues[node.name] = value;
+                }
+                if (lastTs === null || ts.getTime() > lastTs.getTime()) {
+                    lastTs = ts;
+                }
                 matrix.push([node.name, ts, value]);
             });
+
+            if (matrix.length === 0) {
+                this._logger.trace("all nodes skipped, nothing to append");
+                return;
+            }
 
             for (const row of matrix) {
                 this._logger.trace("append", { name: row[0], time: row[1] instanceof Date ? row[1].toISOString() : String(row[1]), value: row[2] });
@@ -186,6 +199,7 @@ class Collector {
             this.opcua.close();
             this._opcuaConnected = false;
             this._closeDb();
+            this._previousValues = {};
         }
     }
 
