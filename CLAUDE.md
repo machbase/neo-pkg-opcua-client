@@ -212,15 +212,15 @@ CREATE TAG TABLE ${table} (
 `_normalizeValue(value, node)` 동작:
 
 1. `boolean` → 1/0 변환, 그 외 → `Number(value)` 강제 변환
-2. `node.formula`가 있으면 컴파일된 함수(`_formulaFn`)로 변환. 없으면 그대로 반환
-
-formula 컴파일은 생성자(`_compileFormulas`)에서 한 번만 수행. 컴파일 실패 시 warn 로그 후 `_formulaFn = null` (→ pass-through).
+2. `(num + node.bias) * node.multiplier` 적용 (bias/multiplier 미지정 시 기본값 0/1)
 
 `config.opcua.nodes[]` 선택 필드:
 
 | 필드 | 기본값 | 설명 |
 |------|--------|------|
-| `formula` | (없음) | JS 표현식 문자열. `value`는 raw 숫자값. 예: `"(value + 100) * 0.001"` |
+| `bias` | `0` | 값에 더할 오프셋 |
+| `multiplier` | `1` | 값에 곱할 배율 |
+| `calcOrder` | `"bm"` | 계산 순서. `"bm"`: `(value + bias) * multiplier` / `"mb"`: `value * multiplier + bias` |
 | `onChanged` | `false` | `true`이면 이전 값과 달라졌을 때만 append. Collector는 `_previousValues`로 직전 값을 추적하며, 모든 노드가 skip되면 `append()` 및 `_recordLastCollectedAt()` 미호출 |
 
 로그 레벨 정책:
