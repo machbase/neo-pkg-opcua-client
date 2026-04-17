@@ -128,8 +128,7 @@ class MockOpcuaClient {
         this.readError = null;
         this.writeResult = null;
         this.writeError = null;
-        this.browseResult = [{ references: [] }];
-        this.browseNextResult = [{ references: [] }];
+        this.childrenResult = [];
     }
     open() { this.opened = true; return this.openResult; }
     close() { this.closed = true; }
@@ -141,8 +140,7 @@ class MockOpcuaClient {
         if (this.writeError) throw new Error(this.writeError);
         return this.writeResult;
     }
-    browse(_req) { return this.browseResult; }
-    browseNext(_req) { return this.browseNextResult; }
+    children(_req) { return this.childrenResult; }
 }
 
 // ── Module injection ─────────────────────────────────────────────────────────
@@ -780,56 +778,36 @@ runner.run('Handler: nodeChildren', {
 
     'returns all descendants via BFS': (t) => {
         const H = makeHandler();
-        let browseCallCount = 0;
-        mockOpcuaClient.browse = (req) => {
-            browseCallCount++;
-            if (req.nodes[0] === 'ns=0;i=85') {
-                return [{ references: [{ NodeId: 'ns=1;s=C1' }, { NodeId: 'ns=1;s=C2' }] }];
+        let childrenCallCount = 0;
+        mockOpcuaClient.children = (req) => {
+            childrenCallCount++;
+            if (req.node === 'ns=0;i=85') {
+                return [{ NodeId: 'ns=1;s=C1' }, { NodeId: 'ns=1;s=C2' }];
             }
-            return [{ references: [] }];
+            return [];
         };
         let result;
         H.nodeChildren({ endpoint: 'opc.tcp://h:4840', node: 'ns=0;i=85' }, (r) => { result = r; });
         t.assert(result.ok, 'should be ok');
         t.assertEqual(result.data.length, 2);
-        t.assertEqual(browseCallCount, 3, 'root + 2 children');
+        t.assertEqual(childrenCallCount, 3, 'root + 2 children');
         t.assert(mockOpcuaClient.closed, 'client should be closed');
-    },
-
-    'handles continuationPoint': (t) => {
-        const H = makeHandler();
-        let browseNextCalled = false;
-        mockOpcuaClient.browse = (req) => {
-            if (req.nodes[0] === 'ns=0;i=85') {
-                return [{ references: [{ NodeId: 'ns=1;s=C1' }], continuationPoint: 'cp1' }];
-            }
-            return [{ references: [] }];
-        };
-        mockOpcuaClient.browseNext = (_req) => {
-            browseNextCalled = true;
-            return [{ references: [{ NodeId: 'ns=1;s=C2' }], continuationPoint: null }];
-        };
-        let result;
-        H.nodeChildren({ endpoint: 'opc.tcp://h:4840', node: 'ns=0;i=85' }, (r) => { result = r; });
-        t.assert(result.ok, 'should be ok');
-        t.assert(browseNextCalled, 'browseNext should be called for continuationPoint');
-        t.assertEqual(result.data.length, 2);
     },
 
     'does not revisit already-visited nodes': (t) => {
         const H = makeHandler();
-        let browseCallCount = 0;
-        mockOpcuaClient.browse = (req) => {
-            browseCallCount++;
-            if (req.nodes[0] === 'ns=0;i=85') {
-                return [{ references: [{ NodeId: 'ns=0;i=85' }, { NodeId: 'ns=1;s=C1' }] }];
+        let childrenCallCount = 0;
+        mockOpcuaClient.children = (req) => {
+            childrenCallCount++;
+            if (req.node === 'ns=0;i=85') {
+                return [{ NodeId: 'ns=0;i=85' }, { NodeId: 'ns=1;s=C1' }];
             }
-            return [{ references: [] }];
+            return [];
         };
         let result;
         H.nodeChildren({ endpoint: 'opc.tcp://h:4840', node: 'ns=0;i=85' }, (r) => { result = r; });
         t.assert(result.ok, 'should be ok');
-        t.assertEqual(browseCallCount, 2, 'root once, C1 once, root not revisited');
+        t.assertEqual(childrenCallCount, 2, 'root once, C1 once, root not revisited');
     },
 });
 
