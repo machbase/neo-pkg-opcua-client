@@ -227,11 +227,13 @@ runner.run('Collector._normalizeValue', (() => {
     }
 
     return {
-        // boolean
+        // boolean — clamped to 0 or 1 after calculation
         'boolean true → 1': (t) => t.assertEqual(norm(true), 1),
         'boolean false → 0': (t) => t.assertEqual(norm(false), 0),
-        'boolean true with bias and multiplier': (t) => t.assertEqual(norm(true, 10, 2), 22),
-        'boolean false with bias and multiplier': (t) => t.assertEqual(norm(false, 10, 2), 20),
+        'boolean true with bias and multiplier → result > 1, clamped to 1': (t) => t.assertEqual(norm(true, 10, 2), 1),
+        'boolean false with positive bias → result > 1, clamped to 1': (t) => t.assertEqual(norm(false, 10, 2), 1),
+        'boolean true with large negative bias → result < 0, clamped to 0': (t) => t.assertEqual(norm(true, -5, 2), 0),
+        'boolean false with negative bias → result < 0, clamped to 0': (t) => t.assertEqual(norm(false, -1, 2), 0),
 
         // float
         'float value passes through': (t) => t.assertEqual(norm(3.14, 0, 1), 3.14),
@@ -278,8 +280,8 @@ runner.run('Collector._normalizeValue', (() => {
         'calcOrder bm (default): (value + bias) * multiplier': (t) => t.assertEqual(norm(2, 3, 4, 'bm'), 20),
         'calcOrder mb: value * multiplier + bias': (t) => t.assertEqual(norm(2, 3, 4, 'mb'), 11),
         'calcOrder undefined defaults to bm': (t) => t.assertEqual(norm(2, 3, 4), 20),
-        'calcOrder mb with boolean true': (t) => t.assertEqual(norm(true, 10, 2, 'mb'), 12),
-        'calcOrder mb with boolean false': (t) => t.assertEqual(norm(false, 10, 2, 'mb'), 10),
+        'calcOrder mb with boolean true → result > 1, clamped to 1': (t) => t.assertEqual(norm(true, 10, 2, 'mb'), 1),
+        'calcOrder mb with boolean false with positive bias → result > 1, clamped to 1': (t) => t.assertEqual(norm(false, 10, 2, 'mb'), 1),
     };
 })());
 
