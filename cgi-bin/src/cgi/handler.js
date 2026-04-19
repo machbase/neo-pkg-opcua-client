@@ -832,12 +832,28 @@ function opcuaWrite(endpoint, writes, reply) {
  * @param {function} reply
  */
 function _browseAll(client, nodeId, nodeClassMask) {
-  const request = { node: nodeId };
+  const request = { nodes: [nodeId] };
   if (typeof nodeClassMask === 'number') {
     request.nodeClassMask = nodeClassMask;
   }
-  const results = client.children(request);
-  return results || [];
+  const results = client.browse(request);
+  const first = results && results[0] ? results[0] : {};
+  const references = first.references ? first.references.slice() : [];
+  let continuationPoint = first.continuationPoint;
+  while (continuationPoint) {
+    const nextResults = client.browseNext({
+      continuationPoints: [continuationPoint],
+      releaseContinuationPoints: false,
+    });
+    const next = nextResults && nextResults[0] ? nextResults[0] : {};
+    if (next.references && next.references.length > 0) {
+      for (let i = 0; i < next.references.length; i++) {
+        references.push(next.references[i]);
+      }
+    }
+    continuationPoint = next.continuationPoint;
+  }
+  return references;
 }
 
 function nodeChildren(body, reply) {
