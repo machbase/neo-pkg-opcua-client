@@ -1,6 +1,8 @@
 'use strict';
 
 const path = require('path');
+const fs = require('fs');
+const os = require('os');
 const TestRunner = require('./runner.js');
 
 const ROOT = path.resolve(__dirname, '..');
@@ -97,7 +99,7 @@ function loadCollector() {
     };
     require.cache[cgiUtilPath] = {
         id: cgiUtilPath, filename: cgiUtilPath, loaded: true,
-        exports: { CGI: { getServerConfig: () => mockDbConf } },
+        exports: { CGI: { getServerConfig: () => mockDbConf }, DATA_DIR: os.tmpdir() },
     };
 
     delete require.cache[collectorPath];
@@ -126,6 +128,7 @@ const baseConfig = {
 };
 
 function makeCollector(configOverride) {
+    try { fs.unlinkSync(path.join(os.tmpdir(), 'collector-a.last-time.json')); } catch (_) {}
     const Collector = loadCollector();
     const opcuaClient = new MockOpcuaClient();
     const dbClient    = new MockMachbaseClient();
@@ -136,6 +139,7 @@ function makeCollector(configOverride) {
         opcuaClient,
         db: { client: dbClient, stream: dbStream },
         collectorName: 'collector-a',
+
         lastCollectedAtWriter: (name, value, cb) => {
             detailWrites.push({ name, value });
             if (cb) cb(null);
@@ -403,6 +407,56 @@ runner.run('Collector.collect — onChanged', {
         t.assertEqual(dbStream.appended.length, 1, 'should append after _previousValues reset');
         t.assertEqual(dbStream.appended[0].value, 5.0);
         clearInterval(c.timer);
+    },
+});
+
+// ── collect — _persistLastCollectedAt ─────────────────────────────────────────
+
+runner.run('Collector._persistLastCollectedAt', {
+    'close() 후 last-time 파일 생성': (t) => {
+        const collectorName = `test-last-time-a-${Date.now()}`;
+        const lastTimeFile = path.join(os.tmpdir(), `${collectorName}.last-time.json`);
+        try {
+            const Collector = loadCollector();
+            const node = { nodeId: 'ns=1;s=Tag1', name: 'sensor.tag1' };
+            const config = { ...baseConfig, opcua: { ...baseConfig.opcua, nodes: [node] } };
+            const opcuaClient = new MockOpcuaClient();
+            opcuaClient.readResult = [{ value: 5.0, sourceTimestamp: Date.now() }];
+            const dbStream = new MockMachbaseStream();
+            const c = new Collector(config, {
+                opcuaClient,
+                db: { client: new MockMachbaseClient(), stream: dbStream },
+                collectorName,
+                lastCollectedAtWriter: (_n, _v, cb) => { if (cb) cb(null); },
+            });
+            c.start();
+            c.collect();
+            c.close();
+            t.assert(fs.existsSync(lastTimeFile), 'last-time 파일이 생성되어야 한다');
+            const saved = JSON.parse(fs.readFileSync(lastTimeFile, 'utf8'));
+            t.assert(typeof saved.ts === 'number' && saved.ts > 0, 'ts는 양수 number여야 한다');
+        } finally {
+            try { fs.unlinkSync(lastTimeFile); } catch (_) {}
+        }
+    },
+
+    '수집 없이 close()하면 파일 미생성': (t) => {
+        const collectorName = `test-last-time-b-${Date.now()}`;
+        const lastTimeFile = path.join(os.tmpdir(), `${collectorName}.last-time.json`);
+        try {
+            const Collector = loadCollector();
+            const c = new Collector(baseConfig, {
+                opcuaClient: new MockOpcuaClient(),
+                db: { client: new MockMachbaseClient(), stream: new MockMachbaseStream() },
+                collectorName,
+                lastCollectedAtWriter: (_n, _v, cb) => { if (cb) cb(null); },
+            });
+            c.start();
+            c.close();
+            t.assert(!fs.existsSync(lastTimeFile), '_lastCollectedAt 없으면 파일 미생성');
+        } finally {
+            try { fs.unlinkSync(lastTimeFile); } catch (_) {}
+        }
     },
 });
 

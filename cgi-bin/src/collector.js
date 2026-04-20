@@ -1,8 +1,10 @@
+const fs = require("fs");
+const path = require("path");
 const OpcuaClient = require("./opcua/opcua-client.js");
 const { MachbaseClient } = require("./db/client.js");
 const { MachbaseStream } = require("./db/stream.js");
 const Service = require("./cgi/service.js");
-const { CGI } = require("./cgi/cgi_util.js");
+const { CGI, DATA_DIR } = require("./cgi/cgi_util.js");
 const { Logger } = require("./lib/logger.js");
 
 class Collector {
@@ -27,6 +29,7 @@ class Collector {
         this.timer = null;
         this._opcuaConnected = false;
         this._previousValues = {};
+        this._lastCollectedAt = null;
         this._logger = logger || new Logger();
     }
 
@@ -99,6 +102,62 @@ class Collector {
         }
     }
 
+    _persistLastCollectedAt() {
+        if (!this.collectorName || !this._lastCollectedAt) {
+            return;
+        }
+        const file = path.join(DATA_DIR, `${this.collectorName}.last-time.json`);
+        try {
+            fs.writeFileSync(file, JSON.stringify({ ts: this._lastCollectedAt.getTime() }));
+        } catch (_) {}
+    }
+
+    _loadInitialValuesFromDb() {
+        const onChangedNodes = this.nodes.filter(n => n.onChanged === true);
+        if (onChangedNodes.length === 0 || !this.collectorName) {
+            return;
+        }
+
+        const file = path.join(DATA_DIR, `${this.collectorName}.last-time.json`);
+        let ts;
+        try {
+            const data = JSON.parse(fs.readFileSync(file, 'utf8'));
+            ts = data.ts;
+            if (!ts || typeof ts !== 'number') {
+                return;
+            }
+        } catch (_) {
+            return;
+        }
+
+        let client;
+        try {
+            client = new MachbaseClient(this._dbConf);
+            client.connect();
+            const names = onChangedNodes.map(n => n.name);
+            const placeholders = names.map(() => '?').join(', ');
+            const sql = `SELECT NAME, LAST(${this._valueColumn}) FROM ${this._table} WHERE NAME IN (${placeholders}) AND TIME >= ? GROUP BY NAME`;
+            const rows = client.query(sql, [...names, new Date(ts)]);
+            for (const row of rows) {
+                const val = row[this._valueColumn];
+                if (val !== undefined && val !== null) {
+                    this._previousValues[row.NAME] = val;
+                }
+            }
+            const count = Object.keys(this._previousValues).length;
+            if (count > 0) {
+                this._logger.debug("loaded initial values from db", { count });
+            }
+        } catch (_) {
+        } finally {
+            if (client) {
+                try {
+                    client.close();
+                } catch (_) {}
+            }
+        }
+    }
+
     close() {
         if (this.timer !== null) {
             clearInterval(this.timer);
@@ -109,6 +168,7 @@ class Collector {
         } catch (_) {}
         this._opcuaConnected = false;
         this._closeDb();
+        this._persistLastCollectedAt();
         this._logger.info("stopped");
     }
 
@@ -116,6 +176,7 @@ class Collector {
         if (!this.collectorName || !ts) {
             return;
         }
+        this._lastCollectedAt = ts;
         try {
             this._lastCollectedAtWriter(this.collectorName, ts.getTime(), (err) => {
                 if (err) {
@@ -214,6 +275,7 @@ class Collector {
         }
         this._logger.info("starting", { table: this._table, valueColumn: this._valueColumn, host: this._dbConf.host, port: this._dbConf.port, user: this._dbConf.user, interval: this.interval, nodes: this.nodes.length, endpoint: this.opcua.endpoint });
         this._openDb();
+        this._loadInitialValuesFromDb();
         this.timer = setInterval(() => {
             try {
                 this.collect();
