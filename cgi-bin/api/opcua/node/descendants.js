@@ -24,7 +24,7 @@ const handlers = {
       reply({ ok: false, reason: 'node is required' });
       return;
     }
-    Handler.nodeChildren(body, reply);
+    Handler.nodeDescendants(body, reply);
   },
 };
 const method = (process.env.get('REQUEST_METHOD') || 'GET').toUpperCase();

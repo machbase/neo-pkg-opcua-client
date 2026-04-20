@@ -254,6 +254,14 @@ CREATE TAG TABLE ${table} (
 
 따라서 `browse()` 기반 BFS 탐색을 사용한다.
 
+BFS 이후 모든 노드에 대해 `attributes({ requests: [{node, attributeId: AttributeID.DataType}] })` 를 일괄 호출해 `dataType` 필드를 채운다. `status === 0` 이면 값을 사용, 아니면 `""`. 모든 노드는 `dataType: ""` 로 초기화되어 있으므로 필드는 항상 존재한다.
+
+구현 주의:
+- browse 결과 `ref` 객체는 `JSON.parse(JSON.stringify(ref))`로 plain object로 변환 후 push한다. raw JSH 객체에 직접 property를 쓰면 내부 슬롯을 덮어쓸 수 있다 (예: `.DataType` 할당이 `typeDefinition`을 오염시키는 문제 확인됨).
+- JSH raw 객체는 직접 property 접근 시 camelCase 필드명 사용 (`nodeId`, `nodeClass` 등). 단, `attrResults[i]` 도 동일하게 JSH raw 객체이므로 JSON roundtrip 후 접근해야 한다 (`status`, `value` camelCase).
+- `StatusCode.Good`은 gopcua의 `type StatusCode uint32`로, goja가 JS number로 변환하므로 `=== 0`과 동치이다. 단, `attrResults[i]`는 goja가 Go struct를 JS object로 노출할 때 필드를 Go 이름(PascalCase)으로 접근하게 한다. JSON tag(`json:"status"`)와 달라 `result.status`(camelCase)는 직접 접근 시 `undefined`가 된다. JSON roundtrip 후에야 JSON tag 기준 camelCase 필드로 접근 가능하므로, `JSON.parse(JSON.stringify(attrResults[i]))`로 변환 후 `result.status === StatusCode.Good`으로 비교한다.
+- `attributes()` 호출은 try/catch로 감싸 실패 시에도 BFS 결과는 정상 반환한다 (JSH 미지원 대비).
+
 ## Logger 메모
 
 - 클래스: `src/lib/logger.js` — `Logger`, `init`, `getInstance`, `LOG_DIR` export

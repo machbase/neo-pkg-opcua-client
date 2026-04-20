@@ -902,9 +902,10 @@ OPC UA 서버의 지정 노드 하위를 BFS로 탐색합니다.
       "browseName": "Temperature",
       "displayName": "Temperature",
       "nodeClass": 2,
-      "referenceTypeId": "ns=0;i=47",
+      "referenceTypeId": "i=47",
       "isForward": true,
-      "typeDefinition": "ns=0;i=63"
+      "typeDefinition": "BaseDataVariableType",
+      "dataType": "Double"
     }
   ]
 }
@@ -918,7 +919,8 @@ OPC UA 서버의 지정 노드 하위를 BFS로 탐색합니다.
 | `nodeClass` | 노드 클래스 코드 (`1`=Object, `2`=Variable, `4`=Method, ...) |
 | `referenceTypeId` | 부모와의 참조 타입 |
 | `isForward` | 순방향 참조 여부 |
-| `typeDefinition` | 타입 정의 노드 ID |
+| `typeDefinition` | 타입 정의 이름 (browse reference 원본 값) |
+| `dataType` | 값 타입 이름 (`"Double"`, `"Boolean"`, `"String"` 등). 모든 노드에 항상 포함. `attributes()` 조회 결과 `status === StatusCode.Good`이면 채워지고, 그 외는 `""` |
 
 **응답 (실패)**
 

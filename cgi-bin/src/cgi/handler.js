@@ -5,6 +5,7 @@ const Service = require('./service.js');
 const { MachbaseClient } = require('../db/client.js');
 const { Column, TableSchema, ColumnType, FLAG_PRIMARY, FLAG_BASETIME, FLAG_SUMMARIZED, FLAG_METADATA } = require('../db/types.js');
 const OpcuaClient = require('../opcua/opcua-client.js');
+const { AttributeID, StatusCode } = require('opcua');
 
 // ── Shared helpers ──────────────────────────────────────────────────────────
 
@@ -856,7 +857,28 @@ function _browseAll(client, nodeId, nodeClassMask) {
   return references;
 }
 
-function nodeChildren(body, reply) {
+function _browseDescendants(client, rootNode, nodeClassMask) {
+  const visited = {};
+  visited[rootNode] = true;
+  const queue = [rootNode];
+  const all = [];
+  while (queue.length > 0) {
+    const current = queue.shift();
+    const references = _browseAll(client, current, nodeClassMask);
+    for (let i = 0; i < references.length; i++) {
+      const ref = references[i];
+      const childId = ref.NodeId;
+      all.push(Object.assign(JSON.parse(JSON.stringify(ref)), { dataType: '' }));
+      if (childId && !visited[childId]) {
+        visited[childId] = true;
+        queue.push(childId);
+      }
+    }
+  }
+  return all;
+}
+
+function nodeDescendants(body, reply) {
   const client = new OpcuaClient(body.endpoint);
   if (!client.open()) {
     reply({
@@ -866,26 +888,21 @@ function nodeChildren(body, reply) {
     return;
   }
   try {
-    const visited = {};
-    visited[body.node] = true;
-    const queue = [body.node];
-    const all = [];
-    while (queue.length > 0) {
-      const current = queue.shift();
-      const references = _browseAll(client, current, body.nodeClassMask);
-      for (let i = 0; i < references.length; i++) {
-        const ref = references[i];
-        all.push(ref);
-        const childId = ref.NodeId;
-        if (childId && !visited[childId]) {
-          visited[childId] = true;
-          queue.push(childId);
+    const nodes = _browseDescendants(client, body.node, body.nodeClassMask);
+    if (nodes.length > 0) {
+      try {
+        const attrResults = client.attributes({
+          requests: nodes.map(n => ({ node: n.nodeId, attributeId: AttributeID.DataType })),
+        });
+        for (let i = 0; i < nodes.length; i++) {
+          const result = JSON.parse(JSON.stringify(attrResults[i]));
+          nodes[i].dataType = (result && result.status === StatusCode.Good) ? result.value : '';
         }
-      }
+      } catch (_) {}
     }
     reply({
       ok: true,
-      data: all,
+      data: nodes,
     });
   } catch (e) {
     reply({
@@ -916,7 +933,7 @@ module.exports = {
   dbTableCreate,
   dbTableList,
   dbTableColumns,
-  nodeChildren,
+  nodeDescendants,
   opcuaRead,
   opcuaWrite,
 };
