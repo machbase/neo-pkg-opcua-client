@@ -4,6 +4,12 @@ import NodeBrowserPanel from "./NodeBrowserPanel";
 
 const NODE_ID_PATTERN = /^ns=\d+;[isgb]=.+$/;
 
+
+const CALC_STEP_DEF = {
+    b: { op: "+", field: "bias", placeholder: "0" },
+    m: { op: "×", field: "multiplier", placeholder: "1" },
+};
+
 function validateNodeId(value) {
     if (!value.trim()) return null;
     if (!NODE_ID_PATTERN.test(value.trim())) {
@@ -17,6 +23,84 @@ function parseNumberInput(value) {
     if (trimmed === "") return undefined;
     const num = Number(trimmed);
     return Number.isFinite(num) ? num : NaN;
+}
+
+function CalcSteps({ node, onFieldChange, onOrderChange }) {
+    const raw = node.calcOrder === "mb" ? "mb" : "bm";
+    const steps = raw.split("");
+    const [dragIdx, setDragIdx] = useState(null);
+    const [dropIdx, setDropIdx] = useState(null);
+
+    const handleDragStart = (e, idx) => {
+        setDragIdx(idx);
+        e.dataTransfer.effectAllowed = "move";
+        e.dataTransfer.setData("text/plain", String(idx));
+    };
+    const handleDragEnd = () => {
+        setDragIdx(null);
+        setDropIdx(null);
+    };
+    const handleDragOver = (e, idx) => {
+        if (dragIdx === null || idx === dragIdx) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "move";
+        if (dropIdx !== idx) setDropIdx(idx);
+    };
+    const handleDragLeave = (e, idx) => {
+        if (e.currentTarget.contains(e.relatedTarget)) return;
+        if (dropIdx === idx) setDropIdx(null);
+    };
+    const handleDrop = (e, idx) => {
+        e.preventDefault();
+        setDragIdx(null);
+        setDropIdx(null);
+        const from = Number(e.dataTransfer.getData("text/plain"));
+        if (!Number.isFinite(from) || from === idx) return;
+        const next = [...steps];
+        [next[from], next[idx]] = [next[idx], next[from]];
+        onOrderChange(next.join(""));
+    };
+
+    return (
+        <div className="node-calc-inline">
+            <span className="node-calc-seg-paren">(</span>
+            <span className="node-calc-seg-val">value</span>
+            {steps.map((key, idx) => {
+                const step = CALC_STEP_DEF[key];
+                const seg = (
+                    <div
+                        key={key}
+                        className={`node-calc-seg${dragIdx === idx ? " node-calc-seg--dragging" : ""}${dropIdx === idx ? " node-calc-seg--drop-target" : ""}`}
+                        draggable
+                        onDragStart={(e) => handleDragStart(e, idx)}
+                        onDragEnd={handleDragEnd}
+                        onDragOver={(e) => handleDragOver(e, idx)}
+                        onDragLeave={(e) => handleDragLeave(e, idx)}
+                        onDrop={(e) => handleDrop(e, idx)}
+                    >
+                        <Icon name="drag_indicator" className="node-calc-seg-grip" />
+                        <span className="node-calc-seg-op">{step.op}</span>
+                        <input
+                            type="number"
+                            step="any"
+                            className="node-calc-seg-input"
+                            placeholder={step.placeholder}
+                            value={node[step.field] ?? ""}
+                            onChange={(e) => onFieldChange(step.field, e.target.value)}
+                        />
+                    </div>
+                );
+                if (idx === 0)
+                    return (
+                        <span key={`wrap-${key}`} className="node-calc-inline" style={{ gap: "var(--spacing-4)" }}>
+                            {seg}
+                            <span className="node-calc-seg-paren">)</span>
+                        </span>
+                    );
+                return seg;
+            })}
+        </div>
+    );
 }
 
 export default function NodeListEditor({ nodes, onChange, endpoint }) {
@@ -52,7 +136,7 @@ export default function NodeListEditor({ nodes, onChange, endpoint }) {
             return;
         }
 
-        onChange([...nodes, { nodeId: trimmedId, name: trimmedName }]);
+        onChange([...nodes, { nodeId: trimmedId, name: trimmedName, calcOrder: "bm" }]);
         setNodeId("");
         setName("");
         setNodeIdError(null);
@@ -154,9 +238,13 @@ export default function NodeListEditor({ nodes, onChange, endpoint }) {
         });
     };
 
-    const handleBrowseAdd = (newNodes) => {
-        const unique = newNodes.filter((n) => !isDuplicate(n.nodeId));
-        if (unique.length > 0) onChange([...nodes, ...unique]);
+    const handleBrowseSync = ({ add, remove }) => {
+        const removeSet = new Set(remove);
+        const kept = removeSet.size > 0 ? nodes.filter((n) => !removeSet.has(n.nodeId)) : nodes;
+        const unique = add
+            .filter((n) => !isDuplicate(n.nodeId))
+            .map((n) => ({ ...n, calcOrder: n.calcOrder || "bm" }));
+        if (unique.length > 0 || removeSet.size > 0) onChange([...kept, ...unique]);
     };
 
     return (
@@ -290,8 +378,7 @@ export default function NodeListEditor({ nodes, onChange, endpoint }) {
                                             <Icon name={sortIcon("nodeId")} className="icon-sm" />
                                         </button>
                                     </th>
-                                    <th style={{ width: 110 }}>Bias</th>
-                                    <th style={{ width: 110 }}>Multiplier</th>
+                                    <th>Transform</th>
                                     <th style={{ width: 60 }}>Actions</th>
                                 </tr>
                             </thead>
@@ -311,38 +398,30 @@ export default function NodeListEditor({ nodes, onChange, endpoint }) {
                                                 {row.name}
                                             </td>
                                             <td
-                                                className="mono text-on-surface-secondary truncate"
+                                                className="mono text-on-surface-secondary"
                                                 title={row.nodeId}
                                             >
-                                                {row.nodeId}
+                                                <div className="flex items-center gap-6">
+                                                    <span className="truncate">{row.nodeId}</span>
+                                                    {row.dataType && (
+                                                        <span className="badge badge-success" style={{ fontSize: 10, padding: '2px 5px', flexShrink: 0 }}>
+                                                            {row.dataType}
+                                                        </span>
+                                                    )}
+                                                </div>
                                             </td>
                                             <td>
-                                                <input
-                                                    type="number"
-                                                    step="any"
-                                                    value={row.bias ?? ""}
-                                                    onChange={(e) =>
-                                                        updateNumericField(idx, "bias", e.target.value)
-                                                    }
-                                                    className="w-full text-right"
-                                                    placeholder="0"
-                                                />
-                                            </td>
-                                            <td>
-                                                <input
-                                                    type="number"
-                                                    step="any"
-                                                    value={row.multiplier ?? ""}
-                                                    onChange={(e) =>
-                                                        updateNumericField(
-                                                            idx,
-                                                            "multiplier",
-                                                            e.target.value
-                                                        )
-                                                    }
-                                                    className="w-full text-right"
-                                                    placeholder="1"
-                                                />
+                                                {row.dataType?.toLowerCase() === "boolean" ? null : (
+                                                    <CalcSteps
+                                                        node={row}
+                                                        onFieldChange={(field, raw) =>
+                                                            updateNumericField(idx, field, raw)
+                                                        }
+                                                        onOrderChange={(order) =>
+                                                            patchNode(idx, { calcOrder: order })
+                                                        }
+                                                    />
+                                                )}
                                             </td>
                                             <td>
                                                 <button
@@ -376,7 +455,7 @@ export default function NodeListEditor({ nodes, onChange, endpoint }) {
                 <NodeBrowserPanel
                     endpoint={endpoint}
                     existingNodes={nodes}
-                    onAdd={handleBrowseAdd}
+                    onSync={handleBrowseSync}
                     onClose={() => setBrowserOpen(false)}
                 />
             )}

@@ -28,7 +28,7 @@ export default function OpcuaSection({ form, update }) {
             <input
               type="number"
               required
-              min="100"
+              min="1000"
               value={form.opcua.interval}
               onChange={(e) => update('opcua.interval', e.target.value)}
               className="w-full"

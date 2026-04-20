@@ -20,7 +20,7 @@ export default function Sidebar({
                 <button
                     onClick={onNewCollector}
                     className="side-header-action tooltip"
-                    data-tooltip="New Collector"
+                    data-tooltip="New Job"
                 >
                     <Icon name="add" />
                 </button>
@@ -37,7 +37,7 @@ export default function Sidebar({
 
             <div className="side-body">
                 <div className="side-section-title">
-                    <span className="flex-1">Collectors</span>
+                    <span className="flex-1">Jobs</span>
                     <button
                         onClick={onRefresh}
                         className="side-section-action tooltip"
@@ -57,7 +57,7 @@ export default function Sidebar({
                             onInstall={() => onInstallCollector(c)}
                         />
                     ))}
-                    {collectors.length === 0 && <p className="side-empty">No collectors</p>}
+                    {collectors.length === 0 && <p className="side-empty">No jobs</p>}
                 </nav>
             </div>
         </aside>
