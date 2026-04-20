@@ -8,6 +8,25 @@ import LogViewerModal from "../components/logs/LogViewerModal";
 // import LiveLogs from "../components/logs/LiveLogs";
 import Icon from "../components/common/Icon";
 
+function timeAgo(ts) {
+    if (!ts) return "-";
+    const sec = Math.floor((Date.now() - ts) / 1000);
+    if (sec < 5) return "just now";
+    if (sec < 60) return `${sec} seconds ago`;
+    const min = Math.floor(sec / 60);
+    if (min < 60) return min === 1 ? "1 minute ago" : `${min} minutes ago`;
+    const hr = Math.floor(min / 60);
+    if (hr < 24) return hr === 1 ? "1 hour ago" : `${hr} hours ago`;
+    const day = Math.floor(hr / 24);
+    if (day < 7) return day === 1 ? "yesterday" : `${day} days ago`;
+    const week = Math.floor(day / 7);
+    if (week < 5) return week === 1 ? "1 week ago" : `${week} weeks ago`;
+    const month = Math.floor(day / 30);
+    if (month < 12) return month === 1 ? "1 month ago" : `${month} months ago`;
+    const year = Math.floor(day / 365);
+    return year === 1 ? "last year" : `${year} years ago`;
+}
+
 const LEVEL_ORDER = ["TRACE", "DEBUG", "INFO", "WARN", "ERROR"];
 
 const LEVEL_COLOR = {
@@ -38,7 +57,10 @@ function formatTransform(node) {
     const hasBias = bias != null && !Number.isNaN(bias) && bias !== 0;
     const hasMult = mult != null && !Number.isNaN(mult) && mult !== 1;
     if (!hasBias && !hasMult) return null;
-    if (hasBias && hasMult) return `(value + ${bias}) × ${mult}`;
+    if (hasBias && hasMult) {
+        if (node.calcOrder === "mb") return `(value × ${mult}) + ${bias}`;
+        return `(value + ${bias}) × ${mult}`;
+    }
     if (hasBias) return `value + ${bias}`;
     return `value × ${mult}`;
 }
@@ -108,7 +130,7 @@ export default function DashboardPage({ collectors, detail, onDelete }) {
         return (
             <div className="empty-state flex flex-col items-center justify-center h-full">
                 <Icon name="inbox" className="icon-lg opacity-30 mb-12" />
-                <p className="text-md font-medium text-on-surface-tertiary">{collectors.length === 0 ? "No collectors yet" : "Select a collector from the sidebar"}</p>
+                <p className="text-md font-medium text-on-surface-tertiary">{collectors.length === 0 ? "No jobs yet" : "Select a job from the sidebar"}</p>
                 {collectors.length === 0 && <p className="text-sm mt-4">Click "New" to get started</p>}
             </div>
         );
@@ -194,16 +216,18 @@ export default function DashboardPage({ collectors, detail, onDelete }) {
 
                         {/* Nodes Monitored */}
                         <div className="form-card flex flex-col items-center justify-center text-center">
-                            <div className="text-5xl font-bold text-primary leading-none mb-12">{nodes.length}</div>
+                            <div className="text-5xl font-bold text-primary-hover leading-none mb-12">{nodes.length}</div>
                             <div className="form-label">Nodes Monitored</div>
-                            <div className="flex items-center gap-6 text-xs text-on-surface-disabled">
-                                <Icon name="timer" className="icon-sm" />
-                                <span>
-                                    LAST UPDATED AT:{" "}
-                                    <span className="font-mono">
-                                        {lastCollectedAt ? new Date(lastCollectedAt).toLocaleString() : "-"}
+                            <div className="flex flex-col items-center gap-2 text-xs">
+                                <div className="flex items-center gap-6">
+                                    <Icon name="timer" className="icon-sm text-on-surface-tertiary" />
+                                    <span className="text-on-surface-secondary">{timeAgo(lastCollectedAt)}</span>
+                                </div>
+                                {lastCollectedAt && (
+                                    <span className="text-on-surface-tertiary opacity-50">
+                                        {new Date(lastCollectedAt).toLocaleString()}
                                     </span>
-                                </span>
+                                )}
                             </div>
                         </div>
 
@@ -349,7 +373,7 @@ export default function DashboardPage({ collectors, detail, onDelete }) {
             </div>
             {confirmDelete && (
                 <ConfirmDialog
-                    title="Delete Collector"
+                    title="Delete Job"
                     message={`Are you sure you want to delete "${collector.id}"? This action cannot be undone.`}
                     confirmLabel="Delete"
                     onConfirm={handleDelete}

@@ -101,6 +101,19 @@ class OpcuaClient {
         return this.client.browseNext(request);
     }
 
+    /**
+     * @param {object} request
+     * @param {Array<{node: string, attributeId: number}>} request.requests - 조회할 노드/속성 목록
+     * @returns {Array<{Status: number, Value: string}>}
+     * @throws {Error} 미연결 또는 조회 실패 시
+     */
+    attributes(request) {
+        if (this.client === null) {
+            throw new Error("not connected");
+        }
+        return this.client.attributes(request);
+    }
+
     close() {
         if (this.client !== null) {
             try {

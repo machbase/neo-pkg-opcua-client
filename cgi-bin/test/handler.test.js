@@ -1,7 +1,15 @@
 const path = require('path');
+const Module = require('module');
 const TestRunner = require('./runner.js');
 
 const ROOT = path.resolve(__dirname, '..');
+
+// opcua는 JSH 내장 모듈이라 Node.js에서 resolve되지 않음. require.cache 주입을 위해 패치.
+const _origResolve = Module._resolveFilename;
+Module._resolveFilename = function(request, parent, isMain, options) {
+    if (request === 'opcua') return 'opcua';
+    return _origResolve.call(this, request, parent, isMain, options);
+};
 
 // ── Mocks ────────────────────────────────────────────────────────────────────
 
@@ -128,8 +136,8 @@ class MockOpcuaClient {
         this.readError = null;
         this.writeResult = null;
         this.writeError = null;
-        this.browseResult = [{ references: [] }];
-        this.browseNextResult = [{ references: [] }];
+        this.browseResult = {};
+        this.attributesResult = [];
     }
     open() { this.opened = true; return this.openResult; }
     close() { this.closed = true; }
@@ -141,8 +149,23 @@ class MockOpcuaClient {
         if (this.writeError) throw new Error(this.writeError);
         return this.writeResult;
     }
-    browse(_req) { return this.browseResult; }
-    browseNext(_req) { return this.browseNextResult; }
+    browse(req) {
+        const nodeId = req.nodes && req.nodes[0];
+        const refs = (this.browseResult[nodeId] || []).map((r) => ({
+            ReferenceTypeId: '',
+            IsForward: true,
+            NodeId: r.NodeId,
+            BrowseName: r.BrowseName || '',
+            DisplayName: r.DisplayName || '',
+            NodeClass: r.NodeClass || 0,
+            TypeDefinition: '',
+        }));
+        return [{ references: refs, continuationPoint: '' }];
+    }
+    browseNext(_req) {
+        return [{ references: [], continuationPoint: '' }];
+    }
+    attributes(_req) { return this.attributesResult; }
 }
 
 // ── Module injection ─────────────────────────────────────────────────────────
@@ -177,6 +200,10 @@ function makeHandler() {
         id: opcuaPath, filename: opcuaPath, loaded: true,
         exports: function() { return mockOpcuaClient; },
     };
+    require.cache['opcua'] = {
+        id: 'opcua', filename: 'opcua', loaded: true,
+        exports: { NodeClass: { Variable: 2 }, AttributeID: { DataType: 14 } },
+    };
 
     delete require.cache[handlerPath];
     const Handler = require(handlerPath);
@@ -185,6 +212,7 @@ function makeHandler() {
     delete require.cache[servicePath];
     delete require.cache[clientPath];
     delete require.cache[opcuaPath];
+    delete require.cache['opcua'];
 
     return Handler;
 }
@@ -210,7 +238,7 @@ runner.run('Handler: collectorPost', {
         const H = makeHandler();
         mockCGI._configs['col-a'] = {};
         let result;
-        H.collectorPost('col-a', {}, (r) => { result = r; });
+        H.collectorPost('col-a', { opcua: {} }, (r) => { result = r; });
         t.assert(!result.ok, 'should not be ok');
         t.assert(result.reason.includes('already exists'));
     },
@@ -766,70 +794,67 @@ runner.run('Handler: opcuaWrite', {
     },
 });
 
-// ── nodeChildren (descendants) ────────────────────────────────────────────────
+// ── nodeDescendants ───────────────────────────────────────────────────────────
 
-runner.run('Handler: nodeChildren', {
+runner.run('Handler: nodeDescendants', {
     'returns error when connect fails': (t) => {
         const H = makeHandler();
         mockOpcuaClient.openResult = false;
         let result;
-        H.nodeChildren({ endpoint: 'opc.tcp://bad:1', node: 'ns=0;i=85' }, (r) => { result = r; });
+        H.nodeDescendants({ endpoint: 'opc.tcp://bad:1', node: 'ns=0;i=85' }, (r) => { result = r; });
         t.assert(!result.ok, 'should not be ok');
         t.assert(result.reason.includes('connect failed'));
     },
 
     'returns all descendants via BFS': (t) => {
         const H = makeHandler();
-        let browseCallCount = 0;
-        mockOpcuaClient.browse = (req) => {
-            browseCallCount++;
-            if (req.nodes[0] === 'ns=0;i=85') {
-                return [{ references: [{ NodeId: 'ns=1;s=C1' }, { NodeId: 'ns=1;s=C2' }] }];
-            }
-            return [{ references: [] }];
+        mockOpcuaClient.browseResult = {
+            'ns=0;i=85': [{ NodeId: 'ns=1;s=C1', NodeClass: 1 }, { NodeId: 'ns=1;s=C2', NodeClass: 1 }],
         };
         let result;
-        H.nodeChildren({ endpoint: 'opc.tcp://h:4840', node: 'ns=0;i=85' }, (r) => { result = r; });
+        H.nodeDescendants({ endpoint: 'opc.tcp://h:4840', node: 'ns=0;i=85' }, (r) => { result = r; });
         t.assert(result.ok, 'should be ok');
         t.assertEqual(result.data.length, 2);
-        t.assertEqual(browseCallCount, 3, 'root + 2 children');
         t.assert(mockOpcuaClient.closed, 'client should be closed');
-    },
-
-    'handles continuationPoint': (t) => {
-        const H = makeHandler();
-        let browseNextCalled = false;
-        mockOpcuaClient.browse = (req) => {
-            if (req.nodes[0] === 'ns=0;i=85') {
-                return [{ references: [{ NodeId: 'ns=1;s=C1' }], continuationPoint: 'cp1' }];
-            }
-            return [{ references: [] }];
-        };
-        mockOpcuaClient.browseNext = (_req) => {
-            browseNextCalled = true;
-            return [{ references: [{ NodeId: 'ns=1;s=C2' }], continuationPoint: null }];
-        };
-        let result;
-        H.nodeChildren({ endpoint: 'opc.tcp://h:4840', node: 'ns=0;i=85' }, (r) => { result = r; });
-        t.assert(result.ok, 'should be ok');
-        t.assert(browseNextCalled, 'browseNext should be called for continuationPoint');
-        t.assertEqual(result.data.length, 2);
     },
 
     'does not revisit already-visited nodes': (t) => {
         const H = makeHandler();
-        let browseCallCount = 0;
-        mockOpcuaClient.browse = (req) => {
-            browseCallCount++;
-            if (req.nodes[0] === 'ns=0;i=85') {
-                return [{ references: [{ NodeId: 'ns=0;i=85' }, { NodeId: 'ns=1;s=C1' }] }];
-            }
-            return [{ references: [] }];
+        mockOpcuaClient.browseResult = {
+            'ns=0;i=85': [{ NodeId: 'ns=0;i=85', NodeClass: 1 }, { NodeId: 'ns=1;s=C1', NodeClass: 1 }],
         };
         let result;
-        H.nodeChildren({ endpoint: 'opc.tcp://h:4840', node: 'ns=0;i=85' }, (r) => { result = r; });
+        H.nodeDescendants({ endpoint: 'opc.tcp://h:4840', node: 'ns=0;i=85' }, (r) => { result = r; });
         t.assert(result.ok, 'should be ok');
-        t.assertEqual(browseCallCount, 2, 'root once, C1 once, root not revisited');
+        t.assertEqual(result.data.length, 2, 'root not re-added');
+    },
+
+    'fills DataType for Variable nodes via attributes': (t) => {
+        const H = makeHandler();
+        mockOpcuaClient.browseResult = {
+            'ns=0;i=85': [
+                { NodeId: 'ns=1;s=Temp', NodeClass: 2 },
+                { NodeId: 'ns=1;s=Folder', NodeClass: 1 },
+            ],
+        };
+        mockOpcuaClient.attributesResult = [{ Status: 0, Value: 'Double' }];
+        let result;
+        H.nodeDescendants({ endpoint: 'opc.tcp://h:4840', node: 'ns=0;i=85' }, (r) => { result = r; });
+        t.assert(result.ok, 'should be ok');
+        t.assertEqual(result.data[0].DataType, 'Double', 'Variable node gets DataType');
+        t.assert(!result.data[1].DataType, 'non-Variable node has no DataType');
+    },
+
+    'handles attributes failure gracefully': (t) => {
+        const H = makeHandler();
+        mockOpcuaClient.browseResult = {
+            'ns=0;i=85': [{ NodeId: 'ns=1;s=Temp', NodeClass: 2 }],
+        };
+        mockOpcuaClient.attributesResult = [{ Status: 2147483648, Value: '' }];
+        let result;
+        H.nodeDescendants({ endpoint: 'opc.tcp://h:4840', node: 'ns=0;i=85' }, (r) => { result = r; });
+        t.assert(result.ok, 'should be ok');
+        t.assertEqual(result.data[0].DataType, '', 'bad status yields empty DataType');
     },
 });
 

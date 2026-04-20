@@ -93,7 +93,8 @@ neo-tools/
     │   │       ├── list.js     # GET    /cgi-bin/api/db/table/list?server=xxx
     │   │       └── columns.js  # GET    /cgi-bin/api/db/table/columns?server=xxx&table=xxx
     │   ├── log/
-    │   │   ├── list.js         # GET    /cgi-bin/api/log/list
+    │   │   ├── all.js          # GET    /cgi-bin/api/log/all
+    │   │   ├── list.js         # GET    /cgi-bin/api/log/list?name=xxx
     │   │   ├── content.js      # GET    /cgi-bin/api/log/content?name=xxx
     │   │   └── content/
     │   │       └── all.js      # GET    /cgi-bin/api/log/content/all?name=xxx
@@ -163,7 +164,8 @@ machbase-neo jsh -v /app=/path/to/neo-tools /app/cgi-bin/neo-collector.js /app/c
 | GET | `/cgi-bin/api/db/connect?server=xxx` | DB 접속 유효성 검사 |
 | POST | `/cgi-bin/api/db/table/create` | TAG 테이블 생성 (body: `{ server, table }`) |
 | GET | `/cgi-bin/api/db/table/columns?server=xxx&table=xxx` | 테이블 컬럼 목록 조회 |
-| GET | `/cgi-bin/api/log/list` | 로그 파일 목록 조회 (name, size 포함) |
+| GET | `/cgi-bin/api/log/all` | 패키지 전체 로그 파일 목록 조회 (name, size 포함) |
+| GET | `/cgi-bin/api/log/list?name=xxx` | 특정 collector 로그 파일 목록 조회 (name, size 포함) |
 | GET | `/cgi-bin/api/log/content?name=xxx` | 로그 파일 내용 조회 (start/end 줄 범위 지원) |
 | GET | `/cgi-bin/api/log/content/all?name=xxx` | 로그 파일 전체 내용 조회 |
 | GET | `/cgi-bin/api/opcua/read?endpoint=xxx&nodes=id1,id2` | OPC UA 노드 일회성 읽기 |

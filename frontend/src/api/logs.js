@@ -1,7 +1,7 @@
 import { request } from "./client";
 
-export const listLogFiles = async () => {
-    const data = await request("GET", "/cgi-bin/api/log/list");
+export const listLogFiles = async (jobName) => {
+    const data = await request("GET", `/cgi-bin/api/log/list?name=${encodeURIComponent(jobName)}`);
     return data?.files ?? [];
 };
 

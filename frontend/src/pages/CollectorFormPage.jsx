@@ -100,26 +100,16 @@ export default function CollectorFormPage({ detail, onRefresh, onRefreshDetail, 
         valueColumn: form.db.column,
         log: {
           level: form.log.level,
-          output: form.log.output,
-          format: form.log.format,
-        },
-      }
-
-      if (form.log.output === 'file' || form.log.output === 'both') {
-        config.log.file = {
-          path: form.log.file.path,
-          maxSize: form.log.file.maxSize,
           maxFiles: Number(form.log.file.maxFiles),
-          rotate: form.log.file.rotate,
-        }
+        },
       }
 
       if (isEdit) {
         await api.updateCollector(id, config)
-        notify(`Collector '${id}' updated`, 'success')
+        notify(`Job '${id}' updated`, 'success')
       } else {
         await api.createCollector(form.name, config)
-        notify(`Collector created`, 'success')
+        notify(`Job created`, 'success')
       }
       if (onRefresh) await onRefresh()
       if (isEdit && onRefreshDetail) await onRefreshDetail()
@@ -141,7 +131,7 @@ export default function CollectorFormPage({ detail, onRefresh, onRefreshDetail, 
               <Icon name="arrow_back" />
             </button>
             <h2 className="page-title truncate">
-              {isEdit ? 'Edit Collector' : 'New Collector Configuration'}
+              {isEdit ? 'Edit Job' : 'New Job Configuration'}
             </h2>
           </div>
           <div className="flex gap-8 shrink-0">
@@ -168,11 +158,11 @@ export default function CollectorFormPage({ detail, onRefresh, onRefreshDetail, 
         <div className="page-body-inner">
           <form id="collector-form" onSubmit={handleSubmit}>
             <div className="space-y-16">
-              {/* Collector */}
+              {/* Job */}
               <div className="form-card">
                 <div className="form-card-header">
                   <span className="section-dot" />
-                  Collector
+                  Job
                   <Icon name="badge" className="ml-auto text-primary" />
                 </div>
                 <div>

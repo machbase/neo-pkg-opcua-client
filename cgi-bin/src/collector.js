@@ -31,10 +31,15 @@ class Collector {
     }
 
     _normalizeValue(value, node) {
-        const num = typeof value === "boolean" ? (value ? 1 : 0) : Number(value);
+        const isBoolean = typeof value === "boolean";
+        const num = isBoolean ? (value ? 1 : 0) : Number(value);
         const add = node.bias != null ? node.bias : 0;
         const multiply = node.multiplier != null ? node.multiplier : 1;
-        return (num + add) * multiply;
+        const result = node.calcOrder === 'mb' ? num * multiply + add : (num + add) * multiply;
+        if (isBoolean) {
+            return result >= 1 ? 1 : (result <= 0 ? 0 : result);
+        }
+        return result;
     }
 
     _isDbOpen() {

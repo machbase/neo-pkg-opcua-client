@@ -15,6 +15,21 @@ const Handler = require(path.join(ROOT, 'src', 'cgi', 'handler.js'));
 const { name } = CGI.parseQuery();
 const reply = (r) => CGI.reply(r);
 
+function validateCollectorConfig(config) {
+  if (!config || !config.opcua) {
+    return 'config.opcua is required';
+  }
+  if (config.opcua.interval === undefined || config.opcua.interval === null) {
+    config.opcua.interval = 1000;
+  }
+  const interval = Number(config.opcua.interval);
+  if (!Number.isFinite(interval) || interval < 1000) {
+    return 'config.opcua.interval must be >= 1000 (ms)';
+  }
+  config.opcua.interval = interval;
+  return null;
+}
+
 const handlers = {
   POST: () => {
     const body = CGI.readBody();
@@ -24,6 +39,11 @@ const handlers = {
     }
     if (!body.config) {
       reply({ ok: false, reason: 'config is required' });
+      return;
+    }
+    const configErr = validateCollectorConfig(body.config);
+    if (configErr) {
+      reply({ ok: false, reason: configErr });
       return;
     }
     Handler.collectorPost(body.name, body.config, reply);
@@ -40,7 +60,13 @@ const handlers = {
       reply({ ok: false, reason: 'name is required' });
       return;
     }
-    Handler.collectorPut(name, CGI.readBody(), reply);
+    const putBody = CGI.readBody();
+    const putConfigErr = validateCollectorConfig(putBody);
+    if (putConfigErr) {
+      reply({ ok: false, reason: putConfigErr });
+      return;
+    }
+    Handler.collectorPut(name, putBody, reply);
   },
   DELETE: () => {
     if (!name) {

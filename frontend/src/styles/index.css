@@ -198,6 +198,7 @@ body,
     height: 100%;
     margin: 0;
     padding: 0;
+    overflow-x: hidden;
 }
 
 body {
@@ -1717,6 +1718,78 @@ details.card[open] > summary {
     box-shadow: none;
 }
 
+/* calc inline formula (draggable bias/multiplier order) */
+.node-calc-inline {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-4);
+    font-family: var(--font-family-mono);
+    font-size: var(--font-size-sm);
+}
+.node-calc-seg {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-8);
+    padding: var(--spacing-2) var(--spacing-4);
+    border: 1px dashed var(--color-border);
+    border-radius: var(--radius-base);
+    cursor: grab;
+    transition: border-color 0.15s ease, background-color 0.15s ease;
+}
+.node-calc-seg:hover {
+    border-style: solid;
+    border-color: var(--color-on-surface-tertiary);
+    background-color: var(--color-surface-hover);
+}
+.node-calc-seg:active {
+    cursor: grabbing;
+}
+.node-calc-seg--dragging {
+    opacity: 0.4;
+}
+.node-calc-seg--drop-target {
+    border-color: var(--color-primary);
+    background-color: var(--color-surface-hover);
+}
+.node-calc-seg-grip {
+    font-size: 14px !important;
+    color: var(--color-on-surface-tertiary);
+    flex-shrink: 0;
+}
+.node-calc-seg-paren {
+    color: var(--color-on-surface-tertiary);
+    font-weight: var(--font-weight-bold);
+    font-size: var(--font-size-base);
+}
+.node-calc-seg-val {
+    color: #4da6ff;
+    font-weight: var(--font-weight-semibold);
+    white-space: nowrap;
+}
+.node-calc-seg-op {
+    color: #4da6ff;
+    font-weight: var(--font-weight-bold);
+    font-size: var(--font-size-lg);
+    flex-shrink: 0;
+}
+.node-calc-seg-input {
+    width: 80px;
+    min-width: 0;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background-color: var(--color-surface-input);
+    font-family: var(--font-family-mono);
+    font-size: var(--font-size-sm);
+    color: var(--color-on-surface);
+    padding: var(--spacing-2) var(--spacing-6);
+    outline: none;
+    transition: border-color 0.15s ease;
+}
+.node-calc-seg-input:focus {
+    border-color: var(--color-border-focus);
+}
+
 .table th .th-sort {
     display: inline-flex;
     align-items: center;
@@ -1810,9 +1883,15 @@ details.card > :not(summary) {
     flex-shrink: 0;
 }
 
-.modal-sm { max-width: 360px; }
-.modal-md { max-width: 480px; }
-.modal-lg { max-width: 560px; }
+.modal-sm {
+    max-width: 360px;
+}
+.modal-md {
+    max-width: 480px;
+}
+.modal-lg {
+    max-width: 560px;
+}
 
 .server-card-list {
     display: flex;
@@ -1904,8 +1983,7 @@ details.card > :not(summary) {
     background: transparent;
     color: var(--color-on-surface-tertiary);
     cursor: pointer;
-    transition: background-color var(--transition-duration-fast) ease,
-                color var(--transition-duration-fast) ease;
+    transition: background-color var(--transition-duration-fast) ease, color var(--transition-duration-fast) ease;
 }
 .server-card-action .material-symbols-outlined {
     font-size: 18px;
@@ -1974,9 +2052,7 @@ details.card > :not(summary) {
     font-size: var(--font-size-sm);
     font-weight: 500;
     cursor: pointer;
-    transition: border-color var(--transition-duration-fast) ease,
-                background-color var(--transition-duration-fast) ease,
-                color var(--transition-duration-fast) ease;
+    transition: border-color var(--transition-duration-fast) ease, background-color var(--transition-duration-fast) ease, color var(--transition-duration-fast) ease;
 }
 .server-type-option:hover:not(:disabled) {
     border-color: var(--color-border-medium);
@@ -3242,19 +3318,18 @@ label.switch input:checked + .switch-slider::before {
     display: inline-block;
     height: 10px;
     border-radius: var(--radius-sm);
-    background: linear-gradient(
-        90deg,
-        var(--color-surface-input) 0%,
-        var(--color-surface-hover) 50%,
-        var(--color-surface-input) 100%
-    );
+    background: linear-gradient(90deg, var(--color-surface-input) 0%, var(--color-surface-hover) 50%, var(--color-surface-input) 100%);
     background-size: 200% 100%;
     animation: skeleton-pulse 1.4s ease-in-out infinite;
 }
 
 @keyframes skeleton-pulse {
-    0% { background-position: 200% 0; }
-    100% { background-position: -200% 0; }
+    0% {
+        background-position: 200% 0;
+    }
+    100% {
+        background-position: -200% 0;
+    }
 }
 
 .input-icon-wrap {

@@ -146,7 +146,7 @@ export default function ServerSettingsModal({
                                                 className="server-card-action tooltip"
                                                 data-tooltip="Connection Test"
                                             >
-                                                <Icon name="monitor_heart" />
+                                                <Icon name="electrical_services" />
                                             </button>
                                             <button
                                                 onClick={() => {

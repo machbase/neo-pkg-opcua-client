@@ -1,5 +1,5 @@
 /**
- * GET /cgi-bin/api/log/list  -- 로그 파일 이름 목록 조회
+ * GET /cgi-bin/api/log/all  -- 패키지 전체 로그 파일 목록 조회
  */
 
 const path = require('path');
@@ -14,19 +14,9 @@ const reply = (r) => CGI.reply(r);
 
 const handlers = {
   GET: () => {
-    const { name } = CGI.parseQuery();
-    if (!name) {
-      reply({ ok: false, reason: 'name is required' });
-      return;
-    }
     let files;
     try {
-      files = fs.readdirSync(LOG_DIR).filter((f) => {
-        if (!f.endsWith('.log')) {
-          return false;
-        }
-        return f === name + '.log' || f.startsWith(name + '_');
-      });
+      files = fs.readdirSync(LOG_DIR).filter((f) => f.endsWith('.log'));
     } catch (err) {
       const msg = err && err.message ? err.message : String(err);
       const notFound = msg.indexOf('ENOENT') >= 0 || msg.indexOf('no such file') >= 0;
