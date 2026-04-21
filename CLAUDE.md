@@ -221,7 +221,30 @@ CREATE TAG TABLE ${table} (
 | `bias` | `0` | 값에 더할 오프셋 |
 | `multiplier` | `1` | 값에 곱할 배율 |
 | `calcOrder` | `"bm"` | 계산 순서. `"bm"`: `(value + bias) * multiplier` / `"mb"`: `value * multiplier + bias` |
-| `onChanged` | `false` | `true`이면 이전 값과 달라졌을 때만 append. Collector는 `_previousValues`로 직전 값을 추적하며, 모든 노드가 skip되면 `append()` 및 `_recordLastCollectedAt()` 미호출 |
+| `onChanged` | `false` | `true`이면 이전 값과 달라졌을 때만 append. 재시작 시 DB에서 초기값 로드(아래 메모 참고). 모든 노드가 skip되면 `append()` 및 `_recordLastCollectedAt()` 미호출 |
+
+## onChanged 초기값 로드 메모
+
+`onChanged: true` 노드는 재시작 후에도 중복 append를 방지하기 위해 시작 시 DB에서 마지막 값을 읽어온다.
+
+**동작 흐름:**
+
+1. `close()` 시 `_persistLastCollectedAt()` → `cgi-bin/data/{name}.last-time.json`에 마지막 수집 시각 저장
+2. `start()` 시 `_loadInitialValuesFromDb()` 호출:
+   - `data/{name}.last-time.json` 읽어 타임스탬프 파싱 → 파일 없거나 실패하면 스킵
+   - `onChanged: true` 노드 이름을 IN절로 묶어 단일 쿼리:
+     ```sql
+     SELECT NAME, LAST(VALUE) FROM {table}
+     WHERE NAME IN (?, ...) AND TIME >= ?
+     GROUP BY NAME
+     ```
+   - 결과를 `_previousValues` 초기값으로 설정
+   - 쿼리는 별도 connection으로 수행 (append stream과 분리)
+   - 실패 시 무시하고 빈 `_previousValues`로 시작 (첫 수집은 항상 append)
+
+**에러 시 동작:** `_previousValues = {}` 리셋 (파일 삭제 없음 — 다음 재시작 시 이전 타임스탬프로 재시도)
+
+**쿼리 구현:** `LAST(column)` 은 Machbase TAG 테이블에서 컬럼 인자 미지원(MACHCLI-ERR-2036). 노드별 `ORDER BY TIME DESC LIMIT 1` 쿼리로 대체. `TIME >= new Date(ts)` 바인딩은 JSH 환경에서 검증 필요.
 
 로그 레벨 정책:
 - `db open/close failed` 는 **warn** 레벨 사용 (error 아님)
