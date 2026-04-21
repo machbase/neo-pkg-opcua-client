@@ -138,7 +138,7 @@ class Collector {
             client.connect();
             const names = onChangedNodes.map(n => n.name);
             const placeholders = names.map(() => '?').join(', ');
-            const sql = `SELECT NAME, LAST(${this._valueColumn}) FROM ${this._table} WHERE NAME IN (${placeholders}) AND TIME >= ? GROUP BY NAME`;
+            const sql = `SELECT NAME, LAST(${this._valueColumn}) AS ${this._valueColumn} FROM ${this._table} WHERE NAME IN (${placeholders}) AND TIME >= ? GROUP BY NAME`;
             const rows = client.query(sql, [...names, new Date(ts)]);
             for (const row of rows) {
                 const val = row[this._valueColumn];
@@ -147,10 +147,9 @@ class Collector {
                 }
             }
             const count = Object.keys(this._previousValues).length;
-            if (count > 0) {
-                this._logger.debug("loaded initial values from db", { count });
-            }
-        } catch (_) {
+            this._logger.debug("loaded initial values from db", { count });
+        } catch (e) {
+            this._logger.warn("failed to load initial values from db", { error: e && e.message ? e.message : String(e) });
         } finally {
             if (client) {
                 try {
