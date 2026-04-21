@@ -109,7 +109,9 @@ class Collector {
         const file = path.join(DATA_DIR, `${this.collectorName}.last-time.json`);
         try {
             fs.writeFileSync(file, JSON.stringify({ ts: this._lastCollectedAt.getTime() }));
-        } catch (_) {}
+        } catch (e) {
+            this._logger.warn("failed to persist last-time", { file, error: e && e.message ? e.message : String(e) });
+        }
     }
 
     _loadInitialValuesFromDb() {
@@ -177,6 +179,7 @@ class Collector {
             return;
         }
         this._lastCollectedAt = ts;
+        this._persistLastCollectedAt();
         try {
             this._lastCollectedAtWriter(this.collectorName, ts.getTime(), (err) => {
                 if (err) {
