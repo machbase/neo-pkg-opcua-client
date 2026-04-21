@@ -244,7 +244,7 @@ CREATE TAG TABLE ${table} (
 
 **에러 시 동작:** `_previousValues = {}` 리셋 (파일 삭제 없음 — 다음 재시작 시 이전 타임스탬프로 재시도)
 
-**JSH 검증 필요:** `LAST()` 집계 함수 및 `TIME >= new Date(ts)` 바인딩 동작
+**쿼리 구현:** `LAST(column)` 은 Machbase TAG 테이블에서 컬럼 인자 미지원(MACHCLI-ERR-2036). 노드별 `ORDER BY TIME DESC LIMIT 1` 쿼리로 대체. `TIME >= new Date(ts)` 바인딩은 JSH 환경에서 검증 필요.
 
 로그 레벨 정책:
 - `db open/close failed` 는 **warn** 레벨 사용 (error 아님)

@@ -138,12 +138,16 @@ class Collector {
             client.connect();
             const names = onChangedNodes.map(n => n.name);
             const placeholders = names.map(() => '?').join(', ');
-            const sql = `SELECT NAME, LAST(${this._valueColumn}) AS ${this._valueColumn} FROM ${this._table} WHERE NAME IN (${placeholders}) AND TIME >= ? GROUP BY NAME`;
-            const rows = client.query(sql, [...names, new Date(ts)]);
+            const rows = client.query(
+                `SELECT NAME, ${this._valueColumn} FROM ${this._table} WHERE NAME IN (${placeholders}) AND TIME >= ? ORDER BY TIME DESC`,
+                [...names, new Date(ts)]
+            );
             for (const row of rows) {
-                const val = row[this._valueColumn];
-                if (val !== undefined && val !== null) {
-                    this._previousValues[row.NAME] = val;
+                if (!(row.NAME in this._previousValues)) {
+                    const val = row[this._valueColumn];
+                    if (val !== undefined && val !== null) {
+                        this._previousValues[row.NAME] = val;
+                    }
                 }
             }
             const count = Object.keys(this._previousValues).length;
