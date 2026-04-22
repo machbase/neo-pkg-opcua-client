@@ -98,7 +98,7 @@ function getServiceMap(callback) {
 function install(name, callback) {
   service.install({
     name: `${SERVICE_PREFIX}${name}`,
-    enable: false,
+    enable: true,
     working_dir: APP_DIR,
     executable: path.join(APP_DIR, 'neo-collector.js'),
     args: [`${name}.json`],

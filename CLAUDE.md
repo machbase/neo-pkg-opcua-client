@@ -229,22 +229,22 @@ CREATE TAG TABLE ${table} (
 
 **동작 흐름:**
 
-1. `close()` 시 `_persistLastCollectedAt()` → `cgi-bin/data/{name}.last-time.json`에 마지막 수집 시각 저장
+1. 수집 성공 시마다 `_recordLastCollectedAt()` 내부에서 `_persistLastCollectedAt()` 호출 → `cgi-bin/data/{name}.last-time.json` 갱신. `close()` 시에도 한 번 더 호출 (마지막 값 보존).
 2. `start()` 시 `_loadInitialValuesFromDb()` 호출:
    - `data/{name}.last-time.json` 읽어 타임스탬프 파싱 → 파일 없거나 실패하면 스킵
    - `onChanged: true` 노드 이름을 IN절로 묶어 단일 쿼리:
      ```sql
-     SELECT NAME, LAST(VALUE) FROM {table}
+     SELECT NAME, {valueColumn} FROM {table}
      WHERE NAME IN (?, ...) AND TIME >= ?
-     GROUP BY NAME
+     ORDER BY TIME DESC
      ```
-   - 결과를 `_previousValues` 초기값으로 설정
+   - 결과를 순서대로 순회하며 노드별 첫 번째 행(최신 값)만 `_previousValues`에 설정
    - 쿼리는 별도 connection으로 수행 (append stream과 분리)
    - 실패 시 무시하고 빈 `_previousValues`로 시작 (첫 수집은 항상 append)
 
 **에러 시 동작:** `_previousValues = {}` 리셋 (파일 삭제 없음 — 다음 재시작 시 이전 타임스탬프로 재시도)
 
-**쿼리 구현:** `LAST(column)` 은 Machbase TAG 테이블에서 컬럼 인자 미지원(MACHCLI-ERR-2036). 노드별 `ORDER BY TIME DESC LIMIT 1` 쿼리로 대체. `TIME >= new Date(ts)` 바인딩은 JSH 환경에서 검증 필요.
+**쿼리 구현:** `LAST(column)` 은 Machbase TAG 테이블에서 컬럼 인자 미지원(MACHCLI-ERR-2036). 단일 `ORDER BY TIME DESC` 쿼리로 전체 노드를 한 번에 조회하고, 루프에서 노드별 첫 등장 행만 취하는 방식으로 대체. `TIME >= new Date(ts)` 바인딩은 JSH 환경에서 검증 필요.
 
 로그 레벨 정책:
 - `db open/close failed` 는 **warn** 레벨 사용 (error 아님)
