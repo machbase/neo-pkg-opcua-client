@@ -2,7 +2,10 @@
   "name": "neo-pkg-opcua-client",
   "version": "0.0.8",
   "bin": {},
-  "scripts": {},
+  "scripts": {
+    "start": "./scripts/collector-service-start.js",
+    "stop": "./scripts/collector-service-stop.js",
+    "uninstall": "./scripts/collector-service-uninstall.js"
+  },
   "dependencies": {}
 }
-
