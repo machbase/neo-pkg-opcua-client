@@ -129,6 +129,8 @@ class MockMachbaseClient {
 
 class MockOpcuaClient {
     constructor() {
+        this.endpoint = null;
+        this.readRetryInterval = null;
         this.opened = false;
         this.closed = false;
         this.openResult = true;
@@ -198,7 +200,11 @@ function makeHandler() {
     };
     require.cache[opcuaPath] = {
         id: opcuaPath, filename: opcuaPath, loaded: true,
-        exports: function() { return mockOpcuaClient; },
+        exports: function(endpoint, readRetryInterval) {
+            mockOpcuaClient.endpoint = endpoint;
+            mockOpcuaClient.readRetryInterval = readRetryInterval;
+            return mockOpcuaClient;
+        },
     };
     require.cache['opcua'] = {
         id: 'opcua', filename: 'opcua', loaded: true,
@@ -723,6 +729,32 @@ runner.run('Handler: dbTableColumns', {
         H.dbTableColumns({ host: 'h', port: 5656, user: 'SYS', password: 'p' }, 'LOG1', (r) => { result = r; });
         t.assert(!result.ok, 'should not be ok');
         t.assert(result.reason.includes('is not a TAG table'));
+    },
+});
+
+// ── opcuaConnect ──────────────────────────────────────────────────────────────
+
+runner.run('Handler: opcuaConnect', {
+    'returns connected true on success': (t) => {
+        const H = makeHandler();
+        let result;
+        H.opcuaConnect('opc.tcp://h:4840', 250, (r) => { result = r; });
+        t.assert(result.ok, 'should be ok');
+        t.assertEqual(result.data.endpoint, 'opc.tcp://h:4840');
+        t.assertEqual(result.data.connected, true);
+        t.assertEqual(mockOpcuaClient.endpoint, 'opc.tcp://h:4840');
+        t.assertEqual(mockOpcuaClient.readRetryInterval, 250);
+        t.assert(mockOpcuaClient.opened, 'client should be opened');
+        t.assert(mockOpcuaClient.closed, 'client should be closed');
+    },
+
+    'returns error when connect fails': (t) => {
+        const H = makeHandler();
+        mockOpcuaClient.openResult = false;
+        let result;
+        H.opcuaConnect('opc.tcp://bad:1', undefined, (r) => { result = r; });
+        t.assert(!result.ok, 'should not be ok');
+        t.assert(result.reason.includes('connect failed'));
     },
 });
 

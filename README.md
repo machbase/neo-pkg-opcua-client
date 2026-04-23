@@ -107,6 +107,7 @@ neo-tools/
     │   │   └── content/
     │   │       └── all.js      # GET    /cgi-bin/api/log/content/all?name=xxx
     │   └── opcua/
+    │       ├── connect.js      # POST   /cgi-bin/api/opcua/connect
     │       ├── read.js         # GET    /cgi-bin/api/opcua/read?endpoint=xxx&nodes=id1,id2
     │       ├── write.js        # POST   /cgi-bin/api/opcua/write
     │       └── node/
@@ -176,6 +177,7 @@ machbase-neo jsh -v /app=/path/to/neo-tools /app/cgi-bin/neo-collector.js /app/c
 | GET | `/cgi-bin/api/log/list?name=xxx` | 특정 collector 로그 파일 목록 조회 (name, size 포함) |
 | GET | `/cgi-bin/api/log/content?name=xxx` | 로그 파일 내용 조회 (start/end 줄 범위 지원) |
 | GET | `/cgi-bin/api/log/content/all?name=xxx` | 로그 파일 전체 내용 조회 |
+| POST | `/cgi-bin/api/opcua/connect` | OPC UA 서버 접속 확인 (body: `{ endpoint, readRetryInterval? }`) |
 | GET | `/cgi-bin/api/opcua/read?endpoint=xxx&nodes=id1,id2` | OPC UA 노드 일회성 읽기 |
 | POST | `/cgi-bin/api/opcua/write` | OPC UA 노드 일회성 쓰기 (body: `{ endpoint, writes: [{ node, value }] }`) |
 | POST | `/cgi-bin/api/opcua/node/descendants` | OPC UA 노드 BFS 하위 탐색 (body: `{ endpoint, node }`) |
