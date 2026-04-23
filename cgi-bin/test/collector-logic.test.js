@@ -25,8 +25,17 @@ class MockOpcuaClient {
     close() { this.closed = true; }
 }
 
+let mockDbQueryRows = [];
+let mockDbQueries = [];
+
 class MockMachbaseClient {
-    constructor() { this.closed = false; }
+    constructor() {
+        this.closed = false;
+        this.connected = false;
+        this.queryRows = [];
+    }
+    connect() { this.connected = true; }
+    query() { return this.queryRows; }
     close() { this.closed = true; }
 }
 
@@ -41,26 +50,63 @@ class MockMachbaseStream {
         this.columnNames = [];
         this.nameIdx = -1;
         this.timeIdx = -1;
+        this.primaryIdx = -1;
+        this.baseTimeIdx = -1;
+        this.primaryColumnName = 'NAME';
+        this.baseTimeColumnName = 'TIME';
         this.valueIdx = -1;
         this.openedValueColumn = null;
+        this.openedStringValueColumn = null;
+        this.valueColumnFamily = 'NUMERIC';
+        this.valueColumnType = 'DOUBLE';
+        this.stringValueColumnType = null;
+        this.stringOnly = false;
     }
-    open(_client, _table, valueColumn) {
+    open(_client, _table, valueColumn, stringValueColumn, options) {
         if (this.openError) return new Error(this.openError);
+        this.stringOnly = !!(options && options.stringOnly);
+        if (this.stringOnly && valueColumn) return new Error('valueColumn must not be set when stringOnly is true');
+        if (this.stringOnly && !stringValueColumn) return new Error('stringValueColumn is required when stringOnly is true');
         this.stream = {};
-        this.openedValueColumn = valueColumn;
-        this.columnNames = ['NAME', 'TIME', valueColumn || 'VALUE'];
+        this.openedValueColumn = this.stringOnly ? null : (valueColumn || 'VALUE');
+        this.openedStringValueColumn = stringValueColumn || null;
+        this.columnNames = [this.primaryColumnName, this.baseTimeColumnName];
+        if (!this.stringOnly) {
+            this.columnNames.push(this.openedValueColumn);
+        }
         this.nameIdx = 0;
         this.timeIdx = 1;
-        this.valueIdx = 2;
+        this.primaryIdx = 0;
+        this.baseTimeIdx = 1;
+        this.valueIdx = this.stringOnly ? -1 : 2;
+        this.valueColumnType = this.stringOnly ? null : (this.valueColumnFamily === 'JSON' ? 'JSON' : 'DOUBLE');
+        if (this.openedStringValueColumn) {
+            this.columnNames.push(this.openedStringValueColumn);
+            this.stringValueColumnType = 'VARCHAR(400)';
+        } else {
+            this.stringValueColumnType = null;
+        }
         return null;
     }
-    append(matrix) {
+    appendNamedRows(rows) {
         if (this.appendError) return new Error(this.appendError);
-        for (const row of matrix) {
-            this.appended.push({ name: row[0], time: row[1], value: row[2] });
+        for (const row of rows) {
+            this.appended.push(Object.assign({}, row, {
+                name: row[this.primaryColumnName],
+                time: row[this.baseTimeColumnName],
+                value: row[this.openedValueColumn],
+                stringValue: this.openedStringValueColumn ? row[this.openedStringValueColumn] : undefined,
+            }));
         }
         this.flushed = true;
         return null;
+    }
+    append(matrix) {
+        return this.appendNamedRows(matrix.map((row) => ({
+            [this.primaryColumnName]: row[0],
+            [this.baseTimeColumnName]: row[1],
+            [this.openedValueColumn || 'VALUE']: row[2],
+        })));
     }
     close() {
         this.stream = null;
@@ -91,7 +137,14 @@ function loadCollector() {
     };
     require.cache[clientPath] = {
         id: clientPath, filename: clientPath, loaded: true,
-        exports: { MachbaseClient: function() { this.close = () => {}; } },
+        exports: { MachbaseClient: function() {
+            this.connect = () => {};
+            this.query = (sql, values) => {
+                mockDbQueries.push({ sql, values });
+                return mockDbQueryRows;
+            };
+            this.close = () => {};
+        } },
     };
     require.cache[servicePath] = {
         id: servicePath, filename: servicePath, loaded: true,
@@ -127,18 +180,22 @@ const baseConfig = {
     dbTable: 'TAG',
 };
 
-function makeCollector(configOverride) {
-    try { fs.unlinkSync(path.join(os.tmpdir(), 'collector-a.last-time.json')); } catch (_) {}
+function makeCollector(configOverride, options = {}) {
+    const collectorName = options.collectorName || 'collector-a';
+    try { fs.unlinkSync(path.join(os.tmpdir(), `${collectorName}.last-time.json`)); } catch (_) {}
+    mockDbQueryRows = options.queryRows || [];
+    mockDbQueries = [];
     const Collector = loadCollector();
     const opcuaClient = new MockOpcuaClient();
     const dbClient    = new MockMachbaseClient();
-    const dbStream    = new MockMachbaseStream();
+    dbClient.queryRows = options.queryRows || [];
+    const dbStream    = options.dbStream || new MockMachbaseStream();
     const detailWrites = [];
     const config = configOverride || baseConfig;
     const c = new Collector(config, {
         opcuaClient,
         db: { client: dbClient, stream: dbStream },
-        collectorName: 'collector-a',
+        collectorName,
 
         lastCollectedAtWriter: (name, value, cb) => {
             detailWrites.push({ name, value });
@@ -146,7 +203,7 @@ function makeCollector(configOverride) {
         },
     });
     c._detailWrites = detailWrites;
-    return { c, opcuaClient, dbClient, dbStream, detailWrites };
+    return { c, opcuaClient, dbClient, dbStream, detailWrites, dbQueries: mockDbQueries };
 }
 
 function makeOnChangedCollector(nodes, readResults) {
@@ -198,6 +255,332 @@ runner.run('Collector constructor', {
         c.start();
         clearInterval(c.timer);
         t.assertEqual(dbStream2.openedValueColumn, 'VALUE', 'default value column should be VALUE');
+    },
+});
+
+runner.run('Collector.collect — stringValueColumn', {
+    'start() passes stringValueColumn to stream.open': (t) => {
+        const config = { ...baseConfig, stringValueColumn: 'TEXT_VALUE' };
+        const { c, dbStream } = makeCollector(config);
+        c.start();
+        t.assertEqual(dbStream.openedStringValueColumn, 'TEXT_VALUE');
+        clearInterval(c.timer);
+    },
+
+    'string values go to auxiliary column when configured': (t) => {
+        const config = {
+            ...baseConfig,
+            stringValueColumn: 'TEXT_VALUE',
+            opcua: {
+                ...baseConfig.opcua,
+                nodes: [{ nodeId: 'ns=1;s=ServerTime', name: 'sensor.time' }],
+            },
+        };
+        const { c, dbStream, detailWrites } = makeCollector(config);
+        c.start();
+        c.opcua.readResult = [{ value: '2026-04-22T10:00:00Z', sourceTimestamp: Date.now() }];
+        dbStream.appended = [];
+        c.collect();
+        t.assertEqual(dbStream.appended.length, 1, 'string row should be appended');
+        t.assertEqual(dbStream.appended[0].value, 0, 'numeric column should use placeholder 0');
+        t.assertEqual(dbStream.appended[0].stringValue, '2026-04-22T10:00:00Z');
+        t.assertEqual(dbStream.appended[0].TEXT_VALUE, '2026-04-22T10:00:00Z');
+        t.assertEqual(detailWrites.length, 1, 'lastCollectedAt should be updated');
+        clearInterval(c.timer);
+    },
+
+    'unsupported string values are skipped without auxiliary column': (t) => {
+        const config = {
+            ...baseConfig,
+            opcua: {
+                ...baseConfig.opcua,
+                nodes: [{ nodeId: 'ns=1;s=ServerTime', name: 'sensor.time' }],
+            },
+        };
+        const { c, dbStream, detailWrites } = makeCollector(config);
+        c.start();
+        c.opcua.readResult = [{ value: '2026-04-22T10:00:00Z', sourceTimestamp: Date.now() }];
+        dbStream.appended = [];
+        detailWrites.length = 0;
+        c.collect();
+        t.assertEqual(dbStream.appended.length, 0, 'string row should be skipped');
+        t.assertEqual(detailWrites.length, 0, 'lastCollectedAt should not be updated');
+        clearInterval(c.timer);
+    },
+
+    'boolean values stay in numeric column even when auxiliary column exists': (t) => {
+        const config = {
+            ...baseConfig,
+            stringValueColumn: 'TEXT_VALUE',
+            opcua: {
+                ...baseConfig.opcua,
+                nodes: [{ nodeId: 'ns=1;s=Status', name: 'sensor.status' }],
+            },
+        };
+        const { c, dbStream } = makeCollector(config);
+        c.start();
+        c.opcua.readResult = [{ value: true, sourceTimestamp: Date.now() }];
+        dbStream.appended = [];
+        c.collect();
+        t.assertEqual(dbStream.appended.length, 1, 'boolean row should be appended');
+        t.assertEqual(dbStream.appended[0].value, 1, 'boolean should stay numeric');
+        t.assertNull(dbStream.appended[0].stringValue, 'string column should remain empty');
+        clearInterval(c.timer);
+    },
+});
+
+runner.run('Collector.collect — stringOnly', {
+    'start() passes stringOnly to stream.open without valueColumn': (t) => {
+        const config = { ...baseConfig, stringOnly: true, stringValueColumn: 'TEXT_VALUE' };
+        const { c, dbStream } = makeCollector(config);
+        c.start();
+        t.assert(dbStream.stringOnly, 'stream should be opened in stringOnly mode');
+        t.assertNull(dbStream.openedValueColumn, 'valueColumn should not be used');
+        t.assertEqual(dbStream.openedStringValueColumn, 'TEXT_VALUE');
+        clearInterval(c.timer);
+    },
+
+    'empty valueColumn is allowed when stringOnly is true': (t) => {
+        const config = { ...baseConfig, stringOnly: true, valueColumn: '', stringValueColumn: 'TEXT_VALUE' };
+        const { c, dbStream } = makeCollector(config);
+        c.start();
+        t.assert(dbStream.stringOnly, 'stream should be opened in stringOnly mode');
+        t.assertNull(dbStream.openedValueColumn, 'empty valueColumn should be treated as omitted');
+        t.assertEqual(dbStream.openedStringValueColumn, 'TEXT_VALUE');
+        clearInterval(c.timer);
+    },
+
+    'all collected values are stored as strings': (t) => {
+        const config = {
+            ...baseConfig,
+            stringOnly: true,
+            stringValueColumn: 'TEXT_VALUE',
+            opcua: {
+                ...baseConfig.opcua,
+                nodes: [
+                    { nodeId: 'ns=1;s=Temp', name: 'sensor.temp' },
+                    { nodeId: 'ns=1;s=Status', name: 'sensor.status' },
+                    { nodeId: 'ns=1;s=ServerTime', name: 'sensor.time' },
+                ],
+            },
+        };
+        const { c, dbStream } = makeCollector(config);
+        c.start();
+        c.opcua.readResult = [
+            { value: 12.5, sourceTimestamp: 1000 },
+            { value: true, sourceTimestamp: 2000 },
+            { value: '2026-04-22T10:00:00Z', sourceTimestamp: 3000 },
+        ];
+        dbStream.appended = [];
+        c.collect();
+        t.assertEqual(dbStream.appended.length, 3, 'all rows should be appended');
+        t.assertEqual(dbStream.appended[0].TEXT_VALUE, '12.5');
+        t.assertEqual(dbStream.appended[1].TEXT_VALUE, 'true');
+        t.assertEqual(dbStream.appended[2].TEXT_VALUE, '2026-04-22T10:00:00Z');
+        t.assertEqual(dbStream.appended[0].value, undefined, 'numeric value column should not be used');
+        t.assert(!Object.prototype.hasOwnProperty.call(dbStream.appended[0], 'VALUE'), 'VALUE should not be present');
+        clearInterval(c.timer);
+    },
+
+    'valueColumn is rejected when stringOnly is true': (t) => {
+        const config = { ...baseConfig, stringOnly: true, valueColumn: 'VALUE', stringValueColumn: 'TEXT_VALUE' };
+        const { c, dbStream } = makeCollector(config);
+        c.start();
+        t.assert(!dbStream.stream, 'db stream should not open');
+        clearInterval(c.timer);
+    },
+
+    'onChanged initial load uses string column': (t) => {
+        const config = {
+            ...baseConfig,
+            stringOnly: true,
+            stringValueColumn: 'TEXT_VALUE',
+            opcua: {
+                ...baseConfig.opcua,
+                nodes: [{ nodeId: 'ns=1;s=ServerTime', name: 'sensor.time', onChanged: true }],
+            },
+        };
+        const { c, dbQueries } = makeCollector(config, {
+            queryRows: [{ NAME: 'sensor.time', TEXT_VALUE: 'same' }],
+        });
+        fs.writeFileSync(path.join(os.tmpdir(), `${c.collectorName}.last-time.json`), JSON.stringify({ ts: 1000 }));
+        c.start();
+        t.assertEqual(dbQueries.length, 1, 'initial load should query db once');
+        t.assert(dbQueries[0].sql.indexOf('SELECT NAME, TEXT_VALUE') >= 0, 'query should select string column');
+        t.assertEqual(c._previousValues['sensor.time'], 'same');
+        clearInterval(c.timer);
+    },
+});
+
+runner.run('Collector.collect — json mode', {
+    'aggregates all nodes into one JSON row using collector name': (t) => {
+        const config = {
+            ...baseConfig,
+            valueColumn: 'PAYLOAD',
+            opcua: {
+                ...baseConfig.opcua,
+                nodes: [
+                    { nodeId: 'ns=1;s=Temp', name: 'temp', bias: 10, multiplier: 2 },
+                    { nodeId: 'ns=1;s=Status', name: 'status' },
+                    { nodeId: 'ns=1;s=ServerTime', name: 'serverTime' },
+                ],
+            },
+        };
+        const dbStream = new MockMachbaseStream();
+        dbStream.valueColumnFamily = 'JSON';
+        const { c, detailWrites } = makeCollector(config, { dbStream });
+        c.start();
+        c.opcua.readResult = [
+            { value: 5, sourceTimestamp: 1000 },
+            { value: true, sourceTimestamp: 2000 },
+            { value: '2026-04-22T10:00:00Z', sourceTimestamp: 3000 },
+        ];
+        dbStream.appended = [];
+        c.collect();
+        t.assertEqual(dbStream.appended.length, 1, 'json mode should append one row');
+        t.assertEqual(dbStream.appended[0].NAME, 'collector-a');
+        const payload = JSON.parse(dbStream.appended[0].PAYLOAD);
+        t.assertEqual(payload.temp, 30);
+        t.assertEqual(payload.status, true);
+        t.assertEqual(payload.serverTime, '2026-04-22T10:00:00Z');
+        t.assertEqual(detailWrites.length, 1, 'lastCollectedAt should be updated');
+        clearInterval(c.timer);
+    },
+
+    'stores failed node values as null in JSON payload': (t) => {
+        const config = {
+            ...baseConfig,
+            valueColumn: 'PAYLOAD',
+            opcua: {
+                ...baseConfig.opcua,
+                nodes: [
+                    { nodeId: 'ns=1;s=Status', name: 'status' },
+                    { nodeId: 'ns=1;s=ServerTime', name: 'serverTime' },
+                ],
+            },
+        };
+        const dbStream = new MockMachbaseStream();
+        dbStream.valueColumnFamily = 'JSON';
+        const { c } = makeCollector(config, { dbStream });
+        c.start();
+        c.opcua.readResult = [
+            { value: true, statusCode: 123, sourceTimestamp: 1000 },
+            { value: '2026-04-22T10:00:00Z', sourceTimestamp: 2000 },
+        ];
+        dbStream.appended = [];
+        c.collect();
+        t.assertEqual(dbStream.appended.length, 1, 'json mode should still append');
+        const payload = JSON.parse(dbStream.appended[0].PAYLOAD);
+        t.assertNull(payload.status, 'bad status should become null');
+        t.assertEqual(payload.serverTime, '2026-04-22T10:00:00Z');
+        clearInterval(c.timer);
+    },
+
+    'skips second collect when all onChanged values are unchanged in JSON mode': (t) => {
+        const config = {
+            ...baseConfig,
+            valueColumn: 'PAYLOAD',
+            opcua: {
+                ...baseConfig.opcua,
+                nodes: [
+                    { nodeId: 'ns=1;s=Status', name: 'status', onChanged: true },
+                    { nodeId: 'ns=1;s=ServerTime', name: 'serverTime', onChanged: true },
+                ],
+            },
+        };
+        const dbStream = new MockMachbaseStream();
+        dbStream.valueColumnFamily = 'JSON';
+        const { c, detailWrites } = makeCollector(config, { dbStream });
+        c.start();
+        c.opcua.readResult = [
+            { value: false, sourceTimestamp: 1000 },
+            { value: 'same', sourceTimestamp: 2000 },
+        ];
+        c.collect();
+        dbStream.appended = [];
+        dbStream.flushed = false;
+        detailWrites.length = 0;
+        c.collect();
+        t.assertEqual(dbStream.appended.length, 0, 'unchanged json payload should be skipped');
+        t.assert(!dbStream.flushed, 'append should not be called');
+        t.assertEqual(detailWrites.length, 0, 'lastCollectedAt should not be updated');
+        clearInterval(c.timer);
+    },
+});
+
+runner.run('Collector.collect — tag key columns', {
+    'standard rows use primary and basetime column names from stream metadata': (t) => {
+        const dbStream = new MockMachbaseStream();
+        dbStream.primaryColumnName = 'TAG_ID';
+        dbStream.baseTimeColumnName = 'TS';
+        const config = {
+            ...baseConfig,
+            opcua: {
+                ...baseConfig.opcua,
+                nodes: [{ nodeId: 'ns=1;s=Temp', name: 'sensor.temp' }],
+            },
+        };
+        const { c } = makeCollector(config, { dbStream });
+        c.start();
+        c.opcua.readResult = [{ value: 12.5, sourceTimestamp: 1000 }];
+        dbStream.appended = [];
+        c.collect();
+        t.assertEqual(dbStream.appended.length, 1, 'row should be appended');
+        t.assertEqual(dbStream.appended[0].TAG_ID, 'sensor.temp');
+        t.assert(dbStream.appended[0].TS instanceof Date, 'basetime should be written to TS');
+        t.assertEqual(dbStream.appended[0].VALUE, 12.5);
+        t.assertEqual(dbStream.appended[0].name, 'sensor.temp');
+        clearInterval(c.timer);
+    },
+
+    'json rows use primary and basetime column names from stream metadata': (t) => {
+        const dbStream = new MockMachbaseStream();
+        dbStream.primaryColumnName = 'TAG_ID';
+        dbStream.baseTimeColumnName = 'TS';
+        dbStream.valueColumnFamily = 'JSON';
+        const config = {
+            ...baseConfig,
+            valueColumn: 'PAYLOAD',
+            opcua: {
+                ...baseConfig.opcua,
+                nodes: [{ nodeId: 'ns=1;s=Status', name: 'status' }],
+            },
+        };
+        const { c } = makeCollector(config, { dbStream });
+        c.start();
+        c.opcua.readResult = [{ value: true, sourceTimestamp: 1000 }];
+        dbStream.appended = [];
+        c.collect();
+        t.assertEqual(dbStream.appended.length, 1, 'json row should be appended');
+        t.assertEqual(dbStream.appended[0].TAG_ID, 'collector-a');
+        t.assert(dbStream.appended[0].TS instanceof Date, 'basetime should be written to TS');
+        t.assertEqual(JSON.parse(dbStream.appended[0].PAYLOAD).status, true);
+        clearInterval(c.timer);
+    },
+
+    'onChanged initial load queries primary and basetime column names': (t) => {
+        const dbStream = new MockMachbaseStream();
+        dbStream.primaryColumnName = 'TAG_ID';
+        dbStream.baseTimeColumnName = 'TS';
+        const config = {
+            ...baseConfig,
+            opcua: {
+                ...baseConfig.opcua,
+                nodes: [{ nodeId: 'ns=1;s=Temp', name: 'sensor.temp', onChanged: true }],
+            },
+        };
+        const { c, dbQueries } = makeCollector(config, {
+            dbStream,
+            queryRows: [{ TAG_ID: 'sensor.temp', VALUE: 11 }],
+        });
+        fs.writeFileSync(path.join(os.tmpdir(), `${c.collectorName}.last-time.json`), JSON.stringify({ ts: 1000 }));
+        c.start();
+        t.assertEqual(dbQueries.length, 1, 'initial load should query db once');
+        t.assert(dbQueries[0].sql.indexOf('SELECT TAG_ID, VALUE') >= 0, 'query should select custom primary column');
+        t.assert(dbQueries[0].sql.indexOf('WHERE TAG_ID IN') >= 0, 'query should filter custom primary column');
+        t.assert(dbQueries[0].sql.indexOf('TS >=') >= 0, 'query should filter custom basetime column');
+        t.assertEqual(c._previousValues['sensor.temp'], 11);
+        clearInterval(c.timer);
     },
 });
 

@@ -202,7 +202,7 @@ function makeHandler() {
     };
     require.cache['opcua'] = {
         id: 'opcua', filename: 'opcua', loaded: true,
-        exports: { NodeClass: { Variable: 2 }, AttributeID: { DataType: 14 } },
+        exports: { NodeClass: { Variable: 2 }, AttributeID: { DataType: 14 }, StatusCode: { Good: 0 } },
     };
 
     delete require.cache[handlerPath];
@@ -837,12 +837,12 @@ runner.run('Handler: nodeDescendants', {
                 { NodeId: 'ns=1;s=Folder', NodeClass: 1 },
             ],
         };
-        mockOpcuaClient.attributesResult = [{ Status: 0, Value: 'Double' }];
+        mockOpcuaClient.attributesResult = [{ status: 0, value: 'Double' }];
         let result;
         H.nodeDescendants({ endpoint: 'opc.tcp://h:4840', node: 'ns=0;i=85' }, (r) => { result = r; });
         t.assert(result.ok, 'should be ok');
-        t.assertEqual(result.data[0].DataType, 'Double', 'Variable node gets DataType');
-        t.assert(!result.data[1].DataType, 'non-Variable node has no DataType');
+        t.assertEqual(result.data[0].dataType, 'Double', 'Variable node gets DataType');
+        t.assertEqual(result.data[1].dataType, '', 'non-Variable node has empty DataType');
     },
 
     'handles attributes failure gracefully': (t) => {
@@ -850,11 +850,11 @@ runner.run('Handler: nodeDescendants', {
         mockOpcuaClient.browseResult = {
             'ns=0;i=85': [{ NodeId: 'ns=1;s=Temp', NodeClass: 2 }],
         };
-        mockOpcuaClient.attributesResult = [{ Status: 2147483648, Value: '' }];
+        mockOpcuaClient.attributesResult = [{ status: 2147483648, value: '' }];
         let result;
         H.nodeDescendants({ endpoint: 'opc.tcp://h:4840', node: 'ns=0;i=85' }, (r) => { result = r; });
         t.assert(result.ok, 'should be ok');
-        t.assertEqual(result.data[0].DataType, '', 'bad status yields empty DataType');
+        t.assertEqual(result.data[0].dataType, '', 'bad status yields empty DataType');
     },
 });
 
