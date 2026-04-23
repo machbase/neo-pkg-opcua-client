@@ -50,6 +50,7 @@
 | GET    | [/log/list?name=](#get-loglistname) | 특정 collector 로그 파일 목록 조회 |
 | GET    | [/log/content?name=](#get-logcontentname) | 로그 파일 내용 조회 (줄 범위 지정) |
 | GET    | [/log/content/all?name=](#get-logcontentallname) | 로그 파일 전체 내용 조회 |
+| POST   | [/opcua/connect](#post-opcuaconnect) | OPC UA 서버 접속 확인 |
 | GET    | [/opcua/read?endpoint=&nodes=](#get-opcuareadendpointnodes) | OPC UA 노드 읽기 |
 | POST   | [/opcua/write](#post-opcuawrite) | OPC UA 노드 쓰기 |
 | POST   | [/opcua/node/descendants](#post-opcuanodedescendants) | OPC UA 노드 트리 탐색 |
@@ -797,6 +798,45 @@ CREATE TAG TABLE {table} (
 ---
 
 ## OPC UA
+
+### POST /opcua/connect
+
+OPC UA 서버 endpoint에 접속 가능한지 확인합니다. 노드 읽기나 브라우즈는 수행하지 않고 연결 성공 여부만 확인한 뒤 즉시 연결을 종료합니다.
+
+**요청 본문**
+
+```json
+{
+  "endpoint": "opc.tcp://192.168.1.100:4840",
+  "readRetryInterval": 100
+}
+```
+
+| 필드 | 필수 | 설명 |
+|------|------|------|
+| `endpoint` | Y | OPC UA 서버 주소 |
+| `readRetryInterval` | N | 읽기 재시도 간격 (ms). 생략 시 기본값 `100` |
+
+**응답 (성공)**
+
+```json
+{
+  "ok": true,
+  "data": {
+    "endpoint": "opc.tcp://192.168.1.100:4840",
+    "connected": true
+  }
+}
+```
+
+**응답 (실패)**
+
+| 조건 | reason |
+|------|--------|
+| `endpoint` 누락 | `"endpoint is required"` |
+| 연결 실패 | `"connect failed: <endpoint>"` |
+
+---
 
 ### GET /opcua/read?endpoint=&nodes=
 

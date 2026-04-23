@@ -759,6 +759,34 @@ function dbTableColumns(db, table, reply) {
 // ── OPC UA one-shot endpoints ───────────────────────────────────────────────
 
 /**
+ * POST /cgi-bin/api/opcua/connect
+ * @param {string} endpoint
+ * @param {number} [readRetryInterval]
+ * @param {function} reply
+ */
+function opcuaConnect(endpoint, readRetryInterval, reply) {
+  const client = new OpcuaClient(endpoint, readRetryInterval);
+  if (!client.open()) {
+    reply({
+      ok: false,
+      reason: 'connect failed: ' + endpoint,
+    });
+    return;
+  }
+  try {
+    reply({
+      ok: true,
+      data: {
+        endpoint,
+        connected: true,
+      },
+    });
+  } finally {
+    client.close();
+  }
+}
+
+/**
  * GET /cgi-bin/api/opcua/read?endpoint=xxx&nodes=id1,id2
  * @param {string} endpoint
  * @param {string[]} nodeIds
@@ -934,6 +962,7 @@ module.exports = {
   dbTableList,
   dbTableColumns,
   nodeDescendants,
+  opcuaConnect,
   opcuaRead,
   opcuaWrite,
 };
