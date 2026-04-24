@@ -115,6 +115,24 @@ class MockMachbaseStream {
     }
 }
 
+class MockLogger {
+    constructor() {
+        this.entries = [];
+    }
+    _push(level, stage, fields) {
+        this.entries.push({
+            level,
+            stage,
+            fields: fields ? { ...fields } : {},
+        });
+    }
+    trace(stage, fields) { this._push('trace', stage, fields); }
+    debug(stage, fields) { this._push('debug', stage, fields); }
+    info(stage, fields)  { this._push('info', stage, fields); }
+    warn(stage, fields)  { this._push('warn', stage, fields); }
+    error(stage, fields) { this._push('error', stage, fields); }
+}
+
 // ── require.cache injection ────────────────────────────────────────────────────
 
 const mockDbConf = { host: 'localhost', port: 5656, user: 'sys', password: 'manager' };
@@ -190,6 +208,7 @@ function makeCollector(configOverride, options = {}) {
     const dbClient    = new MockMachbaseClient();
     dbClient.queryRows = options.queryRows || [];
     const dbStream    = options.dbStream || new MockMachbaseStream();
+    const logger      = options.logger || null;
     const detailWrites = [];
     const config = configOverride || baseConfig;
     const c = new Collector(config, {
@@ -201,6 +220,7 @@ function makeCollector(configOverride, options = {}) {
             detailWrites.push({ name, value });
             if (cb) cb(null);
         },
+        logger,
     });
     c._detailWrites = detailWrites;
     return { c, opcuaClient, dbClient, dbStream, detailWrites, dbQueries: mockDbQueries };
@@ -942,6 +962,86 @@ runner.run('Collector.collect — general', {
         t.assertEqual(dbStream.appended.length, 0, 'nothing should be appended if db reopen fails');
         t.assertEqual(detailWrites.length, 0, 'lastCollectedAt should not be updated');
         clearInterval(c.timer);
+    },
+});
+
+runner.run('Collector.collect — warn summary', {
+    'repeated opcua connect warn emits summary and recovery info': (t) => {
+        const logger = new MockLogger();
+        const { c, opcuaClient } = makeCollector({
+            ...baseConfig,
+            opcua: {
+                ...baseConfig.opcua,
+                nodes: [{ nodeId: 'ns=1;s=Tag1', name: 'sensor.tag1' }],
+            },
+        }, { logger });
+        let now = 0;
+        c._now = () => now;
+        c._warnSummaryEvery = 2;
+        c._warnSummaryIntervalMs = 60 * 1000;
+        opcuaClient.readResult = [{ value: 1.0, sourceTimestamp: Date.now() }];
+        opcuaClient.open = () => false;
+
+        c.collect();
+        now += 1000;
+        c.collect();
+        now += 1000;
+        c.collect();
+
+        const warnLogs = logger.entries.filter((entry) => entry.level === 'warn' && entry.stage === 'opcua connect failed, will retry');
+        t.assertEqual(warnLogs.length, 2, 'first warn and one repeated summary should be logged');
+        t.assertEqual(warnLogs[1].fields.repeated, true, 'second warn should be marked as repeated');
+        t.assertEqual(warnLogs[1].fields.suppressedCount, 2, 'suppressed count should be cumulative');
+        t.assertEqual(warnLogs[1].fields.durationSec, 2, 'duration should reflect repeated warning span');
+
+        opcuaClient.open = () => true;
+        now += 1000;
+        c.collect();
+
+        const recoveryLogs = logger.entries.filter((entry) => entry.level === 'info' && entry.stage === 'opcua connected');
+        t.assertEqual(recoveryLogs.length, 1, 'recovery info should be logged once');
+        t.assertEqual(recoveryLogs[0].fields.recovered, true, 'recovery log should be marked');
+        t.assertEqual(recoveryLogs[0].fields.suppressedCount, 2, 'recovery log should keep suppressed count');
+        t.assertEqual(recoveryLogs[0].fields.durationSec, 3, 'recovery log should include full outage duration');
+    },
+
+    'repeated unsupported value warn is summarized and resets after recovery': (t) => {
+        const logger = new MockLogger();
+        const { c, opcuaClient } = makeCollector({
+            ...baseConfig,
+            opcua: {
+                ...baseConfig.opcua,
+                nodes: [{ nodeId: 'ns=1;s=ServerTime', name: 'sensor.time' }],
+            },
+        }, { logger });
+        let now = 0;
+        c._now = () => now;
+        c._warnSummaryEvery = 2;
+        c._warnSummaryIntervalMs = 60 * 1000;
+
+        opcuaClient.readResult = [{ value: '2026-04-24T12:00:00Z', sourceTimestamp: Date.now() }];
+        c.collect();
+        now += 1000;
+        c.collect();
+        now += 1000;
+        c.collect();
+
+        let warnLogs = logger.entries.filter((entry) => entry.level === 'warn' && entry.stage === 'unsupported value without string column');
+        t.assertEqual(warnLogs.length, 2, 'first warn and one repeated summary should be logged');
+        t.assertEqual(warnLogs[1].fields.repeated, true, 'summary warn should be marked as repeated');
+        t.assertEqual(warnLogs[1].fields.suppressedCount, 2, 'summary warn should report suppressed repeats');
+
+        opcuaClient.readResult = [{ value: 10.5, sourceTimestamp: Date.now() }];
+        now += 1000;
+        c.collect();
+
+        opcuaClient.readResult = [{ value: '2026-04-24T12:01:00Z', sourceTimestamp: Date.now() }];
+        now += 1000;
+        c.collect();
+
+        warnLogs = logger.entries.filter((entry) => entry.level === 'warn' && entry.stage === 'unsupported value without string column');
+        t.assertEqual(warnLogs.length, 3, 'recovered warning state should start a new incident');
+        t.assert(!warnLogs[2].fields.repeated, 'new incident should start with a fresh warn');
     },
 });
 
