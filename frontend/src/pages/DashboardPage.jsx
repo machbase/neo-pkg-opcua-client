@@ -71,33 +71,70 @@ export default function DashboardPage({ collectors, detail, onDelete }) {
     const [confirmDelete, setConfirmDelete] = useState(false);
     const [showLogs, setShowLogs] = useState(false);
     const [lastCollectedAt, setLastCollectedAt] = useState(null);
+    const [opcuaReachable, setOpcuaReachable] = useState(null);
+    const [opcuaError, setOpcuaError] = useState(null);
     const [nodeFilter, setNodeFilter] = useState("");
     const [sortKey, setSortKey] = useState("name");
     const [sortDir, setSortDir] = useState("asc");
     const intervalRef = useRef(null);
+    const abnormalCheckedRef = useRef(false);
 
     const collector = collectors.find((c) => c.id === selectedCollectorId);
 
-    const fetchLastTime = useCallback(async (name) => {
+    const config = detail?.config;
+    const opcua = config?.opcua;
+
+    const fetchLastTime = useCallback(async (name, params) => {
+        let ts = null;
         try {
-            const ts = await api.getLastCollectedTime(name);
+            ts = await api.getLastCollectedTime(name);
             setLastCollectedAt(ts);
         } catch {
             setLastCollectedAt(null);
+            return;
+        }
+        const { interval, endpoint, readRetryInterval, running } = params;
+        const abnormal =
+            running && interval > 0 && (ts == null || Date.now() - ts > 3 * interval);
+
+        if (!abnormal) {
+            abnormalCheckedRef.current = false;
+            setOpcuaReachable(null);
+            setOpcuaError(null);
+            return;
+        }
+
+        if (abnormalCheckedRef.current || !endpoint) return;
+        abnormalCheckedRef.current = true;
+
+        try {
+            await api.testOpcuaConnection(endpoint, readRetryInterval);
+            setOpcuaReachable(true);
+            setOpcuaError(null);
+        } catch (e) {
+            setOpcuaReachable(false);
+            setOpcuaError(e.reason || e.message || "connection failed");
         }
     }, []);
 
     useEffect(() => {
         clearInterval(intervalRef.current);
         setLastCollectedAt(null);
+        setOpcuaReachable(null);
+        setOpcuaError(null);
+        abnormalCheckedRef.current = false;
         if (!collector) return;
-        fetchLastTime(collector.id);
-        intervalRef.current = setInterval(() => fetchLastTime(collector.id), 10000);
+        const params = {
+            interval: Number(opcua?.interval) || 0,
+            endpoint: opcua?.endpoint,
+            readRetryInterval: opcua?.readRetryInterval != null ? Number(opcua.readRetryInterval) : undefined,
+            running: collector.status === "running",
+        };
+        fetchLastTime(collector.id, params);
+        intervalRef.current = setInterval(() => fetchLastTime(collector.id, params), 5000);
         return () => clearInterval(intervalRef.current);
-    }, [collector?.id, fetchLastTime]);
+    }, [collector?.id, collector?.status, opcua?.interval, opcua?.endpoint, opcua?.readRetryInterval, fetchLastTime]);
 
-    const config = detail?.config;
-    const opcua = config?.opcua;
     const dbServer = typeof config?.db === "string" ? config.db : "";
     const dbTable = config?.dbTable || "";
     const valueColumn = config?.valueColumn || "";
@@ -191,7 +228,27 @@ export default function DashboardPage({ collectors, detail, onDelete }) {
                         {/* OPC UA Server */}
                         <div className="form-card flex flex-col">
                             <div className="flex items-start justify-between mb-16">
-                                <div className="form-card-header !mb-0">OPC UA</div>
+                                <div className="flex items-center gap-12">
+                                    <div className="form-card-header !mb-0">OPC UA</div>
+                                    {opcuaReachable === false && (
+                                        <span
+                                            className="badge badge-error"
+                                            title={opcuaError || undefined}
+                                            style={{ fontSize: 10, padding: "2px 6px" }}
+                                        >
+                                            Disconnected
+                                        </span>
+                                    )}
+                                    {opcuaReachable === true && (
+                                        <span
+                                            className="badge badge-warning"
+                                            title="Server is reachable but the collector hasn't updated for a while"
+                                            style={{ fontSize: 10, padding: "2px 6px" }}
+                                        >
+                                            Stale
+                                        </span>
+                                    )}
+                                </div>
                                 <Icon name="sensors" className="text-primary" />
                             </div>
                             <div className="form-label">Server</div>
