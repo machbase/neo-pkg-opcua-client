@@ -11,6 +11,9 @@ function _configuredColumn(value) {
     return value === undefined || value === null || value === '' ? null : value;
 }
 
+const WARN_SUMMARY_EVERY = 60;
+const WARN_SUMMARY_INTERVAL_MS = 5 * 60 * 1000;
+
 class Collector {
     constructor(config, { opcuaClient, db, collectorName, lastCollectedAtWriter, logger } = {}) {
         const dbConf = CGI.getServerConfig(config.db);
@@ -46,6 +49,10 @@ class Collector {
         this._stringValueColumnType = null;
         this._primaryColumnName = 'NAME';
         this._baseTimeColumnName = 'TIME';
+        this._warnStates = {};
+        this._warnSummaryEvery = WARN_SUMMARY_EVERY;
+        this._warnSummaryIntervalMs = WARN_SUMMARY_INTERVAL_MS;
+        this._now = () => Date.now();
     }
 
     _storageMode() {
@@ -137,6 +144,76 @@ class Collector {
         return null;
     }
 
+    _nowMs() {
+        const value = this._now();
+        if (value instanceof Date) {
+            return value.getTime();
+        }
+        const numeric = Number(value);
+        return Number.isFinite(numeric) ? numeric : Date.now();
+    }
+
+    _warnRepeated(key, stage, fields) {
+        const now = this._nowMs();
+        const summaryEvery = this._warnSummaryEvery > 0 ? this._warnSummaryEvery : WARN_SUMMARY_EVERY;
+        const summaryIntervalMs = this._warnSummaryIntervalMs > 0 ? this._warnSummaryIntervalMs : WARN_SUMMARY_INTERVAL_MS;
+        const state = this._warnStates[key];
+        if (!state) {
+            this._warnStates[key] = {
+                firstAt: now,
+                lastWarnAt: now,
+                suppressedCount: 0,
+            };
+            this._logger.warn(stage, fields);
+            return;
+        }
+
+        state.suppressedCount += 1;
+        const reachedCount = state.suppressedCount % summaryEvery === 0;
+        const reachedTime = now - state.lastWarnAt >= summaryIntervalMs;
+        if (!reachedCount && !reachedTime) {
+            return;
+        }
+
+        state.lastWarnAt = now;
+        this._logger.warn(stage, Object.assign({}, fields, {
+            repeated: true,
+            suppressedCount: state.suppressedCount,
+            durationSec: Math.floor(Math.max(0, now - state.firstAt) / 1000),
+        }));
+    }
+
+    _clearWarnState(key) {
+        delete this._warnStates[key];
+    }
+
+    _recoverWarnState(key) {
+        const state = this._warnStates[key];
+        if (!state) {
+            return null;
+        }
+        delete this._warnStates[key];
+        if (state.suppressedCount <= 0) {
+            return null;
+        }
+        const now = this._nowMs();
+        return {
+            recovered: true,
+            suppressedCount: state.suppressedCount,
+            durationSec: Math.floor(Math.max(0, now - state.firstAt) / 1000),
+        };
+    }
+
+    _nodeWarnKey(prefix, node) {
+        return `${prefix}:${node && node.nodeId ? node.nodeId : ''}:${node && node.name ? node.name : ''}`;
+    }
+
+    _clearUnsupportedValueWarnings(node) {
+        this._clearWarnState(this._nodeWarnKey('unsupported-string-only-empty', node));
+        this._clearWarnState(this._nodeWarnKey('unsupported-string-empty', node));
+        this._clearWarnState(this._nodeWarnKey('unsupported-value-no-string', node));
+    }
+
     _buildStandardRow(node, result) {
         const ts = this._timestampOf(result);
         const rawValue = result ? result.value : null;
@@ -147,7 +224,7 @@ class Collector {
         if (this._stringOnly) {
             stringValue = this._coerceStringValue(rawValue);
             if (stringValue === null) {
-                this._logger.warn("unsupported empty value for string-only column", {
+                this._warnRepeated(this._nodeWarnKey('unsupported-string-only-empty', node), "unsupported empty value for string-only column", {
                     nodeId: node.nodeId,
                     name: node.name,
                 });
@@ -160,7 +237,7 @@ class Collector {
         } else if (this._stringValueColumn) {
             stringValue = this._coerceStringValue(rawValue);
             if (stringValue === null) {
-                this._logger.warn("unsupported empty value for string column", {
+                this._warnRepeated(this._nodeWarnKey('unsupported-string-empty', node), "unsupported empty value for string column", {
                     nodeId: node.nodeId,
                     name: node.name,
                 });
@@ -171,13 +248,15 @@ class Collector {
             numericValue = 0;
             storedValue = stringValue;
         } else {
-            this._logger.warn("unsupported value without string column", {
+            this._warnRepeated(this._nodeWarnKey('unsupported-value-no-string', node), "unsupported value without string column", {
                 nodeId: node.nodeId,
                 name: node.name,
                 type: rawValue === null ? 'null' : typeof rawValue,
             });
             return { skipped: true, ts, rawValue, value: null, stringValue: null, reason: 'unsupported' };
         }
+
+        this._clearUnsupportedValueWarnings(node);
 
         const fields = { nodeId: node.nodeId, name: node.name, ts: ts.toISOString() };
         if (numericValue !== null || typeof rawValue === 'boolean' || typeof rawValue === 'number') {
@@ -231,13 +310,13 @@ class Collector {
     _openDb() {
         if (this._injectedDb) {
             if (this._stringOnly && this._configuredValueColumn) {
-                this._logger.warn("db open failed", { error: "valueColumn must not be set when stringOnly is true" });
+                this._warnRepeated('db-open-failed', "db open failed", { error: "valueColumn must not be set when stringOnly is true" });
                 return;
             }
             const { client, stream } = this._injectedDb;
             const err = stream.open(client, this._table, this._valueColumn, this._stringValueColumn, { stringOnly: this._stringOnly });
             if (err) {
-                this._logger.warn("db open failed", { error: err.message });
+                this._warnRepeated('db-open-failed', "db open failed", { error: err.message });
                 return;
             }
             this._dbClient = client;
@@ -247,7 +326,7 @@ class Collector {
             this._stringValueColumnType = this._dbStream.stringValueColumnType || null;
             this._primaryColumnName = this._dbStream.primaryColumnName || 'NAME';
             this._baseTimeColumnName = this._dbStream.baseTimeColumnName || 'TIME';
-            this._logger.debug("db opened", {
+            const openedFields = {
                 table: this._table,
                 columns: this._dbStream.columnNames.join(', '),
                 nameIdx: this._dbStream.nameIdx,
@@ -261,12 +340,18 @@ class Collector {
                 stringValueColumnType: this._stringValueColumnType,
                 stringOnly: this._stringOnly,
                 storageMode: this._storageMode(),
-            });
+            };
+            const recovery = this._recoverWarnState('db-open-failed');
+            if (recovery) {
+                this._logger.info("db opened", Object.assign({}, openedFields, recovery));
+            } else {
+                this._logger.debug("db opened", openedFields);
+            }
             return;
         }
         try {
             if (this._stringOnly && this._configuredValueColumn) {
-                this._logger.warn("db open failed", { error: "valueColumn must not be set when stringOnly is true" });
+                this._warnRepeated('db-open-failed', "db open failed", { error: "valueColumn must not be set when stringOnly is true" });
                 return;
             }
             const client = new MachbaseClient(this._dbConf);
@@ -274,7 +359,7 @@ class Collector {
             const stream = new MachbaseStream();
             const err = stream.open(client, this._table, this._valueColumn, this._stringValueColumn, { stringOnly: this._stringOnly });
             if (err) {
-                this._logger.warn("db open failed", { error: err.message });
+                this._warnRepeated('db-open-failed', "db open failed", { error: err.message });
                 try {
                     client.close();
                 } catch (_) {}
@@ -287,7 +372,7 @@ class Collector {
             this._stringValueColumnType = this._dbStream.stringValueColumnType || null;
             this._primaryColumnName = this._dbStream.primaryColumnName || 'NAME';
             this._baseTimeColumnName = this._dbStream.baseTimeColumnName || 'TIME';
-            this._logger.debug("db opened", {
+            const openedFields = {
                 table: this._table,
                 columns: this._dbStream.columnNames.join(', '),
                 nameIdx: this._dbStream.nameIdx,
@@ -301,9 +386,15 @@ class Collector {
                 stringValueColumnType: this._stringValueColumnType,
                 stringOnly: this._stringOnly,
                 storageMode: this._storageMode(),
-            });
+            };
+            const recovery = this._recoverWarnState('db-open-failed');
+            if (recovery) {
+                this._logger.info("db opened", Object.assign({}, openedFields, recovery));
+            } else {
+                this._logger.debug("db opened", openedFields);
+            }
         } catch (e) {
-            this._logger.warn("db open failed", { error: e.message });
+            this._warnRepeated('db-open-failed', "db open failed", { error: e.message });
         }
     }
 
@@ -339,8 +430,9 @@ class Collector {
         const file = path.join(DATA_DIR, `${this.collectorName}.last-time.json`);
         try {
             fs.writeFileSync(file, JSON.stringify({ ts: this._lastCollectedAt.getTime() }));
+            this._clearWarnState('persist-last-time-failed');
         } catch (e) {
-            this._logger.warn("failed to persist last-time", { file, error: e && e.message ? e.message : String(e) });
+            this._warnRepeated('persist-last-time-failed', "failed to persist last-time", { file, error: e && e.message ? e.message : String(e) });
         }
     }
 
@@ -458,14 +550,16 @@ class Collector {
         try {
             this._lastCollectedAtWriter(this.collectorName, ts.getTime(), (err) => {
                 if (err) {
-                    this._logger.debug("failed to update service detail", {
+                    this._warnRepeated('service-detail-update-failed', "failed to update service detail", {
                         name: this.collectorName,
                         error: err.message,
                     });
+                    return;
                 }
+                this._clearWarnState('service-detail-update-failed');
             });
         } catch (e) {
-            this._logger.warn("failed to update service detail", {
+            this._warnRepeated('service-detail-update-failed', "failed to update service detail", {
                 name: this.collectorName,
                 error: e.message,
             });
@@ -484,11 +578,16 @@ class Collector {
 
             if (!this.opcua.open()) {
                 this._opcuaConnected = false;
-                this._logger.warn("opcua connect failed, will retry", { endpoint: this.opcua.endpoint });
+                this._warnRepeated('opcua-connect-failed', "opcua connect failed, will retry", { endpoint: this.opcua.endpoint });
                 return;
             }
             if (!this._opcuaConnected) {
-                this._logger.info("opcua connected", { endpoint: this.opcua.endpoint });
+                const connectedFields = { endpoint: this.opcua.endpoint };
+                const recovery = this._recoverWarnState('opcua-connect-failed');
+                if (recovery) {
+                    Object.assign(connectedFields, recovery);
+                }
+                this._logger.info("opcua connected", connectedFields);
                 this._opcuaConnected = true;
             }
 
@@ -507,7 +606,9 @@ class Collector {
                     lastTs = this._advanceLastTs(lastTs, ts);
 
                     if (this._isBadStatus(result)) {
-                        this._logger.warn("opcua bad status", { nodeId: node.nodeId, name: node.name, statusCode: result.statusCode });
+                        this._warnRepeated(this._nodeWarnKey('opcua-bad-status', node), "opcua bad status", { nodeId: node.nodeId, name: node.name, statusCode: result.statusCode });
+                    } else {
+                        this._clearWarnState(this._nodeWarnKey('opcua-bad-status', node));
                     }
 
                     const rawValue = result.value;
@@ -554,7 +655,9 @@ class Collector {
                 this.nodes.forEach((node, idx) => {
                     const result = results[idx] || {};
                     if (this._isBadStatus(result)) {
-                        this._logger.warn("opcua bad status", { nodeId: node.nodeId, name: node.name, statusCode: result.statusCode });
+                        this._warnRepeated(this._nodeWarnKey('opcua-bad-status', node), "opcua bad status", { nodeId: node.nodeId, name: node.name, statusCode: result.statusCode });
+                    } else {
+                        this._clearWarnState(this._nodeWarnKey('opcua-bad-status', node));
                     }
                     const built = this._buildStandardRow(node, result);
                     if (built.skipped) {

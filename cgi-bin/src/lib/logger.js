@@ -36,7 +36,7 @@ const LEVEL_LABEL = {
  *
  * 포맷: [LEVEL] YYYY-MM-DD HH:MM:SS.sss  stage  message  (key=value ...)
  *
- * 설정 (config.logging):
+ * 설정 (config.log):
  *   disable  : boolean                                 (기본 false, true이면 모든 출력 비활성화)
  *   level    : "trace"|"debug"|"info"|"warn"|"error"  (기본 "info")
  *   maxFiles : number                                  (기본 10, 최대 rotate 파일 개수)
