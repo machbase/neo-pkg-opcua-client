@@ -8,7 +8,6 @@ const process = require('process');
 const _argv = process.argv[1];
 const ROOT = _argv.slice(0, _argv.lastIndexOf('/cgi-bin/') + '/cgi-bin'.length);
 const { CGI } = require(path.join(ROOT, 'src', 'cgi', 'cgi_util.js'));
-const { LOG_DIR } = require(path.join(ROOT, 'src', 'lib', 'logger.js'));
 
 const reply = (r) => CGI.reply(r);
 
@@ -20,13 +19,13 @@ const handlers = {
       return;
     }
 
-    // path traversal 방지: 파일명만 허용 (디렉토리 구분자 차단)
-    if (name.indexOf('/') >= 0 || name.indexOf('\\') >= 0 || name.indexOf('..') >= 0) {
-      reply({ ok: false, reason: 'invalid file name' });
+    let filePath;
+    try {
+      filePath = CGI.resolveLogFilePath(name);
+    } catch (err) {
+      reply({ ok: false, reason: err.message });
       return;
     }
-
-    const filePath = path.join(LOG_DIR, name);
     let content;
     try {
       content = fs.readFileSync(filePath, 'utf8');

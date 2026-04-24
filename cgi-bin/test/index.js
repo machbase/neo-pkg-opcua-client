@@ -1,6 +1,7 @@
 const process = require("process");
 
 const suites = [
+    "./cgi-util.test.js",
     "./logger.test.js",
     "./machbase-stream.test.js",
     "./types.test.js",
