@@ -5,9 +5,12 @@ import { useApp } from "../../context/AppContext";
 
 const NUMERIC_TYPES = new Set(["SHORT", "INTEGER", "LONG", "FLOAT", "DOUBLE"]);
 
-function isNumericColumn(col) {
-    if (!col || !col.type) return false;
-    return NUMERIC_TYPES.has(col.type.toUpperCase());
+function classifyColumn(col) {
+    const t = (col?.type || "").toUpperCase();
+    if (NUMERIC_TYPES.has(t)) return "numeric";
+    if (t === "JSON") return "json";
+    if (t.startsWith("VARCHAR")) return "string";
+    return "other";
 }
 
 function displayTableName(user, name) {
@@ -74,7 +77,7 @@ export default function DbSection({
         setLoadingColumns(true);
         try {
             const data = await serversApi.listColumns(db.server, db.table);
-            setColumns((data?.columns || []).filter(isNumericColumn));
+            setColumns(data?.columns || []);
         } catch (e) {
             notify(e.reason || e.message, "error");
             setColumns([]);
@@ -91,20 +94,69 @@ export default function DbSection({
         fetchColumns();
     }, [fetchColumns]);
 
+    const { numericCols, jsonCols, stringCols } = useMemo(() => {
+        const nc = [];
+        const jc = [];
+        const sc = [];
+        for (const col of columns) {
+            const kind = classifyColumn(col);
+            if (kind === "numeric") nc.push(col);
+            else if (kind === "json") jc.push(col);
+            else if (kind === "string") sc.push(col);
+        }
+        return { numericCols: nc, jsonCols: jc, stringCols: sc };
+    }, [columns]);
+
+    const hasValueColCandidates = numericCols.length + jsonCols.length > 0;
+
+    const selectedColumnKind = useMemo(() => {
+        if (!db.column) return "";
+        if (numericCols.some((c) => c.name === db.column)) return "numeric";
+        if (jsonCols.some((c) => c.name === db.column)) return "json";
+        return "";
+    }, [db.column, numericCols, jsonCols]);
+
+    useEffect(() => {
+        if ((db.columnKind || "") !== selectedColumnKind) {
+            update("db.columnKind", selectedColumnKind);
+        }
+    }, [selectedColumnKind, db.columnKind, update]);
+
+    useEffect(() => {
+        if (!db.table || loadingColumns) return;
+        if (!hasValueColCandidates && stringCols.length > 0 && !db.stringOnly) {
+            update("db.stringOnly", true);
+            if (db.column) update("db.column", "");
+        }
+    }, [db.table, loadingColumns, hasValueColCandidates, stringCols.length, db.stringOnly, db.column, update]);
+
     const handleServerChange = (e) => {
-        const name = e.target.value;
-        update("db.server", name);
+        update("db.server", e.target.value);
         update("db.table", "");
         update("db.column", "");
+        update("db.stringColumn", "");
+        update("db.stringOnly", false);
+        update("db.columnKind", "");
     };
 
     const handleTableChange = (e) => {
         update("db.table", e.target.value);
         update("db.column", "");
+        update("db.stringColumn", "");
+        update("db.stringOnly", false);
+        update("db.columnKind", "");
     };
 
-    const handleColumnChange = (e) => {
-        update("db.column", e.target.value);
+    const handleValueColumnChange = (e) => {
+        const name = e.target.value;
+        update("db.column", name);
+        if (jsonCols.some((c) => c.name === name)) {
+            update("db.stringColumn", "");
+        }
+    };
+
+    const handleStringColumnChange = (e) => {
+        update("db.stringColumn", e.target.value);
     };
 
     const hasServer = Boolean(db.server);
@@ -117,6 +169,20 @@ export default function DbSection({
             ),
         [tables, db.table]
     );
+
+    const isJsonMode = selectedColumnKind === "json";
+    const stringOnly = !!db.stringOnly;
+    const showValueColumn = !stringOnly;
+    const stringColumnRequired = stringOnly;
+    const stringColumnDisabled = !hasTable || isJsonMode;
+
+    const footerHint = stringOnly
+        ? "All values will be stored as strings in the selected column."
+        : isJsonMode
+        ? "All node values will be written as a single JSON payload per cycle."
+        : db.stringColumn
+        ? "Numeric/boolean values go to Value Column; other types go to String Value Column."
+        : "All node values will be written to the selected column.";
 
     return (
         <div className="form-card">
@@ -161,63 +227,133 @@ export default function DbSection({
                     </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-12">
-                    <div>
-                        <label className="form-label">Table</label>
-                        <select
-                            required
-                            value={db.table || ""}
-                            onChange={handleTableChange}
-                            onMouseDown={() => hasServer && fetchTables()}
-                            disabled={!hasServer}
-                            className="w-full"
-                        >
-                            <option value="" disabled>
-                                {!hasServer
-                                    ? "Select a database server first"
-                                    : loadingTables
-                                    ? "Loading..."
-                                    : "Select a table..."}
-                            </option>
-                            {db.table && !tableInList && (
-                                <option value={db.table}>{db.table}</option>
-                            )}
-                            {groupedTables.map(([user, list]) => (
-                                <optgroup key={user} label={user}>
-                                    {list.map((t) => {
-                                        const label = displayTableName(user, t.name);
-                                        return (
-                                            <option key={label} value={label}>
-                                                {label}
-                                            </option>
-                                        );
-                                    })}
-                                </optgroup>
-                            ))}
-                        </select>
+                <div>
+                    <label className="form-label">Table</label>
+                    <select
+                        required
+                        value={db.table || ""}
+                        onChange={handleTableChange}
+                        onMouseDown={() => hasServer && fetchTables()}
+                        disabled={!hasServer}
+                        className="w-full"
+                    >
+                        <option value="" disabled>
+                            {!hasServer
+                                ? "Select a database server first"
+                                : loadingTables
+                                ? "Loading..."
+                                : "Select a table..."}
+                        </option>
+                        {db.table && !tableInList && (
+                            <option value={db.table}>{db.table}</option>
+                        )}
+                        {groupedTables.map(([user, list]) => (
+                            <optgroup key={user} label={user}>
+                                {list.map((t) => {
+                                    const label = displayTableName(user, t.name);
+                                    return (
+                                        <option key={label} value={label}>
+                                            {label}
+                                        </option>
+                                    );
+                                })}
+                            </optgroup>
+                        ))}
+                    </select>
+                </div>
+
+                {hasTable && stringOnly && !hasValueColCandidates && (
+                    <div className="text-xs text-on-surface-tertiary flex items-start gap-6">
+                        <Icon name="info" className="icon-sm shrink-0 mt-1" />
+                        <span>
+                            No numeric/JSON column in this table — falling back to
+                            string-only mode.
+                        </span>
                     </div>
+                )}
+
+                <div className="grid grid-cols-2 gap-12">
+                    {showValueColumn && (
+                        <div>
+                            <label className="form-label">Value Column</label>
+                            <select
+                                required
+                                value={db.column || ""}
+                                onChange={handleValueColumnChange}
+                                onMouseDown={() => hasTable && fetchColumns()}
+                                disabled={!hasTable}
+                                className="w-full"
+                            >
+                                <option value="" disabled>
+                                    {!hasTable
+                                        ? "Select a table first"
+                                        : loadingColumns
+                                        ? "Loading..."
+                                        : "Select a column..."}
+                                </option>
+                                {db.column &&
+                                    !numericCols.find((c) => c.name === db.column) &&
+                                    !jsonCols.find((c) => c.name === db.column) && (
+                                        <option value={db.column}>{db.column}</option>
+                                    )}
+                                {numericCols.length > 0 && (
+                                    <optgroup label="Numeric">
+                                        {numericCols.map((c) => (
+                                            <option key={c.name} value={c.name}>
+                                                {c.name} ({c.type})
+                                            </option>
+                                        ))}
+                                    </optgroup>
+                                )}
+                                {jsonCols.length > 0 && (
+                                    <optgroup label="JSON">
+                                        {jsonCols.map((c) => (
+                                            <option key={c.name} value={c.name}>
+                                                {c.name} ({c.type})
+                                            </option>
+                                        ))}
+                                    </optgroup>
+                                )}
+                            </select>
+                        </div>
+                    )}
 
                     <div>
-                        <label className="form-label">Value Column</label>
+                        <label className="form-label">
+                            String Value Column
+                            {stringColumnRequired ? null : (
+                                <span className="text-on-surface-tertiary font-normal ml-4">
+                                    (optional)
+                                </span>
+                            )}
+                        </label>
                         <select
-                            required
-                            value={db.column || ""}
-                            onChange={handleColumnChange}
-                            onMouseDown={() => hasTable && fetchColumns()}
-                            disabled={!hasTable}
+                            required={stringColumnRequired}
+                            value={isJsonMode ? "" : db.stringColumn || ""}
+                            onChange={handleStringColumnChange}
+                            onMouseDown={() => hasTable && !isJsonMode && fetchColumns()}
+                            disabled={stringColumnDisabled}
                             className="w-full"
+                            title={isJsonMode ? "Not used in JSON mode" : undefined}
                         >
-                            <option value="" disabled>
+                            <option value="">
                                 {!hasTable
                                     ? "Select a table first"
+                                    : isJsonMode
+                                    ? "Not used in JSON mode"
                                     : loadingColumns
                                     ? "Loading..."
-                                    : "Select a column..."}
+                                    : stringColumnRequired
+                                    ? "Select a VARCHAR column..."
+                                    : "None"}
                             </option>
-                            {db.column && !columns.find((c) => c.name === db.column) && (
-                                <option value={db.column}>{db.column}</option>
-                            )}
-                            {columns.map((c) => (
+                            {db.stringColumn &&
+                                !stringCols.find((c) => c.name === db.stringColumn) && (
+                                    <option value={db.stringColumn}>
+                                        {db.stringColumn}
+                                    </option>
+                                )}
+                            {stringCols.map((c) => (
                                 <option key={c.name} value={c.name}>
                                     {c.name} ({c.type})
                                 </option>
@@ -226,7 +362,7 @@ export default function DbSection({
                     </div>
                 </div>
                 <p className="text-xs text-on-surface-tertiary mt-4 text-right">
-                    All node values will be written to the selected column.
+                    {footerHint}
                 </p>
             </div>
         </div>

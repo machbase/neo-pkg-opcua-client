@@ -4,6 +4,17 @@ import NodeBrowserPanel from "./NodeBrowserPanel";
 
 const NODE_ID_PATTERN = /^ns=\d+;[isgb]=.+$/;
 
+const NUMERIC_OPCUA_TYPES = new Set([
+    "Boolean", "SByte", "Byte", "Int16", "UInt16",
+    "Int32", "UInt32", "Int64", "UInt64", "Float", "Double",
+]);
+
+function isNonNumericNode(node) {
+    const dt = node.dataType;
+    if (!dt) return false;
+    if (dt.toLowerCase() === "boolean") return false;
+    return !NUMERIC_OPCUA_TYPES.has(dt);
+}
 
 const CALC_STEP_DEF = {
     b: { op: "+", field: "bias", placeholder: "0" },
@@ -103,7 +114,7 @@ function CalcSteps({ node, onFieldChange, onOrderChange }) {
     );
 }
 
-export default function NodeListEditor({ nodes, onChange, endpoint }) {
+export default function NodeListEditor({ nodes, onChange, endpoint, selectionMode = "numeric-only", storageMode = "default" }) {
     const [name, setName] = useState("");
     const [nodeId, setNodeId] = useState("");
     const [nodeIdError, setNodeIdError] = useState(null);
@@ -341,6 +352,18 @@ export default function NodeListEditor({ nodes, onChange, endpoint }) {
                 </div>
             )}
 
+            {selectionMode === "numeric-only" && nodes.some(isNonNumericNode) && (
+                <div className="text-warning bg-warning/10 border border-warning/40 rounded-base px-12 py-8 mb-12 flex items-start gap-8 text-xs">
+                    <Icon name="warning" className="icon-sm shrink-0 mt-1" />
+                    <span>
+                        {nodes.filter(isNonNumericNode).length} node
+                        {nodes.filter(isNonNumericNode).length === 1 ? "" : "s"} have
+                        non-numeric data types and will not be stored. Add a String
+                        Value Column or pick a JSON column to include them.
+                    </span>
+                </div>
+            )}
+
             {/* Table */}
             {nodes.length > 0 ? (
                 <div className="border border-border rounded-base overflow-hidden">
@@ -411,7 +434,9 @@ export default function NodeListEditor({ nodes, onChange, endpoint }) {
                                                 </div>
                                             </td>
                                             <td>
-                                                {row.dataType?.toLowerCase() === "boolean" ? null : (
+                                                {storageMode === "string" ||
+                                                row.dataType?.toLowerCase() === "boolean" ||
+                                                isNonNumericNode(row) ? null : (
                                                     <CalcSteps
                                                         node={row}
                                                         onFieldChange={(field, raw) =>
@@ -457,6 +482,7 @@ export default function NodeListEditor({ nodes, onChange, endpoint }) {
                     existingNodes={nodes}
                     onSync={handleBrowseSync}
                     onClose={() => setBrowserOpen(false)}
+                    selectionMode={selectionMode}
                 />
             )}
         </div>

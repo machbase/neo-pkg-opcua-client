@@ -55,7 +55,7 @@ function collectDescendants(parentId, cm, result) {
     }
 }
 
-export default function NodeBrowserPanel({ endpoint, existingNodes, onSync, onClose }) {
+export default function NodeBrowserPanel({ endpoint, existingNodes, onSync, onClose, selectionMode = "numeric-only" }) {
     const [rootNodeId, setRootNodeId] = useState(DEFAULT_ROOT);
     const [rootInput, setRootInput] = useState(DEFAULT_ROOT);
     const [loading, setLoading] = useState(false);
@@ -319,7 +319,7 @@ export default function NodeBrowserPanel({ endpoint, existingNodes, onSync, onCl
                         const isSelected = selectedIds.has(node.nodeId);
                         const isRemoved = removedIds.has(node.nodeId);
                         const isNumeric = isObject || isNumericType(getDataType(node));
-                        const isDisabled = !isObject && !isNumeric;
+                        const isDisabled = !isObject && !isNumeric && selectionMode === "numeric-only";
                         const isChecked = alreadyAdded ? !isRemoved : isSelected;
 
                         const handleRowClick = (e) => {
@@ -351,7 +351,13 @@ export default function NodeBrowserPanel({ endpoint, existingNodes, onSync, onCl
                                     cursor: isDisabled || isCycle ? "default" : "pointer",
                                 }}
                                 onClick={handleRowClick}
-                                title={isCycle ? `${getLabel(node)}  —  ${node.nodeId} (circular reference)` : `${getLabel(node)}  —  ${node.nodeId}`}
+                                title={
+                                    isCycle
+                                        ? `${getLabel(node)}  —  ${node.nodeId} (circular reference)`
+                                        : isDisabled
+                                        ? `${getLabel(node)}  —  ${node.nodeId} (non-numeric — set String Value Column or use a JSON column to enable)`
+                                        : `${getLabel(node)}  —  ${node.nodeId}`
+                                }
                             >
                                 <span className="node-tree-toggle">
                                     {isObject ? (

@@ -101,6 +101,8 @@ export default function DashboardPage({ collectors, detail, onDelete }) {
     const dbServer = typeof config?.db === "string" ? config.db : "";
     const dbTable = config?.dbTable || "";
     const valueColumn = config?.valueColumn || "";
+    const stringValueColumn = config?.stringValueColumn || "";
+    const stringOnly = Boolean(config?.stringOnly);
     const nodes = opcua?.nodes || [];
     const logLevel = (config?.log?.level || "INFO").toUpperCase();
     const logLevels = recordedLevels(logLevel);
@@ -248,12 +250,29 @@ export default function DashboardPage({ collectors, detail, onDelete }) {
                                         {dbTable || "-"}
                                     </div>
                                 </div>
-                                <div className="min-w-0 flex-1">
-                                    <div className="form-label">Column</div>
-                                    <div className="text-base font-mono font-semibold truncate" title={valueColumn}>
-                                        {valueColumn || "-"}
+                                {!stringOnly && (
+                                    <div className="min-w-0 flex-1">
+                                        <div className="form-label">Value Column</div>
+                                        <div className="text-base font-mono font-semibold truncate" title={valueColumn}>
+                                            {valueColumn || "-"}
+                                        </div>
                                     </div>
-                                </div>
+                                )}
+                                {(stringOnly || stringValueColumn) && (
+                                    <div className="min-w-0 flex-1">
+                                        <div className="form-label">
+                                            String Column
+                                            {stringOnly && (
+                                                <span className="badge badge-muted ml-4" style={{ fontSize: 10, padding: "2px 5px" }}>
+                                                    only
+                                                </span>
+                                            )}
+                                        </div>
+                                        <div className="text-base font-mono font-semibold truncate" title={stringValueColumn}>
+                                            {stringValueColumn || "-"}
+                                        </div>
+                                    </div>
+                                )}
                             </div>
                         </div>
                     </div>

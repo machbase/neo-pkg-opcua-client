@@ -21,6 +21,9 @@ const DEFAULTS = {
     server: '',
     table: '',
     column: '',
+    stringColumn: '',
+    stringOnly: false,
+    columnKind: '',
   },
   log: {
     level: 'INFO',
@@ -58,6 +61,9 @@ export default function CollectorFormPage({ detail, onRefresh, onRefreshDetail, 
           server: typeof c.db === 'string' ? c.db : '',
           table: c.dbTable || '',
           column: c.valueColumn || '',
+          stringColumn: c.stringValueColumn || '',
+          stringOnly: Boolean(c.stringOnly),
+          columnKind: '',
         },
         log: {
           ...DEFAULTS.log,
@@ -84,8 +90,30 @@ export default function CollectorFormPage({ detail, onRefresh, onRefreshDetail, 
     })
   }
 
+  const nodeSelectionMode =
+    form.db.stringOnly || form.db.columnKind === 'json' || !!form.db.stringColumn
+      ? 'all'
+      : 'numeric-only'
+
   const handleSubmit = async (e) => {
     e.preventDefault()
+
+    if (form.db.stringOnly) {
+      if (!form.db.stringColumn) {
+        notify('String Value Column is required for string-only mode', 'error')
+        return
+      }
+    } else {
+      if (!form.db.column) {
+        notify('Value Column is required', 'error')
+        return
+      }
+      if (form.db.stringColumn && form.db.stringColumn === form.db.column) {
+        notify('String Value Column must differ from Value Column', 'error')
+        return
+      }
+    }
+
     setSaving(true)
     try {
       const config = {
@@ -97,11 +125,20 @@ export default function CollectorFormPage({ detail, onRefresh, onRefreshDetail, 
         },
         db: form.db.server,
         dbTable: form.db.table,
-        valueColumn: form.db.column,
         log: {
           level: form.log.level,
           maxFiles: Number(form.log.file.maxFiles),
         },
+      }
+
+      if (form.db.stringOnly) {
+        config.stringOnly = true
+        config.stringValueColumn = form.db.stringColumn
+      } else {
+        config.valueColumn = form.db.column
+        if (form.db.stringColumn && form.db.columnKind !== 'json') {
+          config.stringValueColumn = form.db.stringColumn
+        }
       }
 
       if (isEdit) {
@@ -205,6 +242,8 @@ export default function CollectorFormPage({ detail, onRefresh, onRefreshDetail, 
                   nodes={form.opcua.nodes}
                   onChange={nodes => update('opcua.nodes', nodes)}
                   endpoint={form.opcua.endpoint}
+                  selectionMode={nodeSelectionMode}
+                  storageMode={form.db.stringOnly ? 'string' : form.db.columnKind === 'json' ? 'json' : 'default'}
                 />
               </div>
 
