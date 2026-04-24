@@ -3,6 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 const process = require('process');
+const { LOG_DIR } = require('../lib/logger.js');
 
 const APP_DIR = process.argv[1].slice(0, process.argv[1].lastIndexOf('/cgi-bin/') + '/cgi-bin'.length);
 const CONF_DIR = path.join(APP_DIR, 'conf.d');
@@ -14,6 +15,47 @@ fs.mkdirSync(SERVERS_DIR, { recursive: true });
 fs.mkdirSync(DATA_DIR, { recursive: true });
 
 class CGI {
+  /**
+   * 로그 디렉토리 경로를 반환한다.
+   * @returns {string}
+   */
+  static getLogDir() {
+    return LOG_DIR;
+  }
+
+  /**
+   * log API에서 사용할 파일명을 검증하고 절대경로로 변환한다.
+   * 경로 탐색은 허용하지 않는다.
+   * @param {string} name
+   * @returns {string}
+   */
+  static resolveLogFilePath(name) {
+    const fileName = String(name || '').trim();
+    if (!fileName) {
+      throw new Error('name is required');
+    }
+    if (fileName.indexOf('/') >= 0 || fileName.indexOf('\\') >= 0 || fileName.indexOf('..') >= 0) {
+      throw new Error('invalid file name');
+    }
+    return path.join(CGI.getLogDir(), fileName);
+  }
+
+  /**
+   * collector name 기준 active log 파일 경로를 반환한다.
+   * 실시간 tail 대상은 항상 {name}.log 이다.
+   * @param {string} name
+   * @returns {string}
+   */
+  static resolveActiveLogFilePath(name) {
+    const text = String(name || '').trim();
+    if (!text) {
+      throw new Error('name is required');
+    }
+    if (text.indexOf('/') >= 0 || text.indexOf('\\') >= 0 || text.indexOf('..') >= 0) {
+      throw new Error('invalid log name');
+    }
+    return CGI.resolveLogFilePath(`${text}.log`);
+  }
 
   // ── conf.d CRUD ─────────────────────────────────────────────────────────────
 

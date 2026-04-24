@@ -48,6 +48,7 @@
 | GET    | [/db/table/columns?server=&table=](#get-dbtablecolumnsservertable) | 테이블 컬럼 조회 |
 | GET    | [/log/all](#get-logall) | 패키지 전체 로그 파일 목록 조회 |
 | GET    | [/log/list?name=](#get-loglistname) | 특정 collector 로그 파일 목록 조회 |
+| GET    | [/log/tail?name=&intervalMs=](#get-logtailnameintervalms) | active 로그 파일 SSE tail |
 | GET    | [/log/content?name=](#get-logcontentname) | 로그 파일 내용 조회 (줄 범위 지정) |
 | GET    | [/log/content/all?name=](#get-logcontentallname) | 로그 파일 전체 내용 조회 |
 | POST   | [/opcua/connect](#post-opcuaconnect) | OPC UA 서버 접속 확인 |
@@ -728,6 +729,62 @@ CREATE TAG TABLE {table} (
 |------|--------|
 | `name` 누락 | `"name is required"` |
 | 디렉토리 읽기 실패 (권한 등) | 시스템 오류 메시지 |
+
+---
+
+### GET /log/tail?name=&intervalMs=
+
+SSE(`text/event-stream`) 기반 active 로그 tail API입니다.
+
+- `name`은 로그 파일명이 아니라 collector 이름입니다.
+- tail 대상은 내부적으로 active 로그 파일 `{name}.log`로 고정됩니다.
+- 기존 로그 내용은 전송하지 않고, 연결 이후 append되는 최신 로그 라인만 전송합니다.
+- 로그 파일이 아직 없으면 연결을 유지하고, 파일이 생성된 뒤부터 follow 합니다.
+- `intervalMs`는 polling 주기이며 기본값은 `500`입니다. 허용 범위는 `250`부터 `5000`까지입니다.
+- event 이름은 `line`이고, payload는 JSON이 아닌 로그 라인 문자열입니다.
+- 기존 `/log/list`, `/log/content`, `/log/content/all`은 그대로 유지됩니다.
+
+| 파라미터 | 필수 | 설명 |
+|----------|------|------|
+| `name` | Y | collector 이름 |
+| `intervalMs` | N | polling 주기 (ms). 기본값 `500`, 범위 `250..5000` |
+
+**응답 헤더**
+
+```http
+Content-Type: text/event-stream
+```
+
+**SSE 예시**
+
+```text
+: tail collector-a.log
+
+event: line
+data: [INFO] 2026-04-24 10:00:00.000  collector-a  starting
+
+event: line
+data: [INFO] 2026-04-24 10:00:01.000  collector-a  opcua connected
+```
+
+프론트엔드 사용 예시:
+
+```js
+const es = new EventSource(
+  `${API_BASE}/log/tail?name=${encodeURIComponent(collectorId)}&intervalMs=500`
+);
+
+es.addEventListener("line", (event) => {
+  appendLine(event.data);
+});
+```
+
+**시작 전 오류 응답**
+
+| 조건 | reason |
+|------|--------|
+| `name` 누락 | `"name is required"` |
+| 경로 구분자 포함 등 잘못된 collector 이름 | `"invalid log name"` |
 
 ---
 
