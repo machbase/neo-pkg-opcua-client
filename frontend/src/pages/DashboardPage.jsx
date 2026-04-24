@@ -5,7 +5,7 @@ import * as api from "../api/collectors";
 import StatusBadge from "../components/common/StatusBadge";
 import ConfirmDialog from "../components/common/ConfirmDialog";
 import LogViewerModal from "../components/logs/LogViewerModal";
-// import LiveLogs from "../components/logs/LiveLogs";
+import LiveLogs from "../components/logs/LiveLogs";
 import Icon from "../components/common/Icon";
 
 function timeAgo(ts) {
@@ -143,7 +143,7 @@ export default function DashboardPage({ collectors, detail, onDelete }) {
     const nodes = opcua?.nodes || [];
     const logLevel = (config?.log?.level || "INFO").toUpperCase();
     const logLevels = recordedLevels(logLevel);
-    const logMaxFiles = config?.log?.file?.maxFiles;
+    const logMaxFiles = config?.log?.maxFiles;
 
     const displayNodes = useMemo(() => {
         const q = nodeFilter.trim().toLowerCase();
@@ -441,7 +441,7 @@ export default function DashboardPage({ collectors, detail, onDelete }) {
                     </div>
 
                     {/* Row 4: Live Logs */}
-                    {/* <LiveLogs collectorId={collector.id} /> */}
+                    <LiveLogs collectorId={collector.id} />
 
                 </div>
             )}

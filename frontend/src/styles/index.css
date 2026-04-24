@@ -2433,6 +2433,12 @@ label.switch input:checked + .switch-slider::before {
 .tooltip:hover::after {
     opacity: 1;
 }
+.tooltip.tooltip-above::after {
+    top: auto;
+    bottom: 100%;
+    margin-top: 0;
+    margin-bottom: var(--spacing-4);
+}
 
 /* ─── PAGE LAYOUT ─── */
 
