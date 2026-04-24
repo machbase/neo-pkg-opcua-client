@@ -108,6 +108,7 @@ export default function DbSection({
     }, [columns]);
 
     const hasValueColCandidates = numericCols.length + jsonCols.length > 0;
+    const hasAnySummarized = useMemo(() => columns.some((c) => c.summarized), [columns]);
 
     const selectedColumnKind = useMemo(() => {
         if (!db.column) return "";
@@ -307,11 +308,19 @@ export default function DbSection({
                                 )}
                                 {jsonCols.length > 0 && (
                                     <optgroup label="JSON">
-                                        {jsonCols.map((c) => (
-                                            <option key={c.name} value={c.name}>
-                                                {c.name} ({c.type})
-                                            </option>
-                                        ))}
+                                        {jsonCols.map((c) => {
+                                            const disabled = hasAnySummarized && !c.summarized;
+                                            return (
+                                                <option
+                                                    key={c.name}
+                                                    value={c.name}
+                                                    disabled={disabled}
+                                                >
+                                                    {c.name} ({c.type})
+                                                    {disabled ? " — needs SUMMARIZED" : ""}
+                                                </option>
+                                            );
+                                        })}
                                     </optgroup>
                                 )}
                             </select>
