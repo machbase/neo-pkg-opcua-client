@@ -82,6 +82,9 @@ OPC UA Endpoint가 입력되어 있으면 **Browse** 버튼으로 서버의 Node
 
 ![Node Browser 화면](./images/opcua-node-browser.png)
 
+Browse로 추가된 Node는 목록에 자동 이름으로 들어갈 수 있습니다.  
+목록의 `Tag Name`을 클릭하면 이름을 바로 수정할 수 있고, `Enter`를 누르거나 입력창 밖을 클릭하면 저장됩니다.
+
 ## Transform 설정
 
 Node 목록에서는 각 항목에 대해 Transform을 줄 수 있습니다.

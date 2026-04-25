@@ -82,6 +82,9 @@ If the OPC UA Endpoint is already entered, you can click **Browse** to explore n
 
 ![Node Browser screen](./images/opcua-node-browser.png)
 
+Nodes added through Browse may appear in the list with automatically generated names.  
+You can click `Tag Name` in the mapped list to edit it directly, and press `Enter` or click outside the input to save it.
+
 ## Transform Settings
 
 Each node in the list can have a Transform.
