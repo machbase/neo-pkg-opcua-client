@@ -71,14 +71,14 @@ export default function OpcuaSection({ form, update }) {
             />
           </div>
           <div>
-            <label className="form-label">Read Retry Limit</label>
+            <label className="form-label">Read Retry Interval (MS)</label>
             <input
               type="number"
               min="0"
               value={form.opcua.readRetryInterval}
               onChange={(e) => update('opcua.readRetryInterval', e.target.value)}
               className="w-full"
-              placeholder="3"
+              placeholder="100"
             />
           </div>
         </div>

@@ -264,7 +264,7 @@ export default function DashboardPage({ collectors, detail, onDelete }) {
                                     </div>
                                 </div>
                                 <div>
-                                    <div className="form-label">Read Retry</div>
+                                    <div className="form-label">Read Retry Interval</div>
                                     <div className="flex items-baseline gap-4">
                                         <span className="text-base font-mono font-semibold">{opcua?.readRetryInterval ?? 100}</span>
                                         <span className="text-xs text-on-surface-disabled">ms</span>

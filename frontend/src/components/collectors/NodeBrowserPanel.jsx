@@ -31,7 +31,7 @@ function flattenTree(parentId, childrenMap, expandedIds, depth, parentPath, visi
     for (const node of children) {
         const isObject = node.nodeClass === NODE_CLASS_OBJECT;
         const label = getLabel(node);
-        const currentPath = parentPath ? `${parentPath}.${label}` : label;
+        const currentPath = parentPath ? `${parentPath}_${label}` : label;
         const isCycle = visitedIds.has(node.nodeId);
 
         rows.push({ node, depth, parentPath: currentPath, isObject, isCycle });

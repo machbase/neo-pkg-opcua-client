@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Icon from "../common/Icon";
 import NodeBrowserPanel from "./NodeBrowserPanel";
 
@@ -119,6 +119,8 @@ export default function NodeListEditor({ nodes, onChange, endpoint, selectionMod
     const [nodeId, setNodeId] = useState("");
     const [nodeIdError, setNodeIdError] = useState(null);
     const [dupError, setDupError] = useState(null);
+    const [editingNameIdx, setEditingNameIdx] = useState(null);
+    const [editingNameValue, setEditingNameValue] = useState("");
 
     const [filter, setFilter] = useState("");
     const [sortKey, setSortKey] = useState("name");
@@ -126,8 +128,15 @@ export default function NodeListEditor({ nodes, onChange, endpoint, selectionMod
 
     const [selectedRows, setSelectedRows] = useState(new Set());
     const [browserOpen, setBrowserOpen] = useState(false);
+    const editingNameInputRef = useRef(null);
 
     const hasEndpoint = Boolean(endpoint?.trim());
+
+    useEffect(() => {
+        if (editingNameIdx === null) return;
+        editingNameInputRef.current?.focus();
+        editingNameInputRef.current?.select();
+    }, [editingNameIdx]);
 
     const isDuplicate = (id, excludeIdx = -1) =>
         nodes.some((n, i) => i !== excludeIdx && n.nodeId === id);
@@ -182,6 +191,14 @@ export default function NodeListEditor({ nodes, onChange, endpoint, selectionMod
 
     const removeNode = (idx) => {
         onChange(nodes.filter((_, i) => i !== idx));
+        if (editingNameIdx != null) {
+            if (editingNameIdx === idx) {
+                setEditingNameIdx(null);
+                setEditingNameValue("");
+            } else if (editingNameIdx > idx) {
+                setEditingNameIdx(editingNameIdx - 1);
+            }
+        }
         setSelectedRows((prev) => {
             const next = new Set();
             for (const r of prev) {
@@ -195,6 +212,10 @@ export default function NodeListEditor({ nodes, onChange, endpoint, selectionMod
     const bulkDelete = () => {
         const toDelete = new Set(selectedRows);
         onChange(nodes.filter((_, i) => !toDelete.has(i)));
+        if (editingNameIdx != null && toDelete.has(editingNameIdx)) {
+            setEditingNameIdx(null);
+            setEditingNameValue("");
+        }
         setSelectedRows(new Set());
     };
 
@@ -256,6 +277,24 @@ export default function NodeListEditor({ nodes, onChange, endpoint, selectionMod
             .filter((n) => !isDuplicate(n.nodeId))
             .map((n) => ({ ...n, calcOrder: n.calcOrder || "bm" }));
         if (unique.length > 0 || removeSet.size > 0) onChange([...kept, ...unique]);
+    };
+
+    const startNameEdit = (idx, currentName) => {
+        setEditingNameIdx(idx);
+        setEditingNameValue(currentName || "");
+    };
+
+    const cancelNameEdit = () => {
+        setEditingNameIdx(null);
+        setEditingNameValue("");
+    };
+
+    const saveNameEdit = (idx) => {
+        const trimmed = editingNameValue.trim();
+        if (trimmed && trimmed !== (nodes[idx]?.name || "")) {
+            patchNode(idx, { name: trimmed });
+        }
+        cancelNameEdit();
     };
 
     return (
@@ -417,8 +456,42 @@ export default function NodeListEditor({ nodes, onChange, endpoint, selectionMod
                                                     onChange={() => toggleRow(idx)}
                                                 />
                                             </td>
-                                            <td className="font-semibold truncate" title={row.name}>
-                                                {row.name}
+                                            <td title={row.name}>
+                                                {editingNameIdx === idx ? (
+                                                    <input
+                                                        ref={editingNameInputRef}
+                                                        type="text"
+                                                        value={editingNameValue}
+                                                        onChange={(e) => setEditingNameValue(e.target.value)}
+                                                        onBlur={() => saveNameEdit(idx)}
+                                                        onKeyDown={(e) => {
+                                                            if (e.key === "Enter") {
+                                                                e.preventDefault();
+                                                                saveNameEdit(idx);
+                                                            } else if (e.key === "Escape") {
+                                                                e.preventDefault();
+                                                                cancelNameEdit();
+                                                            }
+                                                        }}
+                                                        className="w-full"
+                                                    />
+                                                ) : (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => startNameEdit(idx, row.name)}
+                                                        title="Click to edit tag name"
+                                                        className="w-full truncate text-left font-semibold"
+                                                        style={{
+                                                            background: "transparent",
+                                                            border: 0,
+                                                            padding: 0,
+                                                            color: "inherit",
+                                                            cursor: "text",
+                                                        }}
+                                                    >
+                                                        {row.name}
+                                                    </button>
+                                                )}
                                             </td>
                                             <td
                                                 className="mono text-on-surface-secondary"
