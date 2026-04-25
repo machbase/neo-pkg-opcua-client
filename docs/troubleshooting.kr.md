@@ -36,9 +36,11 @@ weight: 50
 
 ## 문자열 값이 저장되지 않음
 
-- `String Value Column`이 필요한 구조인지 확인합니다.
-- 선택한 테이블에 문자열용 컬럼이 있는지 확인합니다.
-- JSON 모드인지 string-only 모드인지 현재 저장 방식을 확인합니다.
+- 문자열 값을 수집하려면 `Value Column`에서 `JSON` 컬럼을 선택하거나, `String Value Column`을 선택해야 합니다.
+- `Value Column`이 숫자 컬럼이고 `String Value Column`이 비어 있으면 문자열 값은 저장되지 않습니다.
+- `Value Column`이 `JSON` 컬럼이면 한 주기 데이터를 JSON payload로 저장하므로 문자열 값도 함께 저장할 수 있습니다.
+- 테이블에 숫자/JSON 컬럼이 없어서 string-only 모드로 동작하는 경우에는 `String Value Column` 선택이 필수입니다.
+- 선택한 테이블에 문자열용 `VARCHAR` 컬럼이 실제로 있는지도 확인합니다.
 
 ## 마지막 수집 시간이 오래됨
 

@@ -12,7 +12,7 @@ Job을 선택하면 우측 상세 화면에 다음 정보가 표시됩니다.
 - Job 이름
 - 현재 상태 (`running` / `stopped`)
 - OPC UA endpoint
-- Interval / Read Retry
+- Interval / Read Retry Interval
 - Nodes Monitored 개수
 - Last Updated At
 - Database Server / Table / Column
@@ -24,9 +24,9 @@ Job을 선택하면 우측 상세 화면에 다음 정보가 표시됩니다.
 ## 상태 해석
 
 - `running`
-  - Job이 수집 중입니다.
+  - 데이터를 수집 중입니다.
 - `stopped`
-  - Job이 멈춘 상태입니다.
+  - 데이터 수집을 멈춘 상태입니다.
 
 추가 상태 힌트:
 
