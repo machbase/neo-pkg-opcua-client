@@ -17,9 +17,7 @@ weight: 30
 - Node Mapping
 - Logging Controls
 
-> 스크린샷 위치: `opcua-job-form.png`
->
-> 권장 장면: Job, OPC UA, Database, Node Mapping 섹션이 한 화면에 이어서 보이는 생성 폼
+![Job 생성 화면](./images/opcua-job-form.png)
 
 ## Job 섹션
 
@@ -82,9 +80,7 @@ Job 이름은 영문, 숫자, `_`, `-` 중심으로 짓는 것이 좋습니다.
 
 OPC UA Endpoint가 입력되어 있으면 **Browse** 버튼으로 서버의 Node를 탐색할 수 있습니다.
 
-> 스크린샷 위치: `opcua-node-browser.png`
->
-> 권장 장면: Node Browser가 열려 있고 Node 선택 결과가 목록에 반영되는 화면
+![Node Browser 화면](./images/opcua-node-browser.png)
 
 ## Transform 설정
 

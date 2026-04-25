@@ -14,9 +14,7 @@ Machbase Neo 좌측 사이드 패널에는 사용 가능한 패키지 목록이 
 
 설치에는 약간의 시간이 걸릴 수 있으므로, 완료될 때까지 잠시 기다립니다.
 
-> 스크린샷 위치: `package-install.png`
->
-> 권장 장면: Neo 좌측 사이드 패널의 패키지 목록과 선택한 패키지의 Install 버튼이 같이 보이는 화면
+![패키지 설치 화면](./images/package-install.png)
 
 ## 이 문서에서 다루는 내용
 
@@ -42,9 +40,7 @@ Machbase Neo 좌측 사이드 패널에는 사용 가능한 패키지 목록이 
 - 메인 화면: 선택한 Job 상세 정보 또는 생성/수정 폼
 - 모달 창: Database Server 관리, 로그 보기
 
-> 스크린샷 위치: `opcua-dashboard-main.png`
->
-> 권장 장면: 좌측 Job 목록과 우측 Job 상세 카드가 함께 보이는 메인 화면
+![OPC UA Client 메인 화면](./images/opcua-dashboard-main.png)
 
 ## 문서 목록
 
