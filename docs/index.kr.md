@@ -5,6 +5,8 @@ weight: 10
 
 # OPC UA Client 사용자 매뉴얼
 
+**한국어** | [English](./index.en.md)
+
 이 문서는 **Machbase Neo OPC UA Client 패키지**의 설치, Database Server 등록, Job 생성, 상태 확인, 로그 조회 방법을 설명합니다.
 
 ## 설치
