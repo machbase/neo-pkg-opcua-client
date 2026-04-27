@@ -8,7 +8,7 @@ neo-pkg-opcua-client is a built-in data collection package for reading industria
 
 Instead of running a separate external collector, you can register database servers, create collection jobs, choose OPC UA nodes, and control job execution directly from the browser. The package also provides status cards, live logs, and log file viewing so operators can check whether collection is running normally.
 
-Manual: [User Manual](https://github.com/machbase/neo-pkg-opcua-client/blob/edit-docs/docs/index.en.md)
+Manual: [User Manual](https://github.com/machbase/neo-pkg-opcua-client/blob/main/docs/index.en.md)
 
 ## Who is it for?
 
