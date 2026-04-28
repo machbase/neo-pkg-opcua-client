@@ -26,6 +26,7 @@ export default function LiveLogs({ collectorId }) {
     const [lines, setLines] = useState([]);
     const [connected, setConnected] = useState(false);
     const [paused, setPaused] = useState(false);
+    const [expanded, setExpanded] = useState(false);
     const bodyRef = useRef(null);
     const pausedRef = useRef(paused);
     const stickToBottomRef = useRef(true);
@@ -33,7 +34,7 @@ export default function LiveLogs({ collectorId }) {
     pausedRef.current = paused;
 
     useEffect(() => {
-        if (!collectorId) return undefined;
+        if (!collectorId || !expanded) return undefined;
 
         setLines([]);
         stickToBottomRef.current = true;
@@ -59,7 +60,7 @@ export default function LiveLogs({ collectorId }) {
             es.close();
             setConnected(false);
         };
-    }, [collectorId]);
+    }, [collectorId, expanded]);
 
     useLayoutEffect(() => {
         const el = bodyRef.current;
@@ -74,41 +75,70 @@ export default function LiveLogs({ collectorId }) {
     };
 
     return (
-        <section className="form-card live-logs-card">
-            <div className="live-logs-header">
+        <section className="form-card live-logs-card collapse-card">
+            <button
+                type="button"
+                className="collapse-card-header"
+                onClick={() => setExpanded((v) => !v)}
+            >
                 <div className="flex items-center gap-12">
-                    <div className="form-card-header !mb-0">
+                    <div className="flex items-center gap-8">
                         <Icon name="terminal" className="text-primary" />
-                        Live Logs
+                        <span className="collapse-card-summary">LIVE LOGS</span>
                     </div>
-                    <span className={`repl-dot ${connected ? "repl-dot--active" : "repl-dot--stopped"}`} />
-                    <span className="live-logs-meta">{connected ? "CONNECTED" : "DISCONNECTED"}</span>
-                    <span className="live-logs-meta">
-                        {lines.length}/{MAX_LINES}
-                    </span>
+                    {expanded && (
+                        <>
+                            <span
+                                className={`repl-dot ${connected ? "repl-dot--active" : "repl-dot--stopped"}`}
+                            />
+                            <span className="live-logs-meta">
+                                {connected ? "CONNECTED" : "DISCONNECTED"}
+                            </span>
+                        </>
+                    )}
                 </div>
-                <div className="flex gap-8">
-                    <button
-                        type="button"
-                        className="btn btn-sm btn-ghost"
-                        onClick={() => setPaused((prev) => !prev)}
+                <Icon
+                    name="keyboard_arrow_down"
+                    className={`collapse-card-toggle ${expanded ? "collapse-card-toggle--open" : ""}`}
+                />
+            </button>
+            {expanded && (
+                <>
+                    <div
+                        className="live-logs-header"
+                        style={{ borderTop: "1px solid var(--color-border)" }}
                     >
-                        <Icon name={paused ? "play_arrow" : "pause"} className="icon-sm" />
-                        <span>{paused ? "Resume" : "Pause"}</span>
-                    </button>
-                    <button type="button" className="btn btn-sm btn-ghost" onClick={() => setLines([])}>
-                        <Icon name="delete_sweep" className="icon-sm" />
-                        <span>Clear</span>
-                    </button>
-                </div>
-            </div>
-            <div ref={bodyRef} onScroll={handleScroll} className="live-logs-body">
-                {lines.length === 0 ? (
-                    <div className="live-logs-empty">Waiting for logs...</div>
-                ) : (
-                    lines.map((line) => <div key={line.key}>{renderLine(line.text)}</div>)
-                )}
-            </div>
+                        <span className="live-logs-meta">
+                            {lines.length}/{MAX_LINES}
+                        </span>
+                        <div className="flex gap-8">
+                            <button
+                                type="button"
+                                className="btn btn-sm btn-ghost"
+                                onClick={() => setPaused((prev) => !prev)}
+                            >
+                                <Icon name={paused ? "play_arrow" : "pause"} className="icon-sm" />
+                                <span>{paused ? "Resume" : "Pause"}</span>
+                            </button>
+                            <button
+                                type="button"
+                                className="btn btn-sm btn-ghost"
+                                onClick={() => setLines([])}
+                            >
+                                <Icon name="delete_sweep" className="icon-sm" />
+                                <span>Clear</span>
+                            </button>
+                        </div>
+                    </div>
+                    <div ref={bodyRef} onScroll={handleScroll} className="live-logs-body">
+                        {lines.length === 0 ? (
+                            <div className="live-logs-empty">Waiting for logs...</div>
+                        ) : (
+                            lines.map((line) => <div key={line.key}>{renderLine(line.text)}</div>)
+                        )}
+                    </div>
+                </>
+            )}
         </section>
     );
 }
