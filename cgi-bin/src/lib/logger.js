@@ -34,7 +34,7 @@ const LEVEL_LABEL = {
  * 로테이션: repli.log 가 MAX_FILE_SIZE 초과 시 repli_20260415_034234.log 로 rename
  * 파일당 최대 크기: 10 MB
  *
- * 포맷: [LEVEL] YYYY-MM-DD HH:MM:SS.sss  stage  message  (key=value ...)
+ * 포맷: [LEVEL] YYYY-MM-DD HH:MM:SS.sss TZ  stage  message  (key=value ...)
  *
  * 설정 (config.log):
  *   disable  : boolean                                 (기본 false, true이면 모든 출력 비활성화)
@@ -70,7 +70,7 @@ class Logger {
     if (this._disabled) {
       return;
     }
-    const ts = new Date().toISOString().replace('T', ' ').slice(0, 23);
+    const ts = _formatLocalTimestamp(new Date());
     const line = '-'.repeat(72);
     const text = `${line}\n  ${ts}  ${msg}\n${line}`;
     this._appendToFile(text + '\n');
@@ -89,7 +89,7 @@ class Logger {
   }
 
   _format(level, stage, fields) {
-    const ts = new Date().toISOString().replace('T', ' ').slice(0, 23);
+    const ts = _formatLocalTimestamp(new Date());
     const label = LEVEL_LABEL[level] || level.toUpperCase();
 
     const msg = fields && fields.msg !== undefined ? String(fields.msg) : '';
@@ -175,6 +175,48 @@ class Logger {
 
 function _quoteIfNeeded(str) {
   return /[ ="]/.test(str) ? `"${str.replace(/"/g, '\\"')}"` : str;
+}
+
+function _formatLocalTimestamp(date) {
+  return [
+    date.getFullYear(),
+    '-',
+    _pad2(date.getMonth() + 1),
+    '-',
+    _pad2(date.getDate()),
+    ' ',
+    _pad2(date.getHours()),
+    ':',
+    _pad2(date.getMinutes()),
+    ':',
+    _pad2(date.getSeconds()),
+    '.',
+    String(date.getMilliseconds()).padStart(3, '0'),
+    ' ',
+    _formatLocalTimezone(date),
+  ].join('');
+}
+
+function _formatLocalTimezone(date) {
+  const match = String(date).match(/\(([^)]+)\)$/);
+  if (!match || !match[1]) {
+    return 'LOC';
+  }
+  const label = match[1].trim();
+  if (/^[A-Z]{3}$/.test(label)) {
+    return label;
+  }
+  return label
+    .split(/\s+/)
+    .filter(Boolean)
+    .map(part => part.charAt(0))
+    .join('')
+    .toUpperCase()
+    .slice(0, 3) || 'LOC';
+}
+
+function _pad2(value) {
+  return String(value).padStart(2, '0');
 }
 
 let _instance = new Logger();
