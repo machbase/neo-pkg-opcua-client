@@ -18,6 +18,19 @@ runner.run("Logger", {
         t.assert(line.indexOf("my-stage") >= 0, "should contain stage");
     },
 
+    "_format uses local timestamp": (t) => {
+        const logger = new Logger({ level: "debug" });
+        const before = new Date();
+        const line = logger._format("info", "stage", {});
+        const after = new Date();
+        const timestamp = _extractTimestamp(line, "stage");
+        const beforeTime = _formatLocalTime(before);
+        const afterTime = _formatLocalTime(after);
+
+        t.assert(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3} [A-Z]{3}$/.test(timestamp), "timestamp should use local datetime format with timezone");
+        t.assert(timestamp.slice(11, 19) === beforeTime || timestamp.slice(11, 19) === afterTime, "timestamp should match local wall-clock time");
+    },
+
     "_format contains msg from fields": (t) => {
         const logger = new Logger({ level: "debug" });
         const line = logger._format("info", "stage", { msg: "hello world" });
@@ -115,3 +128,17 @@ runner.run("Logger", {
 });
 
 runner.summary();
+
+function _extractTimestamp(line, stage) {
+    const prefix = "[INFO] ";
+    const suffix = "  " + stage + "  ";
+    return line.slice(prefix.length, line.indexOf(suffix));
+}
+
+function _formatLocalTime(date) {
+    return [
+        String(date.getHours()).padStart(2, "0"),
+        String(date.getMinutes()).padStart(2, "0"),
+        String(date.getSeconds()).padStart(2, "0"),
+    ].join(":");
+}
