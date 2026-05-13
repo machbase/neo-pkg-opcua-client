@@ -28,6 +28,7 @@
 
 | 메서드 | 경로 | 설명 |
 |--------|------|------|
+| GET    | [/health](#get-health) | 패키지 health 및 collector service 요약 |
 | GET    | [/collector/list](#get-collectorlist) | collector 목록 조회 |
 | POST   | [/collector](#post-collector) | collector 등록 |
 | GET    | [/collector?name=](#get-collectorname) | collector config 조회 |
@@ -55,6 +56,51 @@
 | GET    | [/opcua/read?endpoint=&nodes=](#get-opcuareadendpointnodes) | OPC UA 노드 읽기 |
 | POST   | [/opcua/write](#post-opcuawrite) | OPC UA 노드 쓰기 |
 | POST   | [/opcua/node/descendants](#post-opcuanodedescendants) | OPC UA 노드 트리 탐색 |
+
+---
+
+## Health
+
+### GET /health
+
+패키지 상태 확인용 API입니다. `neo-pkg-opcua-client`는 패키지 단위의 메인 backend service가 없으므로 기존 공통 health 응답의 `status: "running"`과 `pid: 0`은 실제 collector process PID를 의미하지 않습니다.
+실행 중인 collector service 요약은 `data.service_summary`에서 확인합니다.
+
+**응답 (성공)**
+
+```json
+{
+  "ok": true,
+  "data": {
+    "healthy": true,
+    "status": "running",
+    "pid": 0,
+    "exit_code": null,
+    "error": "",
+    "service_summary": {
+      "scope": "opcua-client",
+      "total": 3,
+      "running": 2,
+      "errors": []
+    }
+  }
+}
+```
+
+| 필드 | 설명 |
+|------|------|
+| `service_summary.scope` | service summary 대상 범위. OPC UA client는 `"opcua-client"` |
+| `service_summary.total` | 설치된 OPC UA collector job service 전체 수 |
+| `service_summary.running` | `RUNNING` 상태인 collector service 수 |
+| `service_summary.errors` | service 조회 중 발생한 오류 목록 |
+
+동작 기준:
+
+- service 정보는 JSH `service.list()`를 우선 사용합니다.
+- `service.list()`를 사용할 수 없거나 실패하면 service definition scan으로 fallback합니다.
+- service 판별은 definition/config의 `executable`이 이 패키지의 `neo-collector.js`인지 먼저 확인합니다.
+- `executable` 정보가 없으면 service name의 `"_opc_"` prefix를 fallback으로 사용합니다.
+- service 조회 오류만으로 health API 자체를 실패 처리하지 않습니다. 조회 오류는 가능하면 `service_summary.errors`에 기록하고 `ok: true`를 유지합니다.
 
 ---
 

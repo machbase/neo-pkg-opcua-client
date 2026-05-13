@@ -7,5 +7,9 @@
     "stop": "./scripts/collector-service-stop.js",
     "uninstall": "./scripts/collector-service-uninstall.js"
   },
+  "packageService": {
+    "managed": false,
+    "reason": "OPC UA client jobs are managed as individual services."
+  },
   "dependencies": {}
 }

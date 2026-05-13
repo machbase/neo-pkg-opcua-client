@@ -66,6 +66,29 @@ function status(name, callback) {
 }
 
 /**
+ * service 이름을 그대로 사용해서 상태를 조회한다.
+ * definition scan fallback에서는 이미 prefix가 붙은 실제 service name을 다룬다.
+ * @param {string} serviceName
+ * @param {function(Error|null, object=): void} callback
+ */
+function statusRaw(serviceName, callback) {
+  service.status(serviceName, callback);
+}
+
+/**
+ * 전체 service 목록을 조회한다.
+ * JSH service.list()를 우선 사용하고, 없는 환경에서는 기존 status(callback) 목록 조회 방식으로 fallback한다.
+ * @param {function(Error|null, Array|object=): void} callback
+ */
+function list(callback) {
+  if (service && typeof service.list === 'function') {
+    service.list(callback);
+    return;
+  }
+  service.status(callback);
+}
+
+/**
  * 이 패키지에 속한 service 목록을 collector 이름 기준의 맵으로 반환한다.
  * service 이름에서 SERVICE_PREFIX를 제거한 이름을 키로 사용한다.
  * @param {function(Error|null, Record<string, object>=): void} callback
@@ -188,6 +211,8 @@ module.exports = {
   installed,
   remove,
   status,
+  statusRaw,
+  list,
   getServiceMap,
   install,
   uninstall,

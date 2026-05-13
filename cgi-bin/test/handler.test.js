@@ -46,6 +46,8 @@ class MockService {
         this.getValueError = null;
         this.missingService = false;
         this.getServiceMapError = false;
+        this.listError = null;
+        this.listResult = null;
     }
     isMissingServiceError(err) {
         return err && err.message === '__missing__';
@@ -64,6 +66,15 @@ class MockService {
             map[n] = { status: this._statusMap[n] || 'STOPPED' };
         }
         cb(null, map);
+    }
+    list(cb) {
+        if (this.listError) { cb(new Error(this.listError)); return; }
+        if (this.listResult) { cb(null, this.listResult); return; }
+        const list = [];
+        for (const n of Object.keys(this._installed)) {
+            list.push({ status: this._statusMap[n] || 'STOPPED', config: { name: n } });
+        }
+        cb(null, list);
     }
     install(name, cb) {
         if (this.installError) { cb(new Error(this.installError)); return; }
@@ -372,6 +383,31 @@ runner.run('Handler: collectorList', {
         H.collectorList((r) => { result = r; });
         t.assert(result.ok, 'should be ok');
         t.assertEqual(result.data.length, 0);
+    },
+});
+
+// ── health service summary ───────────────────────────────────────────────────
+
+runner.run('Handler: health service summary', {
+    'summarizes OPC UA client services from service list': (t) => {
+        const H = makeHandler();
+        const executable = path.join(ROOT, 'neo-collector.js');
+        mockService.listResult = [
+            { status: 'RUNNING', config: { name: '_opc_col-a', executable } },
+            { status: 'STOPPED', config: { name: '_opc_col-b', executable } },
+            { status: 'RUNNING', config: { name: '_opc_legacy' } },
+            { status: 'RUNNING', config: { name: '_rpl_other', executable: path.join(ROOT, 'other.js') } },
+        ];
+
+        let err;
+        let summary;
+        H.getOpcuaClientServiceSummary((e, s) => { err = e; summary = s; });
+
+        t.assert(!err, 'should not return error');
+        t.assertEqual(summary.scope, 'opcua-client');
+        t.assertEqual(summary.total, 3);
+        t.assertEqual(summary.running, 2);
+        t.assertEqual(summary.errors.length, 0);
     },
 });
 
