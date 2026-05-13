@@ -1,15 +1,15 @@
 {
-  "name": "neo-pkg-opcua-client",
-  "version": "1.0.1",
-  "bin": {},
-  "scripts": {
-    "start": "./scripts/collector-service-start.js",
-    "stop": "./scripts/collector-service-stop.js",
-    "uninstall": "./scripts/collector-service-uninstall.js"
-  },
-  "packageService": {
-    "managed": false,
-    "reason": "OPC UA client jobs are managed as individual services."
-  },
-  "dependencies": {}
+    "name": "neo-pkg-opcua-client",
+    "version": "1.0.2",
+    "bin": {},
+    "scripts": {
+        "start": "./scripts/collector-service-start.js",
+        "stop": "./scripts/collector-service-stop.js",
+        "uninstall": "./scripts/collector-service-uninstall.js"
+    },
+    "packageService": {
+        "managed": false,
+        "reason": "OPC UA client jobs are managed as individual services."
+    },
+    "dependencies": {}
 }
