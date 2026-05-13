@@ -1,5 +1,8 @@
 'use strict';
 
+const fs = require('fs');
+const path = require('path');
+const process = require('process');
 const { CGI } = require('./cgi_util.js');
 const Service = require('./service.js');
 const { MachbaseClient } = require('../db/client.js');
@@ -11,6 +14,241 @@ const { AttributeID, StatusCode } = require('opcua');
 
 function errorMessage(err) {
   return err && err.message ? err.message : String(err);
+}
+
+const APP_DIR = (() => {
+  const script = process.argv[1] || '';
+  const marker = '/cgi-bin/';
+  const markerIndex = script.lastIndexOf(marker);
+  if (markerIndex >= 0) {
+    return script.slice(0, markerIndex + '/cgi-bin'.length);
+  }
+  return path.resolve(__dirname, '../..');
+})();
+
+const SERVICE_PREFIX = Service.SERVICE_PREFIX || '_opc_';
+
+function readJsonFile(filePath) {
+  try {
+    return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+  } catch (_) {
+    return null;
+  }
+}
+
+function getEnv(name) {
+  if (process.env && typeof process.env.get === 'function') {
+    return process.env.get(name);
+  }
+  return process.env ? process.env[name] : '';
+}
+
+function getServiceDirectoryCandidates() {
+  const result = [];
+  const seen = {};
+  const push = (value) => {
+    if (typeof value !== 'string') return;
+    const dirPath = value.trim();
+    if (!dirPath || seen[dirPath]) return;
+    seen[dirPath] = true;
+    result.push(dirPath);
+  };
+
+  push('/etc/services');
+
+  const home = getEnv('HOME');
+  if (home) {
+    push(path.join(home, 'etc', 'services'));
+  }
+
+  const execPath = process.execPath || process.argv[0] || '';
+  if (execPath && path.isAbsolute(execPath)) {
+    push(path.join(path.dirname(execPath), 'etc', 'services'));
+  }
+
+  return result;
+}
+
+function expectedOpcuaClientExecutablePath() {
+  return path.normalize(path.join(APP_DIR, 'neo-collector.js'));
+}
+
+function normalizeServiceExecutablePath(definition) {
+  const executable = definition && definition.executable != null ? String(definition.executable).trim() : '';
+  if (!executable) return '';
+  if (path.isAbsolute(executable)) return path.normalize(executable);
+  const workingDir = definition && definition.working_dir != null ? String(definition.working_dir).trim() : '';
+  return path.normalize(path.join(workingDir || APP_DIR, executable));
+}
+
+function serviceConfigFromInfo(serviceInfo) {
+  if (!serviceInfo || typeof serviceInfo !== 'object') return null;
+  if (serviceInfo.config && typeof serviceInfo.config === 'object') return serviceInfo.config;
+  return serviceInfo;
+}
+
+function serviceNameFromInfo(serviceInfo, fallbackName) {
+  const config = serviceConfigFromInfo(serviceInfo);
+  return String(
+    (config && config.name)
+    || (serviceInfo && serviceInfo.name)
+    || fallbackName
+    || ''
+  );
+}
+
+function isOpcuaClientServiceDefinition(serviceName, definition) {
+  const executable = normalizeServiceExecutablePath(definition);
+  if (executable) {
+    return executable === expectedOpcuaClientExecutablePath();
+  }
+  return String(serviceName || '').startsWith(SERVICE_PREFIX);
+}
+
+function getOpcuaClientServiceDefinitions() {
+  const result = [];
+  const seen = {};
+
+  for (const serviceDir of getServiceDirectoryCandidates()) {
+    let files = [];
+    try {
+      files = fs.readdirSync(serviceDir);
+    } catch (_) {
+      continue;
+    }
+
+    for (const fileName of files) {
+      if (!fileName || !fileName.endsWith('.json')) continue;
+      const serviceName = fileName.replace(/\.json$/, '');
+      if (!serviceName || seen[serviceName]) continue;
+
+      const filePath = path.join(serviceDir, fileName);
+      const definition = readJsonFile(filePath);
+      if (!isOpcuaClientServiceDefinition(serviceName, definition)) continue;
+
+      seen[serviceName] = true;
+      result.push({ name: serviceName, path: filePath, definition });
+    }
+  }
+
+  return result;
+}
+
+function isServiceRunningStatus(serviceInfo) {
+  const config = serviceConfigFromInfo(serviceInfo);
+  const status = String(
+    (serviceInfo && serviceInfo.status)
+    || (config && config.status)
+    || ''
+  ).toUpperCase();
+  return status === 'RUNNING';
+}
+
+function normalizeServiceList(services) {
+  if (Array.isArray(services)) return services;
+  if (!services || typeof services !== 'object') return [];
+  return Object.keys(services).map((name) => {
+    const info = services[name];
+    if (!info || typeof info !== 'object') return { name };
+    if (serviceNameFromInfo(info)) return info;
+    return { ...info, name };
+  });
+}
+
+function summarizeOpcuaClientServiceList(services) {
+  const summary = {
+    scope: 'opcua-client',
+    total: 0,
+    running: 0,
+    errors: [],
+  };
+
+  for (const serviceInfo of normalizeServiceList(services)) {
+    const config = serviceConfigFromInfo(serviceInfo);
+    const serviceName = serviceNameFromInfo(serviceInfo);
+    if (!isOpcuaClientServiceDefinition(serviceName, config)) continue;
+
+    summary.total += 1;
+    if (isServiceRunningStatus(serviceInfo)) {
+      summary.running += 1;
+    }
+    if (serviceInfo && serviceInfo.error) {
+      summary.errors.push({ name: serviceName, reason: String(serviceInfo.error) });
+    }
+    if (config && config.read_error) {
+      summary.errors.push({ name: serviceName, reason: String(config.read_error) });
+    }
+  }
+
+  return summary;
+}
+
+function statusRaw(serviceName, callback) {
+  if (Service && typeof Service.statusRaw === 'function') {
+    Service.statusRaw(serviceName, callback);
+    return;
+  }
+  const name = String(serviceName || '').startsWith(SERVICE_PREFIX)
+    ? String(serviceName).slice(SERVICE_PREFIX.length)
+    : serviceName;
+  Service.status(name, callback);
+}
+
+function getOpcuaClientServiceSummaryFromDefinitions(listErr, callback) {
+  const definitions = getOpcuaClientServiceDefinitions();
+  const summary = {
+    scope: 'opcua-client',
+    total: definitions.length,
+    running: 0,
+    errors: [],
+  };
+
+  if (listErr) {
+    summary.errors.push({
+      reason: errorMessage(listErr),
+    });
+  }
+
+  const next = (index) => {
+    if (index >= definitions.length) {
+      callback(null, summary);
+      return;
+    }
+
+    const item = definitions[index];
+    statusRaw(item.name, (err, serviceInfo) => {
+      if (err) {
+        summary.errors.push({
+          name: item.name,
+          reason: errorMessage(err),
+        });
+      } else if (isServiceRunningStatus(serviceInfo)) {
+        summary.running += 1;
+      }
+      next(index + 1);
+    });
+  };
+
+  next(0);
+}
+
+function getOpcuaClientServiceSummary(callback) {
+  if (!Service || typeof Service.list !== 'function') {
+    getOpcuaClientServiceSummaryFromDefinitions(new Error('service.list() is not available'), callback);
+    return;
+  }
+
+  try {
+    Service.list((listErr, services) => {
+      if (!listErr) {
+        callback(null, summarizeOpcuaClientServiceList(services));
+        return;
+      }
+      getOpcuaClientServiceSummaryFromDefinitions(listErr, callback);
+    });
+  } catch (err) {
+    getOpcuaClientServiceSummaryFromDefinitions(err, callback);
+  }
 }
 
 // ── Collector CRUD ──────────────────────────────────────────────────────────
@@ -965,4 +1203,8 @@ module.exports = {
   opcuaConnect,
   opcuaRead,
   opcuaWrite,
+  serviceConfigFromInfo,
+  summarizeOpcuaClientServiceList,
+  getOpcuaClientServiceSummary,
+  getOpcuaClientServiceSummaryFromDefinitions,
 };
