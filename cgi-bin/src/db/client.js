@@ -106,7 +106,7 @@ class MachbaseClient {
    */
   selectTableType(tableName) {
     const rows = this.query(
-      'SELECT TYPE FROM M$SYS_TABLES WHERE NAME = ?',
+      'SELECT TYPE FROM M$SYS_TABLES WHERE NAME = ? AND DATABASE_ID = -1',
       [tableName]
     );
     if (!rows || rows.length === 0) return { type: 'UNSUPPORTED' };
@@ -128,6 +128,7 @@ class MachbaseClient {
       SELECT m.NAME AS data_table
       FROM V$STORAGE_TAG_TABLES v, M$SYS_TABLES m
       WHERE v.ID = m.ID AND m.NAME LIKE ?
+        AND m.DATABASE_ID = -1
       ORDER BY m.NAME
     `.trim();
     return this.query(sql, [pattern]);
@@ -142,7 +143,7 @@ class MachbaseClient {
   }
 
   /**
-   * 사용자 테이블 목록 조회 (TAG/LOG 타입만, USER_ID 포함)
+   * 사용자 테이블 목록 조회 (TAG/LOG 타입만, USER_ID 포함, mounted backup DB 제외)
    * @returns {Array<{ NAME: string, TYPE: number, ID: number, USER_ID: number }>}
    */
   selectAllTables() {
@@ -150,6 +151,7 @@ class MachbaseClient {
       SELECT NAME, TYPE, ID, USER_ID
       FROM M$SYS_TABLES
       WHERE TYPE IN (0, 6)
+        AND DATABASE_ID = -1
     `.trim();
     return this.query(sql);
   }
@@ -164,6 +166,7 @@ class MachbaseClient {
       SELECT c.NAME, c.TYPE, c.ID, c.LENGTH, c.FLAG
       FROM M$SYS_COLUMNS c, M$SYS_TABLES t
       WHERE c.TABLE_ID = t.ID AND t.NAME = ?
+        AND t.DATABASE_ID = -1
         AND c.ID < 65534
       ORDER BY c.ID ASC
     `.trim();
@@ -179,13 +182,13 @@ class MachbaseClient {
   selectTableMeta(tableName, userId) {
     if (userId != null) {
       const rows = this.query(
-        'SELECT ID, TYPE, NAME FROM M$SYS_TABLES WHERE NAME = ? AND USER_ID = ?',
+        'SELECT ID, TYPE, NAME FROM M$SYS_TABLES WHERE NAME = ? AND USER_ID = ? AND DATABASE_ID = -1',
         [tableName, userId]
       );
       return rows.length > 0 ? rows[0] : null;
     }
     const rows = this.query(
-      'SELECT ID, TYPE, NAME FROM M$SYS_TABLES WHERE NAME = ?',
+      'SELECT ID, TYPE, NAME FROM M$SYS_TABLES WHERE NAME = ? AND DATABASE_ID = -1',
       [tableName]
     );
     return rows.length > 0 ? rows[0] : null;

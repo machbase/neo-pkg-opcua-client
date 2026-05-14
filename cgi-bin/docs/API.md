@@ -638,6 +638,7 @@ CREATE TAG TABLE {table} (
 ### GET /db/table/list?server=
 
 지정한 서버의 TAG 테이블 목록을 조회합니다. 각 테이블의 소유 유저명을 함께 반환합니다.
+Mounted backup database의 테이블은 쓰기 대상이 아니므로 목록에서 제외됩니다.
 
 **응답 (성공)**
 
