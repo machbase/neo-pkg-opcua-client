@@ -166,6 +166,7 @@ class MachbaseClient {
       SELECT c.NAME, c.TYPE, c.ID, c.LENGTH, c.FLAG
       FROM M$SYS_COLUMNS c, M$SYS_TABLES t
       WHERE c.TABLE_ID = t.ID AND t.NAME = ?
+        AND c.DATABASE_ID = t.DATABASE_ID
         AND t.DATABASE_ID = -1
         AND c.ID < 65534
       ORDER BY c.ID ASC
@@ -201,11 +202,14 @@ class MachbaseClient {
    */
   selectColumnsByTableId(tableId) {
     const sql = `
-      SELECT NAME, TYPE, ID, LENGTH, FLAG
-      FROM M$SYS_COLUMNS
-      WHERE TABLE_ID = ?
-        AND ID < 65534
-      ORDER BY ID ASC
+      SELECT c.NAME, c.TYPE, c.ID, c.LENGTH, c.FLAG
+      FROM M$SYS_COLUMNS c, M$SYS_TABLES t
+      WHERE c.TABLE_ID = t.ID
+        AND c.DATABASE_ID = t.DATABASE_ID
+        AND t.ID = ?
+        AND t.DATABASE_ID = -1
+        AND c.ID < 65534
+      ORDER BY c.ID ASC
     `.trim();
     return this.query(sql, [tableId]);
   }
