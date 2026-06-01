@@ -2,18 +2,15 @@ import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { createPortal } from "react-dom";
 import Icon from "../common/Icon";
 import { browseNodeChildren } from "../../api/collectors";
+import {
+    applyNodeSelectionState,
+    createNodeSelectionState,
+    getNodeRangeRows,
+    isNumericDataType,
+} from "./nodeRangeSelection";
 
 const DEFAULT_ROOT = "ns=0;i=85";
 const NODE_CLASS_OBJECT = 1;
-
-const NUMERIC_TYPES = new Set([
-    "Boolean", "SByte", "Byte", "Int16", "UInt16",
-    "Int32", "UInt32", "Int64", "UInt64", "Float", "Double",
-]);
-
-function isNumericType(dataType) {
-    return dataType ? NUMERIC_TYPES.has(dataType) : false;
-}
 
 function getDataType(node) {
     return node.dataType || null;
@@ -60,8 +57,8 @@ export default function NodeBrowserPanel({ endpoint, existingNodes, onSync, onCl
     const [rootInput, setRootInput] = useState(DEFAULT_ROOT);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState(null);
-    const [selected, setSelected] = useState(new Map());
-    const [removedIds, setRemovedIds] = useState(new Set());
+    const [selectionState, setSelectionState] = useState(() => createNodeSelectionState());
+    const [lastRangeAnchor, setLastRangeAnchor] = useState(null);
     const [filter, setFilter] = useState("");
 
     const [childrenMap, setChildrenMap] = useState(new Map());
@@ -71,8 +68,9 @@ export default function NodeBrowserPanel({ endpoint, existingNodes, onSync, onCl
     const panelRef = useRef(null);
     const loadedRef = useRef(false);
 
-    const existingIds = new Set(existingNodes.map((n) => n.nodeId));
-    const selectedIds = new Set(selected.keys());
+    const existingIds = useMemo(() => new Set(existingNodes.map((n) => n.nodeId)), [existingNodes]);
+    const { selected, removedIds } = selectionState;
+    const selectedIds = useMemo(() => new Set(selected.keys()), [selected]);
 
     const loadChildren = useCallback(
         async (parentId) => {
@@ -141,12 +139,16 @@ export default function NodeBrowserPanel({ endpoint, existingNodes, onSync, onCl
         };
     }, []);
 
+    useEffect(() => {
+        setLastRangeAnchor(null);
+    }, [rootNodeId, selectionMode]);
+
     const handleRootSubmit = () => {
         const trimmed = rootInput.trim();
         if (trimmed === rootNodeId) return;
         setFilter("");
-        setSelected(new Map());
-        setRemovedIds(new Set());
+        setSelectionState(createNodeSelectionState());
+        setLastRangeAnchor(null);
         if (!trimmed) {
             setRootNodeId("");
             setChildrenMap(new Map());
@@ -178,14 +180,49 @@ export default function NodeBrowserPanel({ endpoint, existingNodes, onSync, onCl
         }
     };
 
-    const handleToggleSelect = useCallback((nodeId, path, node) => {
-        setSelected((prev) => {
-            const next = new Map(prev);
-            if (next.has(nodeId)) next.delete(nodeId);
-            else next.set(nodeId, { path, node });
-            return next;
-        });
-    }, []);
+    const allRows = useMemo(() => {
+        if (!childrenMap.has(rootNodeId)) return [];
+        return flattenTree(rootNodeId, childrenMap, expandedIds, 0, "", new Set([rootNodeId]));
+    }, [rootNodeId, childrenMap, expandedIds]);
+
+    useEffect(() => {
+        setLastRangeAnchor(null);
+    }, [allRows]);
+
+    const rows = useMemo(() => {
+        if (!filter?.trim()) return allRows;
+        const q = filter.toLowerCase();
+        return allRows.filter((r) => getLabel(r.node).toLowerCase().includes(q) || r.node.nodeId.toLowerCase().includes(q));
+    }, [allRows, filter]);
+
+    const applySelectionRows = useCallback(
+        (selectionRows, checked) => {
+            setSelectionState((prev) => applyNodeSelectionState(prev, {
+                existingIds,
+                rows: selectionRows,
+                checked,
+            }));
+        },
+        [existingIds]
+    );
+
+    const handleVariableToggle = useCallback(
+        (row, rowIndex, checked, shiftKey) => {
+            const rangeRows =
+                shiftKey && lastRangeAnchor
+                    ? getNodeRangeRows(allRows, lastRangeAnchor.rowIndex, rowIndex, selectionMode)
+                    : null;
+
+            if (rangeRows) {
+                applySelectionRows(rangeRows, lastRangeAnchor.checked);
+                return;
+            }
+
+            applySelectionRows([row], checked);
+            setLastRangeAnchor({ rowIndex, checked });
+        },
+        [allRows, applySelectionRows, lastRangeAnchor, selectionMode]
+    );
 
     const handleApply = () => {
         const add = Array.from(selected.entries()).map(([nodeId, { path, node }]) => ({
@@ -198,17 +235,6 @@ export default function NodeBrowserPanel({ endpoint, existingNodes, onSync, onCl
     };
 
     const hasChanges = selected.size > 0 || removedIds.size > 0;
-
-    const allRows = useMemo(() => {
-        if (!childrenMap.has(rootNodeId)) return [];
-        return flattenTree(rootNodeId, childrenMap, expandedIds, 0, "", new Set([rootNodeId]));
-    }, [rootNodeId, childrenMap, expandedIds]);
-
-    const rows = useMemo(() => {
-        if (!filter?.trim()) return allRows;
-        const q = filter.toLowerCase();
-        return allRows.filter((r) => getLabel(r.node).toLowerCase().includes(q) || r.node.nodeId.toLowerCase().includes(q));
-    }, [allRows, filter]);
 
     const SkeletonTree = () => (
         <div className="node-tree-skeleton" style={{ padding: "8px" }}>
@@ -313,12 +339,13 @@ export default function NodeBrowserPanel({ endpoint, existingNodes, onSync, onCl
 
                     {rows.map((row, i) => {
                         const { node, depth, parentPath, isObject, isCycle } = row;
+                        const rowIndex = allRows.indexOf(row);
                         const isExpanded = expandedIds.has(node.nodeId) && !isCycle;
                         const isNodeLoading = loadingIds.has(node.nodeId);
                         const alreadyAdded = existingIds.has(node.nodeId);
                         const isSelected = selectedIds.has(node.nodeId);
                         const isRemoved = removedIds.has(node.nodeId);
-                        const isNumeric = isObject || isNumericType(getDataType(node));
+                        const isNumeric = isObject || isNumericDataType(getDataType(node));
                         const isDisabled = !isObject && !isNumeric && selectionMode === "numeric-only";
                         const isChecked = alreadyAdded ? !isRemoved : isSelected;
 
@@ -327,16 +354,7 @@ export default function NodeBrowserPanel({ endpoint, existingNodes, onSync, onCl
                             if (isObject) {
                                 if (!isCycle) handleToggleExpand(node.nodeId);
                             } else if (!isDisabled) {
-                                if (alreadyAdded) {
-                                    setRemovedIds((prev) => {
-                                        const next = new Set(prev);
-                                        if (next.has(node.nodeId)) next.delete(node.nodeId);
-                                        else next.add(node.nodeId);
-                                        return next;
-                                    });
-                                } else {
-                                    handleToggleSelect(node.nodeId, parentPath, node);
-                                }
+                                handleVariableToggle(row, rowIndex, !isChecked, e.shiftKey);
                             }
                         };
 
@@ -367,7 +385,17 @@ export default function NodeBrowserPanel({ endpoint, existingNodes, onSync, onCl
                                             <Icon name={isNodeLoading ? "more_horiz" : isExpanded ? "expand_more" : "chevron_right"} className="icon-sm" />
                                         )
                                     ) : (
-                                        <input type="checkbox" checked={isChecked} disabled={isDisabled} readOnly />
+                                        <input
+                                            type="checkbox"
+                                            checked={isChecked}
+                                            disabled={isDisabled}
+                                            readOnly
+                                            aria-label={`${getLabel(node)} select`}
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                handleVariableToggle(row, rowIndex, !isChecked, e.shiftKey);
+                                            }}
+                                        />
                                     )}
                                 </span>
 
