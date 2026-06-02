@@ -282,7 +282,7 @@ class MachbaseClient {
    * @param {string} tableName
    * @param {import('./types').TableSchema} schema
    */
-  createTagTable(tableName, schema) {
+  createTagTable(tableName, schema, options = {}) {
     const dataCols = schema.columns.filter(c => !(c.flag & FLAG_METADATA));
     const metaCols = schema.columns.filter(c =>   c.flag & FLAG_METADATA);
 
@@ -304,18 +304,32 @@ class MachbaseClient {
       const metaDefs = metaCols.map(c => `${c.name} ${c.sqlType()}`).join(', ');
       sql += ` METADATA (${metaDefs})`;
     }
+    if (options.rollup === true) {
+      sql += ' WITH ROLLUP';
+    }
     this.execute(sql);
   }
 
   /**
-   * 스키마를 기반으로 LOG 테이블 생성
+   * 테이블 row count 조회
    * @param {string} tableName
-   * @param {import('./types').TableSchema} schema
+   * @returns {number}
    */
-  createLogTable(tableName, schema) {
-    const colDefs = schema.columns.map(c => `${c.name} ${c.sqlType()}`);
-    this.execute(`CREATE TABLE ${tableName} (${colDefs.join(', ')})`);
+  selectRowCount(tableName) {
+    const rows = this.query(`SELECT COUNT(*) AS ROW_COUNT FROM ${tableName}`);
+    const row = rows && rows[0] ? rows[0] : {};
+    const raw = row.ROW_COUNT ?? row.row_count ?? row['COUNT(*)'] ?? 0;
+    return Number(raw);
   }
+
+  /**
+   * TAG 테이블과 종속 객체를 삭제한다.
+   * @param {string} tableName
+   */
+  dropTableCascade(tableName) {
+    this.execute(`DROP TABLE ${tableName} CASCADE`);
+  }
+
 }
 
 module.exports = { MachbaseClient, ColumnType, Column, TableSchema };
