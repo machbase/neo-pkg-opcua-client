@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const process = require('process');
 const { LOG_DIR } = require('../lib/logger.js');
+const { protectServerConfig, revealServerConfig } = require('./secret.js');
 
 const APP_DIR = process.argv[1].slice(0, process.argv[1].lastIndexOf('/cgi-bin/') + '/cgi-bin'.length);
 const CONF_DIR = path.join(APP_DIR, 'conf.d');
@@ -155,7 +156,7 @@ class CGI {
   static getServerConfig(name) {
     try {
       const raw = fs.readFileSync(path.join(SERVERS_DIR, `${name}.json`), 'utf8');
-      return JSON.parse(raw);
+      return revealServerConfig(JSON.parse(raw));
     } catch (_) {
       return null;
     }
@@ -170,7 +171,7 @@ class CGI {
     fs.mkdirSync(SERVERS_DIR, { recursive: true });
     const filePath = path.join(SERVERS_DIR, `${name}.json`);
     const tmpPath = `${filePath}.${Date.now()}.tmp`;
-    fs.writeFileSync(tmpPath, JSON.stringify(config, null, 2), 'utf8');
+    fs.writeFileSync(tmpPath, JSON.stringify(protectServerConfig(config), null, 2), 'utf8');
     fs.renameSync(tmpPath, filePath);
   }
 

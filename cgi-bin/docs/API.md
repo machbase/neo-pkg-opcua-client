@@ -460,7 +460,7 @@ collector service를 중지합니다.
 
 ### POST /db/server
 
-DB 서버 접속 정보를 등록합니다. `password`는 저장되지만 조회 시 반환하지 않습니다.
+DB 서버 접속 정보를 등록합니다. `password`는 저장 파일에서 바로 보이지 않도록 obfuscation 형태로 저장되며, 조회 시 반환하지 않습니다.
 
 **요청 본문**
 
