@@ -255,6 +255,123 @@ function getOpcuaClientServiceSummary(callback) {
 
 const MIN_INTERVAL_MS = 1000;
 const DEFAULT_INTERVAL_MS = 1000;
+const AUTO_TABLE_VALUE_COLUMN = 'VALUE';
+const AUTO_TABLE_STRING_COLUMN = 'STR_VALUE';
+const AUTO_TABLE_NAME_MIN_LENGTH = 80;
+const AUTO_TABLE_STRING_LENGTH = 120;
+
+function normalizeIdentifier(value, label) {
+  const normalized = String(value || '').trim().toUpperCase();
+  if (!normalized) {
+    throw new Error(`${label} is required`);
+  }
+  if (!/^[A-Z_][A-Z0-9_]*$/.test(normalized)) {
+    throw new Error(`${label} must contain only letters, numbers, and underscore, and must not start with a number`);
+  }
+  return normalized;
+}
+
+function findUserId(client, userName) {
+  const normalizedUser = String(userName || '').trim().toUpperCase();
+  if (!normalizedUser) {
+    throw new Error('db user is required');
+  }
+  const users = client.selectUsers();
+  const found = users.find((u) => String(u.NAME || '').toUpperCase() === normalizedUser);
+  if (!found) {
+    throw new Error(`user '${normalizedUser}' not found`);
+  }
+  return found.USER_ID;
+}
+
+function autoCreateTableNameLength(config) {
+  const nodes = config && config.opcua && Array.isArray(config.opcua.nodes)
+    ? config.opcua.nodes
+    : [];
+  let maxLen = AUTO_TABLE_NAME_MIN_LENGTH;
+  for (const node of nodes) {
+    const name = node && node.name != null ? String(node.name) : '';
+    if (name.length > maxLen) {
+      maxLen = name.length;
+    }
+  }
+  return maxLen;
+}
+
+function buildAutoCreateTableSchema(tableName, nameLength) {
+  return new TableSchema('TAG', tableName, [
+    new Column('NAME', ColumnType.VARCHAR, 0, FLAG_PRIMARY, nameLength),
+    new Column('TIME', ColumnType.DATETIME, 1, FLAG_BASETIME, 0),
+    new Column(AUTO_TABLE_VALUE_COLUMN, ColumnType.DOUBLE, 2, FLAG_SUMMARIZED, 0),
+    new Column(AUTO_TABLE_STRING_COLUMN, ColumnType.VARCHAR, 3, 0, AUTO_TABLE_STRING_LENGTH),
+  ]);
+}
+
+function userFacingError(message) {
+  const err = new Error(message);
+  err.userFacing = true;
+  return err;
+}
+
+function prepareAutoCreateTableRequest(config) {
+  const tableName = normalizeIdentifier(config.dbTable, 'config.dbTable');
+  if (!config.db) {
+    throw new Error('config.db is required for autoCreateTable');
+  }
+  return {
+    tableName,
+    dbName: config.db,
+    nameLength: autoCreateTableNameLength(config),
+  };
+}
+
+function applyAutoCreateConfig(config, tableName) {
+  config.dbTable = tableName;
+  config.valueColumn = AUTO_TABLE_VALUE_COLUMN;
+  config.stringValueColumn = AUTO_TABLE_STRING_COLUMN;
+  config.stringOnly = false;
+}
+
+function createAutoCollectorTable(config) {
+  const request = prepareAutoCreateTableRequest(config);
+  const db = CGI.getServerConfig(request.dbName);
+  if (!db) {
+    throw userFacingError(`server '${request.dbName}' not found`);
+  }
+
+  const client = new MachbaseClient(db);
+  try {
+    client.connect();
+    const userId = findUserId(client, db.user);
+    if (client.selectTableMeta(request.tableName, userId)) {
+      throw userFacingError(`table '${request.tableName}' already exists; select the existing table instead of auto-create`);
+    }
+
+    const schema = buildAutoCreateTableSchema(request.tableName, request.nameLength);
+    client.createTagTable(request.tableName, schema, { rollup: true });
+    return { db, tableName: request.tableName };
+  } catch (err) {
+    if (err && err.userFacing) {
+      throw err;
+    }
+    throw new Error(`create table failed: ${request.tableName}: ${errorMessage(err)}`);
+  } finally {
+    client.close();
+  }
+}
+
+function dropAutoCreatedTable(db, tableName) {
+  const client = new MachbaseClient(db);
+  try {
+    client.connect();
+    const rowCount = client.selectRowCount(tableName);
+    if (rowCount === 0) {
+      client.dropTableCascade(tableName);
+    }
+  } finally {
+    client.close();
+  }
+}
 
 /**
  * Validates and normalizes a collector config in-place.
@@ -295,10 +412,43 @@ function collectorPost(name, config, reply) {
     });
     return;
   }
-  CGI.writeConfig(name, config);
+  const autoCreateTable = config.autoCreateTable === true;
+  if (config.autoCreateTable !== undefined) {
+    delete config.autoCreateTable;
+  }
+
+  let autoCreated = null;
+  if (autoCreateTable) {
+    try {
+      autoCreated = createAutoCollectorTable(config);
+      applyAutoCreateConfig(config, autoCreated.tableName);
+    } catch (err) {
+      reply({
+        ok: false,
+        reason: errorMessage(err),
+      });
+      return;
+    }
+  }
+
+  try {
+    CGI.writeConfig(name, config);
+  } catch (err) {
+    if (autoCreated) {
+      try { dropAutoCreatedTable(autoCreated.db, autoCreated.tableName); } catch (_) {}
+    }
+    reply({
+      ok: false,
+      reason: errorMessage(err),
+    });
+    return;
+  }
   Service.install(name, (err) => {
     if (err) {
       CGI.removeConfig(name);
+      if (autoCreated) {
+        try { dropAutoCreatedTable(autoCreated.db, autoCreated.tableName); } catch (_) {}
+      }
       reply({
         ok: false,
         reason: errorMessage(err),

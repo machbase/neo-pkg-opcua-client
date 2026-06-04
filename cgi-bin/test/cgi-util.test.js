@@ -1,8 +1,10 @@
 'use strict';
 
 const path = require('path');
+const fs = require('fs');
 const TestRunner = require('./runner.js');
 const { CGI } = require('../src/cgi/cgi_util.js');
+const { obfuscateSecret, revealSecret } = require('../src/cgi/secret.js');
 
 const runner = new TestRunner();
 
@@ -51,6 +53,44 @@ runner.run('CGI util', {
             message = err.message;
         }
         t.assertEqual(message, 'invalid log name');
+    },
+
+    'server config stores obfuscated password and reads plain password': (t) => {
+        const name = 'unit_secret_' + Date.now();
+        const serverDir = path.resolve(__dirname, '..', 'conf.d', 'servers');
+        const filePath = path.join(serverDir, name + '.json');
+        try {
+            CGI.writeServerConfig(name, { host: '127.0.0.1', port: 5656, user: 'sys', password: 'manager' });
+            const raw = fs.readFileSync(filePath, 'utf8');
+            t.assert(raw.indexOf('"manager"') < 0, 'stored file should not contain plain password');
+            t.assert(raw.indexOf('jsh-obf-v1:') >= 0, 'stored file should contain obfuscated marker');
+            const cfg = CGI.getServerConfig(name);
+            t.assertEqual(cfg.password, 'manager');
+        } finally {
+            CGI.removeServerConfig(name);
+        }
+    },
+
+    'server config reads legacy plain password': (t) => {
+        const name = 'unit_plain_' + Date.now();
+        const serverDir = path.resolve(__dirname, '..', 'conf.d', 'servers');
+        const filePath = path.join(serverDir, name + '.json');
+        try {
+            fs.mkdirSync(serverDir, { recursive: true });
+            fs.writeFileSync(filePath, JSON.stringify({ host: 'h', port: 5656, user: 'sys', password: 'plain-pw' }), 'utf8');
+            const cfg = CGI.getServerConfig(name);
+            t.assertEqual(cfg.password, 'plain-pw');
+        } finally {
+            CGI.removeServerConfig(name);
+        }
+    },
+
+    'secret obfuscation preserves values that start with marker': (t) => {
+        const value = 'jsh-obf-v1:actual-password';
+        const encoded = obfuscateSecret(value);
+        t.assert(encoded.indexOf('jsh-obf-v1:') === 0, 'encoded value should have marker');
+        t.assert(encoded !== value, 'encoded value should not be treated as already encoded');
+        t.assertEqual(revealSecret(encoded), value);
     },
 });
 

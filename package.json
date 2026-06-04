@@ -3,6 +3,7 @@
     "version": "1.0.3",
     "bin": {},
     "scripts": {
+        "install": "./scripts/install.js",
         "start": "./scripts/collector-service-start.js",
         "stop": "./scripts/collector-service-stop.js",
         "uninstall": "./scripts/collector-service-uninstall.js"

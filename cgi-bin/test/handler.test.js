@@ -121,6 +121,9 @@ class MockMachbaseClient {
         this.tables = [];
         this.users = [{ USER_ID: 1, NAME: 'SYS' }];
         this.createError = null;
+        this.rowCount = 0;
+        this.createdTables = [];
+        this.droppedTables = [];
     }
     connect() {
         if (this.connectError) throw new Error(this.connectError);
@@ -133,8 +136,15 @@ class MockMachbaseClient {
     selectTableMeta(_table, _userId) { return this.tableMeta; }
     selectColumnsByTableId(_tableId) { return this.columns; }
     selectColumnsByTableName(_table) { return this.columns; }
-    createTagTable(_table, _schema) {
+    createTagTable(table, schema, options) {
         if (this.createError) throw new Error(this.createError);
+        this.createdTables.push({ table, schema, options: options || {} });
+    }
+    selectRowCount(_table) {
+        return this.rowCount;
+    }
+    dropTableCascade(table) {
+        this.droppedTables.push(table);
     }
 }
 
@@ -267,6 +277,78 @@ runner.run('Handler: collectorPost', {
         H.collectorPost('col-a', { opcua: {} }, (r) => { result = r; });
         t.assert(!result.ok, 'should not be ok');
         t.assert(!mockCGI._configs['col-a'], 'config should be removed on install failure');
+    },
+
+    'auto-creates TAG table and stores normalized columns': (t) => {
+        const H = makeHandler();
+        const longName = 'TAG_' + 'X'.repeat(90);
+        mockCGI._servers['server-a'] = { host: 'h', port: 5656, user: 'sys', password: 'pw' };
+
+        let result;
+        H.collectorPost('col-a', {
+            autoCreateTable: true,
+            db: 'server-a',
+            dbTable: 'auto_tag',
+            opcua: {
+                interval: 1000,
+                nodes: [{ nodeId: 'ns=1;s=a', name: longName }],
+            },
+        }, (r) => { result = r; });
+
+        t.assert(result.ok, 'should be ok');
+        t.assertEqual(mockMachbaseClient.createdTables.length, 1, 'table should be created');
+        const created = mockMachbaseClient.createdTables[0];
+        t.assertEqual(created.table, 'AUTO_TAG');
+        t.assertEqual(created.options.rollup, true, 'rollup should be enabled');
+        t.assertEqual(created.schema.columns[0].name, 'NAME');
+        t.assertEqual(created.schema.columns[0].length, longName.length);
+        t.assertEqual(created.schema.columns[2].name, 'VALUE');
+        t.assertEqual(created.schema.columns[3].name, 'STR_VALUE');
+        t.assertEqual(created.schema.columns[3].length, 120);
+        t.assertEqual(mockCGI._configs['col-a'].dbTable, 'AUTO_TAG');
+        t.assertEqual(mockCGI._configs['col-a'].valueColumn, 'VALUE');
+        t.assertEqual(mockCGI._configs['col-a'].stringValueColumn, 'STR_VALUE');
+        t.assertEqual(mockCGI._configs['col-a'].stringOnly, false);
+        t.assertEqual(mockCGI._configs['col-a'].autoCreateTable, undefined);
+        t.assert(mockService._installed['col-a'], 'service should be installed');
+    },
+
+    'auto-create fails when current user already has the table': (t) => {
+        const H = makeHandler();
+        mockCGI._servers['server-a'] = { host: 'h', port: 5656, user: 'SYS', password: 'pw' };
+        mockMachbaseClient.tableMeta = { ID: 10, TYPE: 6, NAME: 'AUTO_TAG' };
+
+        let result;
+        H.collectorPost('col-a', {
+            autoCreateTable: true,
+            db: 'server-a',
+            dbTable: 'AUTO_TAG',
+            opcua: { interval: 1000, nodes: [] },
+        }, (r) => { result = r; });
+
+        t.assert(!result.ok, 'should not be ok');
+        t.assert(result.reason.includes('already exists'), 'reason should explain existing table');
+        t.assertEqual(mockMachbaseClient.createdTables.length, 0, 'table should not be created');
+        t.assert(!mockCGI._configs['col-a'], 'config should not be written');
+    },
+
+    'auto-create drops created table when install fails': (t) => {
+        const H = makeHandler();
+        mockCGI._servers['server-a'] = { host: 'h', port: 5656, user: 'SYS', password: 'pw' };
+        mockService.installError = 'install failed';
+        mockMachbaseClient.rowCount = 0;
+
+        let result;
+        H.collectorPost('col-a', {
+            autoCreateTable: true,
+            db: 'server-a',
+            dbTable: 'AUTO_TAG',
+            opcua: { interval: 1000, nodes: [] },
+        }, (r) => { result = r; });
+
+        t.assert(!result.ok, 'should not be ok');
+        t.assert(!mockCGI._configs['col-a'], 'config should be removed');
+        t.assertEqual(mockMachbaseClient.droppedTables[0], 'AUTO_TAG');
     },
 });
 
