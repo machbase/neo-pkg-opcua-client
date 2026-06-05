@@ -1,7 +1,5 @@
 /**
- * POST /cgi-bin/api/opcua/node/descendants  -- OPC UA 노드 하위 전체 탐색
- *
- * body: { endpoint?, server?, node, nodeClassMask? }
+ * GET /cgi-bin/api/opcua/server/list  -- OPC UA 서버 목록 조회
  */
 
 const path = require('path');
@@ -14,19 +12,9 @@ const Handler = require(path.join(ROOT, 'src', 'cgi', 'handler.js'));
 const reply = (r) => CGI.reply(r);
 
 const handlers = {
-  POST: () => {
-    const body = CGI.readBody();
-    if (!body.endpoint && !body.server) {
-      reply({ ok: false, reason: 'endpoint or server is required' });
-      return;
-    }
-    if (!body.node) {
-      reply({ ok: false, reason: 'node is required' });
-      return;
-    }
-    Handler.nodeDescendants(body, reply);
-  },
+  GET: () => Handler.opcuaServerList(reply),
 };
+
 const method = (process.env.get('REQUEST_METHOD') || 'GET').toUpperCase();
 try {
   const handler = handlers[method] || (() => {

@@ -1,5 +1,5 @@
 /**
- * GET /cgi-bin/api/opcua/read?endpoint=xxx&nodes=id1,id2  -- OPC UA 노드 일회성 읽기
+ * GET /cgi-bin/api/opcua/read?endpoint=xxx&server=xxx&nodes=id1,id2  -- OPC UA 노드 일회성 읽기
  */
 
 const path = require('path');
@@ -9,13 +9,13 @@ const ROOT = _argv.slice(0, _argv.lastIndexOf('/cgi-bin/') + '/cgi-bin'.length);
 const { CGI } = require(path.join(ROOT, 'src', 'cgi', 'cgi_util.js'));
 const Handler = require(path.join(ROOT, 'src', 'cgi', 'handler.js'));
 
-const { endpoint, nodes } = CGI.parseQuery();
+const { endpoint, server, nodes } = CGI.parseQuery();
 const reply = (r) => CGI.reply(r);
 
 const handlers = {
   GET: () => {
-    if (!endpoint) {
-      reply({ ok: false, reason: 'endpoint is required' });
+    if (!endpoint && !server) {
+      reply({ ok: false, reason: 'endpoint or server is required' });
       return;
     }
     if (!nodes) {
@@ -27,7 +27,7 @@ const handlers = {
       reply({ ok: false, reason: 'nodes is empty' });
       return;
     }
-    Handler.opcuaRead(endpoint, nodeIds, reply);
+    Handler.opcuaRead({ endpoint, server }, nodeIds, reply);
   },
 };
 const method = (process.env.get('REQUEST_METHOD') || 'GET').toUpperCase();

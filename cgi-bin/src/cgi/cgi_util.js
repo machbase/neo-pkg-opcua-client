@@ -9,10 +9,12 @@ const { protectServerConfig, revealServerConfig } = require('./secret.js');
 const APP_DIR = process.argv[1].slice(0, process.argv[1].lastIndexOf('/cgi-bin/') + '/cgi-bin'.length);
 const CONF_DIR = path.join(APP_DIR, 'conf.d');
 const SERVERS_DIR = path.join(CONF_DIR, 'servers');
+const OPCUA_SERVERS_DIR = path.join(CONF_DIR, 'opcua-servers');
 const DATA_DIR = path.join(APP_DIR, 'data');
 
 fs.mkdirSync(CONF_DIR, { recursive: true });
 fs.mkdirSync(SERVERS_DIR, { recursive: true });
+fs.mkdirSync(OPCUA_SERVERS_DIR, { recursive: true });
 fs.mkdirSync(DATA_DIR, { recursive: true });
 
 class CGI {
@@ -183,6 +185,68 @@ class CGI {
   static removeServerConfig(name) {
     try {
       fs.unlinkSync(path.join(SERVERS_DIR, `${name}.json`));
+      return null;
+    } catch (err) {
+      const message = err && err.message ? String(err.message) : String(err || '');
+      const isMissing = (err && err.code === 'ENOENT')
+        || message.indexOf('no such file') >= 0
+        || message.indexOf('cannot find the file') >= 0
+        || message.indexOf('cannot find the path') >= 0;
+      return isMissing ? null : err;
+    }
+  }
+
+  // ── conf.d/opcua-servers CRUD ───────────────────────────────────────────────
+
+  /**
+   * conf.d/opcua-servers/ 디렉토리의 JSON 설정 파일 이름 목록을 반환한다.
+   * @returns {string[]}
+   */
+  static getOpcuaServerConfigList() {
+    try {
+      return fs.readdirSync(OPCUA_SERVERS_DIR)
+        .filter(f => f.endsWith('.json'))
+        .map(f => f.replace(/\.json$/, ''));
+    } catch (_) {
+      return [];
+    }
+  }
+
+  /**
+   * 이름으로 OPC UA 서버 설정 파일을 읽어 반환한다. 없으면 null을 반환한다.
+   * @param {string} name
+   * @returns {object|null}
+   */
+  static getOpcuaServerConfig(name) {
+    try {
+      const raw = fs.readFileSync(path.join(OPCUA_SERVERS_DIR, `${name}.json`), 'utf8');
+      return JSON.parse(raw);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /**
+   * OPC UA 서버 설정을 파일에 저장한다. 디렉토리가 없으면 생성한다 (atomic write).
+   * @param {string} name
+   * @param {object} config
+   */
+  static writeOpcuaServerConfig(name, config) {
+    fs.mkdirSync(OPCUA_SERVERS_DIR, { recursive: true });
+    const filePath = path.join(OPCUA_SERVERS_DIR, `${name}.json`);
+    const tmpPath = `${filePath}.${Date.now()}.tmp`;
+    fs.writeFileSync(tmpPath, JSON.stringify(config, null, 2), 'utf8');
+    fs.renameSync(tmpPath, filePath);
+  }
+
+  /**
+   * OPC UA 서버 설정 파일을 삭제한다. 파일이 이미 없으면 null, 그 외 오류는 err를 반환한다.
+   * @param {string} name
+   * @returns {Error|null}
+   */
+  static removeOpcuaServerConfig(name) {
+    try {
+      fs.unlinkSync(path.join(OPCUA_SERVERS_DIR, `${name}.json`));
       return null;
     } catch (err) {
       const message = err && err.message ? String(err.message) : String(err || '');

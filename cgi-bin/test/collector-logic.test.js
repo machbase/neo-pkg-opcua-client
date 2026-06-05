@@ -27,6 +27,7 @@ class MockOpcuaClient {
 
 let mockDbQueryRows = [];
 let mockDbQueries = [];
+let mockOpcuaServers = {};
 
 class MockMachbaseClient {
     constructor() {
@@ -170,7 +171,13 @@ function loadCollector() {
     };
     require.cache[cgiUtilPath] = {
         id: cgiUtilPath, filename: cgiUtilPath, loaded: true,
-        exports: { CGI: { getServerConfig: () => mockDbConf }, DATA_DIR: os.tmpdir() },
+        exports: {
+            CGI: {
+                getServerConfig: () => mockDbConf,
+                getOpcuaServerConfig: (name) => mockOpcuaServers[name] || null,
+            },
+            DATA_DIR: os.tmpdir(),
+        },
     };
 
     delete require.cache[collectorPath];
@@ -256,6 +263,20 @@ runner.run('Collector constructor', {
     'timer starts as null': (t) => {
         const { c } = makeCollector();
         t.assertNull(c.timer);
+    },
+    'opcua server profile wins over legacy endpoint': (t) => {
+        mockOpcuaServers['opc-main'] = { endpoint: 'opc.tcp://profile:4840' };
+        const config = {
+            ...baseConfig,
+            opcua: {
+                ...baseConfig.opcua,
+                server: 'opc-main',
+                endpoint: 'opc.tcp://legacy:4840',
+            },
+        };
+        const { c } = makeCollector(config);
+        t.assertEqual(c._opcuaEndpoint, 'opc.tcp://profile:4840');
+        delete mockOpcuaServers['opc-main'];
     },
     '_opcuaConnected starts as false': (t) => {
         const { c } = makeCollector();

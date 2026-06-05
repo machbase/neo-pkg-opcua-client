@@ -313,6 +313,133 @@ function userFacingError(message) {
   return err;
 }
 
+function normalizeOpcuaServerName(name) {
+  const value = String(name || '').trim();
+  if (!value) {
+    throw userFacingError('name is required');
+  }
+  if (value.indexOf('/') >= 0 || value.indexOf('\\') >= 0 || value.indexOf('..') >= 0) {
+    throw userFacingError('invalid opcua server name');
+  }
+  return value;
+}
+
+function autoOpcuaServerNameBase(collectorName) {
+  const base = String(collectorName || '')
+    .trim()
+    .replace(/[^A-Za-z0-9_-]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  return base || 'collector';
+}
+
+function nextAutoOpcuaServerName(collectorName) {
+  const base = `${autoOpcuaServerNameBase(collectorName)}-opcua`;
+  if (!CGI.getOpcuaServerConfig(base)) {
+    return base;
+  }
+  let idx = 2;
+  while (CGI.getOpcuaServerConfig(`${base}-${idx}`)) {
+    idx += 1;
+  }
+  return `${base}-${idx}`;
+}
+
+function normalizeOpcuaServerSecurity(security) {
+  const normalized = security && typeof security === 'object' ? { ...security } : {};
+  normalized.enabled = normalized.enabled === true;
+  return normalized;
+}
+
+function normalizeOpcuaServerConfig(config) {
+  if (!config || typeof config !== 'object') {
+    throw userFacingError('config is required');
+  }
+  const endpoint = String(config.endpoint || '').trim();
+  if (!endpoint) {
+    throw userFacingError('config.endpoint is required');
+  }
+  return {
+    ...config,
+    endpoint,
+    security: normalizeOpcuaServerSecurity(config.security),
+  };
+}
+
+function getOpcuaServerConfigOrThrow(name) {
+  const serverName = normalizeOpcuaServerName(name);
+  const config = CGI.getOpcuaServerConfig(serverName);
+  if (!config) {
+    throw userFacingError(`opcua server '${serverName}' not found`);
+  }
+  return {
+    name: serverName,
+    config: normalizeOpcuaServerConfig(config),
+  };
+}
+
+function resolveOpcuaEndpoint(request) {
+  const source = request && typeof request === 'object' ? request : { endpoint: request };
+  const serverName = source.server !== undefined && source.server !== null
+    ? String(source.server).trim()
+    : '';
+  if (serverName) {
+    const resolved = getOpcuaServerConfigOrThrow(serverName);
+    return {
+      server: resolved.name,
+      endpoint: resolved.config.endpoint,
+      config: resolved.config,
+    };
+  }
+  const endpoint = String(source.endpoint || '').trim();
+  if (!endpoint) {
+    throw userFacingError('endpoint or server is required');
+  }
+  return {
+    server: '',
+    endpoint,
+    config: {
+      endpoint,
+      security: { enabled: false },
+    },
+  };
+}
+
+function prepareCollectorOpcuaServerConfig(collectorName, config) {
+  const opcua = config && config.opcua;
+  if (!opcua) {
+    throw userFacingError('config.opcua is required');
+  }
+
+  const serverName = opcua.server !== undefined && opcua.server !== null
+    ? String(opcua.server).trim()
+    : '';
+  if (serverName) {
+    const resolved = getOpcuaServerConfigOrThrow(serverName);
+    opcua.server = resolved.name;
+    delete opcua.endpoint;
+    return null;
+  }
+
+  const endpoint = String(opcua.endpoint || '').trim();
+  if (!endpoint) {
+    throw userFacingError('config.opcua.server or config.opcua.endpoint is required');
+  }
+
+  const autoName = nextAutoOpcuaServerName(collectorName);
+  CGI.writeOpcuaServerConfig(autoName, {
+    endpoint,
+    security: { enabled: false },
+  });
+  opcua.server = autoName;
+  delete opcua.endpoint;
+  return autoName;
+}
+
+function rollbackAutoCreatedOpcuaServer(name) {
+  if (!name) return;
+  try { CGI.removeOpcuaServerConfig(name); } catch (_) {}
+}
+
 function prepareAutoCreateTableRequest(config) {
   const tableName = normalizeIdentifier(config.dbTable, 'config.dbTable');
   if (!config.db) {
@@ -390,6 +517,11 @@ function validateConfig(config) {
     return `config.opcua.interval must be >= ${MIN_INTERVAL_MS} (ms)`;
   }
   config.opcua.interval = interval;
+  const hasServer = config.opcua.server !== undefined && config.opcua.server !== null && String(config.opcua.server).trim() !== '';
+  const hasEndpoint = config.opcua.endpoint !== undefined && config.opcua.endpoint !== null && String(config.opcua.endpoint).trim() !== '';
+  if (!hasServer && !hasEndpoint) {
+    return 'config.opcua.server or config.opcua.endpoint is required';
+  }
   return null;
 }
 
@@ -417,12 +549,24 @@ function collectorPost(name, config, reply) {
     delete config.autoCreateTable;
   }
 
+  let autoCreatedOpcuaServer = null;
+  try {
+    autoCreatedOpcuaServer = prepareCollectorOpcuaServerConfig(name, config);
+  } catch (err) {
+    reply({
+      ok: false,
+      reason: errorMessage(err),
+    });
+    return;
+  }
+
   let autoCreated = null;
   if (autoCreateTable) {
     try {
       autoCreated = createAutoCollectorTable(config);
       applyAutoCreateConfig(config, autoCreated.tableName);
     } catch (err) {
+      rollbackAutoCreatedOpcuaServer(autoCreatedOpcuaServer);
       reply({
         ok: false,
         reason: errorMessage(err),
@@ -437,6 +581,7 @@ function collectorPost(name, config, reply) {
     if (autoCreated) {
       try { dropAutoCreatedTable(autoCreated.db, autoCreated.tableName); } catch (_) {}
     }
+    rollbackAutoCreatedOpcuaServer(autoCreatedOpcuaServer);
     reply({
       ok: false,
       reason: errorMessage(err),
@@ -449,6 +594,7 @@ function collectorPost(name, config, reply) {
       if (autoCreated) {
         try { dropAutoCreatedTable(autoCreated.db, autoCreated.tableName); } catch (_) {}
       }
+      rollbackAutoCreatedOpcuaServer(autoCreatedOpcuaServer);
       reply({
         ok: false,
         reason: errorMessage(err),
@@ -501,15 +647,42 @@ function collectorPut(name, body, reply) {
     return;
   }
   const nextConfig = body;
+  const validErr = validateConfig(nextConfig);
+  if (validErr) {
+    reply({ ok: false, reason: validErr });
+    return;
+  }
+
+  let autoCreatedOpcuaServer = null;
+  try {
+    autoCreatedOpcuaServer = prepareCollectorOpcuaServerConfig(name, nextConfig);
+  } catch (err) {
+    reply({
+      ok: false,
+      reason: errorMessage(err),
+    });
+    return;
+  }
+
   Service.status(name, (statusErr, serviceInfo) => {
     if (statusErr && !Service.isMissingServiceError(statusErr)) {
+      rollbackAutoCreatedOpcuaServer(autoCreatedOpcuaServer);
       reply({
         ok: false,
         reason: errorMessage(statusErr),
       });
       return;
     }
-    CGI.writeConfig(name, nextConfig);
+    try {
+      CGI.writeConfig(name, nextConfig);
+    } catch (err) {
+      rollbackAutoCreatedOpcuaServer(autoCreatedOpcuaServer);
+      reply({
+        ok: false,
+        reason: errorMessage(err),
+      });
+      return;
+    }
     const isRunning = !statusErr && serviceInfo
       && String(serviceInfo.status).toUpperCase() === 'RUNNING';
     if (!isRunning) {
@@ -971,6 +1144,144 @@ function serverList(reply) {
   });
 }
 
+// ── OPC UA Server config CRUD ─────────────────────────────────────────────────
+
+/**
+ * POST /cgi-bin/api/opcua/server
+ * @param {string} name
+ * @param {object} config
+ * @param {function} reply
+ */
+function opcuaServerPost(name, config, reply) {
+  let serverName;
+  let normalized;
+  try {
+    serverName = normalizeOpcuaServerName(name);
+    normalized = normalizeOpcuaServerConfig(config);
+  } catch (err) {
+    reply({ ok: false, reason: errorMessage(err) });
+    return;
+  }
+  if (CGI.getOpcuaServerConfig(serverName)) {
+    reply({
+      ok: false,
+      reason: `opcua server '${serverName}' already exists`,
+    });
+    return;
+  }
+  try {
+    CGI.writeOpcuaServerConfig(serverName, normalized);
+    reply({
+      ok: true,
+      data: { name: serverName },
+    });
+  } catch (err) {
+    reply({ ok: false, reason: errorMessage(err) });
+  }
+}
+
+/**
+ * GET /cgi-bin/api/opcua/server?name=xxx
+ * @param {string} name
+ * @param {function} reply
+ */
+function opcuaServerGet(name, reply) {
+  let resolved;
+  try {
+    resolved = getOpcuaServerConfigOrThrow(name);
+  } catch (err) {
+    reply({ ok: false, reason: errorMessage(err) });
+    return;
+  }
+  reply({
+    ok: true,
+    data: { name: resolved.name, config: resolved.config },
+  });
+}
+
+/**
+ * PUT /cgi-bin/api/opcua/server?name=xxx
+ * @param {string} name
+ * @param {object} body
+ * @param {function} reply
+ */
+function opcuaServerPut(name, body, reply) {
+  let serverName;
+  let normalized;
+  try {
+    serverName = normalizeOpcuaServerName(name);
+    normalized = normalizeOpcuaServerConfig(body);
+  } catch (err) {
+    reply({ ok: false, reason: errorMessage(err) });
+    return;
+  }
+  if (!CGI.getOpcuaServerConfig(serverName)) {
+    reply({
+      ok: false,
+      reason: `opcua server '${serverName}' not found`,
+    });
+    return;
+  }
+  try {
+    CGI.writeOpcuaServerConfig(serverName, normalized);
+    reply({
+      ok: true,
+      data: { name: serverName },
+    });
+  } catch (err) {
+    reply({ ok: false, reason: errorMessage(err) });
+  }
+}
+
+/**
+ * DELETE /cgi-bin/api/opcua/server?name=xxx
+ * @param {string} name
+ * @param {function} reply
+ */
+function opcuaServerDelete(name, reply) {
+  let serverName;
+  try {
+    serverName = normalizeOpcuaServerName(name);
+  } catch (err) {
+    reply({ ok: false, reason: errorMessage(err) });
+    return;
+  }
+  if (!CGI.getOpcuaServerConfig(serverName)) {
+    reply({
+      ok: false,
+      reason: `opcua server '${serverName}' not found`,
+    });
+    return;
+  }
+  const err = CGI.removeOpcuaServerConfig(serverName);
+  if (err) {
+    reply({
+      ok: false,
+      reason: errorMessage(err),
+    });
+    return;
+  }
+  reply({ ok: true });
+}
+
+/**
+ * GET /cgi-bin/api/opcua/server/list
+ * @param {function} reply
+ */
+function opcuaServerList(reply) {
+  const data = CGI.getOpcuaServerConfigList().sort().map((name) => {
+    const config = CGI.getOpcuaServerConfig(name);
+    return {
+      name,
+      config: normalizeOpcuaServerConfig(config),
+    };
+  });
+  reply({
+    ok: true,
+    data,
+  });
+}
+
 // ── DB endpoints ────────────────────────────────────────────────────────────
 
 /**
@@ -1148,11 +1459,19 @@ function dbTableColumns(db, table, reply) {
 
 /**
  * POST /cgi-bin/api/opcua/connect
- * @param {string} endpoint
+ * @param {string|{endpoint?: string, server?: string}} endpoint
  * @param {number} [readRetryInterval]
  * @param {function} reply
  */
-function opcuaConnect(endpoint, readRetryInterval, reply) {
+function opcuaConnect(endpointOrRequest, readRetryInterval, reply) {
+  let resolved;
+  try {
+    resolved = resolveOpcuaEndpoint(endpointOrRequest);
+  } catch (err) {
+    reply({ ok: false, reason: errorMessage(err) });
+    return;
+  }
+  const endpoint = resolved.endpoint;
   const client = new OpcuaClient(endpoint, readRetryInterval);
   if (!client.open()) {
     reply({
@@ -1165,6 +1484,7 @@ function opcuaConnect(endpoint, readRetryInterval, reply) {
     reply({
       ok: true,
       data: {
+        server: resolved.server || undefined,
         endpoint,
         connected: true,
       },
@@ -1176,11 +1496,19 @@ function opcuaConnect(endpoint, readRetryInterval, reply) {
 
 /**
  * GET /cgi-bin/api/opcua/read?endpoint=xxx&nodes=id1,id2
- * @param {string} endpoint
+ * @param {string|{endpoint?: string, server?: string}} endpoint
  * @param {string[]} nodeIds
  * @param {function} reply
  */
-function opcuaRead(endpoint, nodeIds, reply) {
+function opcuaRead(endpointOrRequest, nodeIds, reply) {
+  let resolved;
+  try {
+    resolved = resolveOpcuaEndpoint(endpointOrRequest);
+  } catch (err) {
+    reply({ ok: false, reason: errorMessage(err) });
+    return;
+  }
+  const endpoint = resolved.endpoint;
   const client = new OpcuaClient(endpoint);
   if (!client.open()) {
     reply({
@@ -1212,11 +1540,19 @@ function opcuaRead(endpoint, nodeIds, reply) {
 
 /**
  * POST /cgi-bin/api/opcua/write
- * @param {string} endpoint
+ * @param {string|{endpoint?: string, server?: string}} endpoint
  * @param {Array<{ node: string, value: any }>} writes
  * @param {function} reply
  */
-function opcuaWrite(endpoint, writes, reply) {
+function opcuaWrite(endpointOrRequest, writes, reply) {
+  let resolved;
+  try {
+    resolved = resolveOpcuaEndpoint(endpointOrRequest);
+  } catch (err) {
+    reply({ ok: false, reason: errorMessage(err) });
+    return;
+  }
+  const endpoint = resolved.endpoint;
   const client = new OpcuaClient(endpoint);
   if (!client.open()) {
     reply({
@@ -1295,11 +1631,18 @@ function _browseDescendants(client, rootNode, nodeClassMask) {
 }
 
 function nodeDescendants(body, reply) {
-  const client = new OpcuaClient(body.endpoint);
+  let resolved;
+  try {
+    resolved = resolveOpcuaEndpoint(body);
+  } catch (err) {
+    reply({ ok: false, reason: errorMessage(err) });
+    return;
+  }
+  const client = new OpcuaClient(resolved.endpoint);
   if (!client.open()) {
     reply({
       ok: false,
-      reason: 'connect failed: ' + body.endpoint,
+      reason: 'connect failed: ' + resolved.endpoint,
     });
     return;
   }
@@ -1345,6 +1688,11 @@ module.exports = {
   serverPut,
   serverDelete,
   serverList,
+  opcuaServerPost,
+  opcuaServerGet,
+  opcuaServerPut,
+  opcuaServerDelete,
+  opcuaServerList,
   dbConnect,
   dbTableCreate,
   dbTableList,

@@ -1,7 +1,7 @@
 /**
  * POST /cgi-bin/api/opcua/write  -- OPC UA 노드 일회성 쓰기
  *
- * body: { endpoint, writes: [{ node, value }, ...] }
+ * body: { endpoint?, server?, writes: [{ node, value }, ...] }
  */
 
 const path = require('path');
@@ -16,8 +16,8 @@ const reply = (r) => CGI.reply(r);
 const handlers = {
   POST: () => {
     const body = CGI.readBody();
-    if (!body.endpoint) {
-      reply({ ok: false, reason: 'endpoint is required' });
+    if (!body.endpoint && !body.server) {
+      reply({ ok: false, reason: 'endpoint or server is required' });
       return;
     }
     if (!Array.isArray(body.writes) || body.writes.length === 0) {
@@ -34,7 +34,7 @@ const handlers = {
         return;
       }
     }
-    Handler.opcuaWrite(body.endpoint, body.writes, reply);
+    Handler.opcuaWrite({ endpoint: body.endpoint, server: body.server }, body.writes, reply);
   },
 };
 const method = (process.env.get('REQUEST_METHOD') || 'GET').toUpperCase();

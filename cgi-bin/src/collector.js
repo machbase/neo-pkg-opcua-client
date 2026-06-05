@@ -11,6 +11,27 @@ function _configuredColumn(value) {
     return value === undefined || value === null || value === '' ? null : value;
 }
 
+function _resolveOpcuaEndpoint(config) {
+    const opcua = config && config.opcua ? config.opcua : {};
+    if (opcua.server !== undefined && opcua.server !== null && String(opcua.server).trim() !== '') {
+        const serverName = String(opcua.server).trim();
+        const serverConfig = CGI.getOpcuaServerConfig(serverName);
+        const endpoint = serverConfig && serverConfig.endpoint ? String(serverConfig.endpoint).trim() : '';
+        if (!endpoint) {
+            throw new Error(`opcua server '${serverName}' not found`);
+        }
+        return endpoint;
+    }
+
+    const endpoint = opcua.endpoint !== undefined && opcua.endpoint !== null
+        ? String(opcua.endpoint).trim()
+        : '';
+    if (!endpoint) {
+        throw new Error('config.opcua.server or config.opcua.endpoint is required');
+    }
+    return endpoint;
+}
+
 const WARN_SUMMARY_EVERY = 60;
 const WARN_SUMMARY_INTERVAL_MS = 5 * 60 * 1000;
 
@@ -25,7 +46,8 @@ class Collector {
         this.nodes = config.opcua.nodes;
         this.nodeIds = this.nodes.map(n => n.nodeId);
         this.interval = config.opcua.interval;
-        this.opcua = opcuaClient || new OpcuaClient(config.opcua.endpoint, config.opcua.readRetryInterval);
+        this._opcuaEndpoint = _resolveOpcuaEndpoint(config);
+        this.opcua = opcuaClient || new OpcuaClient(this._opcuaEndpoint, config.opcua.readRetryInterval);
         this._dbConf = dbConf;
         this._table = table;
         this._configuredValueColumn = configuredValueColumn;
