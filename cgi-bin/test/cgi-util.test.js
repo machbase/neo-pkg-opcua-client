@@ -85,6 +85,32 @@ runner.run('CGI util', {
         }
     },
 
+    'opcua server config stores obfuscated nested password and reads plain password': (t) => {
+        const name = 'unit_opcua_secret_' + Date.now();
+        const serverDir = path.resolve(__dirname, '..', 'conf.d', 'opcua-servers');
+        const filePath = path.join(serverDir, name + '.json');
+        try {
+            CGI.writeOpcuaServerConfig(name, {
+                endpoint: 'opc.tcp://127.0.0.1:4840',
+                security: {
+                    enabled: true,
+                    securityPolicy: 'None',
+                    messageSecurityMode: 'None',
+                    authMode: 'UserName',
+                    username: 'user1',
+                    password: 'secret',
+                },
+            });
+            const raw = fs.readFileSync(filePath, 'utf8');
+            t.assert(raw.indexOf('"secret"') < 0, 'stored file should not contain plain password');
+            t.assert(raw.indexOf('jsh-obf-v1:') >= 0, 'stored file should contain obfuscated marker');
+            const cfg = CGI.getOpcuaServerConfig(name);
+            t.assertEqual(cfg.security.password, 'secret');
+        } finally {
+            CGI.removeOpcuaServerConfig(name);
+        }
+    },
+
     'secret obfuscation preserves values that start with marker': (t) => {
         const value = 'jsh-obf-v1:actual-password';
         const encoded = obfuscateSecret(value);

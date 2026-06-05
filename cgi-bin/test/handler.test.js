@@ -18,6 +18,8 @@ class MockCGI {
         this._configs = {};
         this._servers = {};
         this._opcuaServers = {};
+        this._opcuaCredentialWrites = {};
+        this._opcuaCredentialRemoves = [];
     }
     getConfigList() { return Object.keys(this._configs); }
     getConfig(name) { return this._configs[name] || null; }
@@ -38,6 +40,24 @@ class MockCGI {
     removeOpcuaServerConfig(name) {
         if (!this._opcuaServers[name]) return null;
         delete this._opcuaServers[name];
+        return null;
+    }
+    writeOpcuaServerCredentialFiles(name, certificatePem, keyPem) {
+        this._opcuaCredentialWrites[name] = { certificatePem, keyPem };
+        return {
+            certificateFile: `/mock/opcua-certs/${name}/client_cert.pem`,
+            keyFile: `/mock/opcua-certs/${name}/client_key.pem`,
+        };
+    }
+    getOpcuaServerCredentialFileInfo(name) {
+        if (!this._opcuaCredentialWrites[name]) return {};
+        return {
+            certificate: { exists: true, updatedAt: '2026-06-05T06:00:00.000Z' },
+            key: { exists: true, updatedAt: '2026-06-05T06:00:01.000Z' },
+        };
+    }
+    removeOpcuaServerCredentialFiles(name) {
+        this._opcuaCredentialRemoves.push(name);
         return null;
     }
 }
@@ -159,6 +179,7 @@ class MockMachbaseClient {
 
 class MockOpcuaClient {
     constructor() {
+        this.options = null;
         this.endpoint = null;
         this.readRetryInterval = null;
         this.opened = false;
@@ -230,9 +251,15 @@ function makeHandler() {
     };
     require.cache[opcuaPath] = {
         id: opcuaPath, filename: opcuaPath, loaded: true,
-        exports: function(endpoint, readRetryInterval) {
-            mockOpcuaClient.endpoint = endpoint;
-            mockOpcuaClient.readRetryInterval = readRetryInterval;
+        exports: function(endpointOrConfig, readRetryInterval) {
+            mockOpcuaClient.options = endpointOrConfig;
+            if (endpointOrConfig && typeof endpointOrConfig === 'object') {
+                mockOpcuaClient.endpoint = endpointOrConfig.endpoint;
+                mockOpcuaClient.readRetryInterval = endpointOrConfig.readRetryInterval || readRetryInterval;
+            } else {
+                mockOpcuaClient.endpoint = endpointOrConfig;
+                mockOpcuaClient.readRetryInterval = readRetryInterval;
+            }
             return mockOpcuaClient;
         },
     };
@@ -760,6 +787,58 @@ runner.run('Handler: OPC UA server CRUD', {
         t.assertEqual(mockCGI._opcuaServers['opc1'].security.enabled, false);
     },
 
+    'opcuaServerPost stores username auth and masks password on get': (t) => {
+        const H = makeHandler();
+        let result;
+        H.opcuaServerPost('opc1', {
+            endpoint: 'opc.tcp://h:4840',
+            security: {
+                enabled: true,
+                securityPolicy: 'None',
+                messageSecurityMode: 'None',
+                authMode: 'UserName',
+                username: 'user1',
+                password: 'secret',
+            },
+        }, (r) => { result = r; });
+        t.assert(result.ok, 'should be ok');
+        t.assertEqual(mockCGI._opcuaServers['opc1'].security.password, 'secret');
+
+        H.opcuaServerGet('opc1', (r) => { result = r; });
+        t.assert(result.ok, 'get should be ok');
+        t.assertEqual(result.data.config.security.password, undefined, 'password should be masked');
+        t.assertEqual(result.data.config.security.hasPassword, true);
+        t.assertEqual(result.data.config.security.username, 'user1');
+    },
+
+    'opcuaServerPost stores certificate files for secure mode and masks paths': (t) => {
+        const H = makeHandler();
+        let result;
+        H.opcuaServerPost('opc1', {
+            endpoint: 'opc.tcp://h:4840',
+            security: {
+                enabled: true,
+                securityPolicy: 'Basic256Sha256',
+                messageSecurityMode: 'SignAndEncrypt',
+                authMode: 'Anonymous',
+                certificatePem: '-----BEGIN CERTIFICATE-----\nmock\n-----END CERTIFICATE-----\n',
+                keyPem: '-----BEGIN PRIVATE KEY-----\nmock\n-----END PRIVATE KEY-----\n',
+            },
+        }, (r) => { result = r; });
+        t.assert(result.ok, 'should be ok');
+        t.assertEqual(mockCGI._opcuaCredentialWrites['opc1'].certificatePem.includes('BEGIN CERTIFICATE'), true);
+        t.assertEqual(mockCGI._opcuaServers['opc1'].security.certificateFile, '/mock/opcua-certs/opc1/client_cert.pem');
+
+        H.opcuaServerGet('opc1', (r) => { result = r; });
+        t.assert(result.ok, 'get should be ok');
+        t.assertEqual(result.data.config.security.certificateFile, undefined, 'certificate path should be masked');
+        t.assertEqual(result.data.config.security.keyFile, undefined, 'key path should be masked');
+        t.assertEqual(result.data.config.security.hasCertificateFile, true);
+        t.assertEqual(result.data.config.security.hasKeyFile, true);
+        t.assertEqual(result.data.config.security.certificateUpdatedAt, '2026-06-05T06:00:00.000Z');
+        t.assertEqual(result.data.config.security.keyUpdatedAt, '2026-06-05T06:00:01.000Z');
+    },
+
     'opcuaServerPost returns error when profile already exists': (t) => {
         const H = makeHandler();
         mockCGI._opcuaServers['opc1'] = { endpoint: 'opc.tcp://h:4840', security: { enabled: false } };
@@ -788,6 +867,54 @@ runner.run('Handler: OPC UA server CRUD', {
         t.assertEqual(mockCGI._opcuaServers['opc1'].security.enabled, true);
     },
 
+    'opcuaServerPut preserves existing secret fields when omitted': (t) => {
+        const H = makeHandler();
+        mockCGI._opcuaServers['opc1'] = {
+            endpoint: 'opc.tcp://h:4840',
+            security: {
+                enabled: true,
+                securityPolicy: 'Basic256',
+                messageSecurityMode: 'Sign',
+                authMode: 'UserName',
+                username: 'user1',
+                password: 'old-secret',
+                certificateFile: '/old/client_cert.pem',
+                keyFile: '/old/client_key.pem',
+            },
+        };
+        let result;
+        H.opcuaServerPut('opc1', {
+            endpoint: 'opc.tcp://h2:4840',
+            security: {
+                enabled: true,
+                securityPolicy: 'Basic256',
+                messageSecurityMode: 'Sign',
+                authMode: 'UserName',
+                username: 'user2',
+            },
+        }, (r) => { result = r; });
+        t.assert(result.ok, 'should be ok');
+        t.assertEqual(mockCGI._opcuaServers['opc1'].security.password, 'old-secret');
+        t.assertEqual(mockCGI._opcuaServers['opc1'].security.certificateFile, '/old/client_cert.pem');
+        t.assertEqual(mockCGI._opcuaServers['opc1'].security.username, 'user2');
+    },
+
+    'opcuaServerPost rejects secure mode without certificate files': (t) => {
+        const H = makeHandler();
+        let result;
+        H.opcuaServerPost('opc1', {
+            endpoint: 'opc.tcp://h:4840',
+            security: {
+                enabled: true,
+                securityPolicy: 'Basic256',
+                messageSecurityMode: 'Sign',
+                authMode: 'Anonymous',
+            },
+        }, (r) => { result = r; });
+        t.assert(!result.ok, 'should not be ok');
+        t.assert(result.reason.includes('certificatePem'));
+    },
+
     'opcuaServerDelete removes profile': (t) => {
         const H = makeHandler();
         mockCGI._opcuaServers['opc1'] = { endpoint: 'opc.tcp://h:4840' };
@@ -795,6 +922,7 @@ runner.run('Handler: OPC UA server CRUD', {
         H.opcuaServerDelete('opc1', (r) => { result = r; });
         t.assert(result.ok, 'should be ok');
         t.assert(!mockCGI._opcuaServers['opc1'], 'profile should be removed');
+        t.assertEqual(mockCGI._opcuaCredentialRemoves[0], 'opc1');
     },
 
     'opcuaServerList returns sorted profiles': (t) => {
@@ -974,13 +1102,89 @@ runner.run('Handler: opcuaConnect', {
 
     'resolves endpoint from OPC UA server profile': (t) => {
         const H = makeHandler();
-        mockCGI._opcuaServers['opc-main'] = { endpoint: 'opc.tcp://profile:4840' };
+        mockCGI._opcuaServers['opc-main'] = {
+            endpoint: 'opc.tcp://profile:4840',
+            security: {
+                enabled: true,
+                securityPolicy: 'None',
+                messageSecurityMode: 'None',
+                authMode: 'Anonymous',
+            },
+        };
         let result;
         H.opcuaConnect({ server: 'opc-main' }, 250, (r) => { result = r; });
         t.assert(result.ok, 'should be ok');
         t.assertEqual(result.data.server, 'opc-main');
         t.assertEqual(result.data.endpoint, 'opc.tcp://profile:4840');
         t.assertEqual(mockOpcuaClient.endpoint, 'opc.tcp://profile:4840');
+        t.assertEqual(mockOpcuaClient.options.security.enabled, true);
+        t.assertEqual(mockOpcuaClient.options.readRetryInterval, 250);
+    },
+
+    'uses direct security config for unsaved endpoint connection test': (t) => {
+        const H = makeHandler();
+        let result;
+        H.opcuaConnect({
+            endpoint: 'opc.tcp://secure:4840',
+            security: {
+                enabled: true,
+                securityPolicy: 'None',
+                messageSecurityMode: 'None',
+                authMode: 'UserName',
+                username: 'opcuser',
+                password: 'secret',
+            },
+        }, undefined, (r) => { result = r; });
+        t.assert(result.ok, 'should be ok');
+        t.assertEqual(mockOpcuaClient.endpoint, 'opc.tcp://secure:4840');
+        t.assertEqual(mockOpcuaClient.options.security.enabled, true);
+        t.assertEqual(mockOpcuaClient.options.security.authMode, 'UserName');
+        t.assertEqual(mockOpcuaClient.options.security.username, 'opcuser');
+        t.assertEqual(mockOpcuaClient.options.security.password, 'secret');
+    },
+
+    'uses temporary certificate files for direct secure connection test and cleans them up': (t) => {
+        const H = makeHandler();
+        let result;
+        H.opcuaConnect({
+            endpoint: 'opc.tcp://secure:4840',
+            security: {
+                enabled: true,
+                securityPolicy: 'Basic256Sha256',
+                messageSecurityMode: 'SignAndEncrypt',
+                authMode: 'Certificate',
+                certificatePem: '-----BEGIN CERTIFICATE-----\nCERT\n-----END CERTIFICATE-----\n',
+                keyPem: '-----BEGIN PRIVATE KEY-----\nKEY\n-----END PRIVATE KEY-----\n',
+            },
+        }, undefined, (r) => { result = r; });
+        t.assert(result.ok, 'should be ok');
+        const tempNames = Object.keys(mockCGI._opcuaCredentialWrites);
+        t.assertEqual(tempNames.length, 1);
+        const tempName = tempNames[0];
+        t.assert(tempName.indexOf('opcua-connect-test-') === 0, 'should use temp connect profile name');
+        t.assertEqual(mockOpcuaClient.options.security.certificateFile, `/mock/opcua-certs/${tempName}/client_cert.pem`);
+        t.assertEqual(mockOpcuaClient.options.security.keyFile, `/mock/opcua-certs/${tempName}/client_key.pem`);
+        t.assert(mockCGI._opcuaCredentialRemoves.indexOf(tempName) >= 0, 'should remove temp credential files');
+    },
+
+    'does not write temporary certificate files when direct security validation fails': (t) => {
+        const H = makeHandler();
+        let result;
+        H.opcuaConnect({
+            endpoint: 'opc.tcp://secure:4840',
+            security: {
+                enabled: true,
+                securityPolicy: 'Basic256Sha256',
+                messageSecurityMode: 'SignAndEncrypt',
+                authMode: 'UserName',
+                username: 'opcuser',
+                certificatePem: '-----BEGIN CERTIFICATE-----\nCERT\n-----END CERTIFICATE-----\n',
+                keyPem: '-----BEGIN PRIVATE KEY-----\nKEY\n-----END PRIVATE KEY-----\n',
+            },
+        }, undefined, (r) => { result = r; });
+        t.assert(!result.ok, 'should not be ok');
+        t.assert(result.reason.includes('security.password is required'));
+        t.assertEqual(Object.keys(mockCGI._opcuaCredentialWrites).length, 0);
     },
 
     'returns error when connect fails': (t) => {

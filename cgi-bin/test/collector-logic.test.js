@@ -265,7 +265,10 @@ runner.run('Collector constructor', {
         t.assertNull(c.timer);
     },
     'opcua server profile wins over legacy endpoint': (t) => {
-        mockOpcuaServers['opc-main'] = { endpoint: 'opc.tcp://profile:4840' };
+        mockOpcuaServers['opc-main'] = {
+            endpoint: 'opc.tcp://profile:4840',
+            security: { enabled: true, securityPolicy: 'None', messageSecurityMode: 'None', authMode: 'Anonymous' },
+        };
         const config = {
             ...baseConfig,
             opcua: {
@@ -276,6 +279,7 @@ runner.run('Collector constructor', {
         };
         const { c } = makeCollector(config);
         t.assertEqual(c._opcuaEndpoint, 'opc.tcp://profile:4840');
+        t.assertEqual(c._opcuaConfig.security.enabled, true);
         delete mockOpcuaServers['opc-main'];
     },
     '_opcuaConnected starts as false': (t) => {

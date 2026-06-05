@@ -947,7 +947,7 @@ es.addEventListener("line", (event) => {
 
 ### POST /opcua/server
 
-OPC UA 서버 profile을 등록합니다. 현재는 endpoint와 security 사용 여부만 저장하며, security 상세 옵션은 추후 확장 예정입니다.
+OPC UA 서버 profile을 등록합니다. Collector와 one-shot OPC UA API는 `server` 이름을 받으면 이 profile의 endpoint와 security 설정을 사용합니다.
 
 **요청 본문**
 
@@ -956,7 +956,14 @@ OPC UA 서버 profile을 등록합니다. 현재는 endpoint와 security 사용 
   "name": "opc-main",
   "endpoint": "opc.tcp://192.168.1.100:4840",
   "security": {
-    "enabled": false
+    "enabled": true,
+    "securityPolicy": "Basic256Sha256",
+    "messageSecurityMode": "SignAndEncrypt",
+    "authMode": "UserName",
+    "username": "opcuser",
+    "password": "secret",
+    "certificatePem": "-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----\n",
+    "keyPem": "-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"
   }
 }
 ```
@@ -965,7 +972,18 @@ OPC UA 서버 profile을 등록합니다. 현재는 endpoint와 security 사용 
 |------|------|------|
 | `name` | Y | OPC UA 서버 profile 이름 |
 | `endpoint` | Y | OPC UA 서버 endpoint |
-| `security.enabled` | N | 보안 사용 여부. 생략하면 `false`로 저장됩니다 |
+| `security.enabled` | N | 보안 설정 사용 여부. 생략하면 `false`로 저장됩니다 |
+| `security.securityPolicy` | N | `None`, `Basic128Rsa15`, `Basic256`, `Basic256Sha256`, `Aes128_Sha256_RsaOaep`, `Aes256_Sha256_RsaPss` |
+| `security.messageSecurityMode` | N | `None`, `Sign`, `SignAndEncrypt` |
+| `security.authMode` | N | `Anonymous`, `UserName`, `Certificate` |
+| `security.username` | N | `authMode=UserName`일 때 필요 |
+| `security.password` | N | `authMode=UserName`일 때 필요. 저장 파일에는 obfuscation 처리되며 API 응답에는 반환되지 않습니다 |
+| `security.certificatePem` | N | client certificate PEM. secure mode 또는 certificate auth에서 필요 |
+| `security.keyPem` | N | client private key PEM. `certificatePem`과 함께 전달해야 합니다 |
+
+`security.enabled=false`이면 상세 security 필드는 사용하지 않습니다. `messageSecurityMode`가 `Sign` 또는 `SignAndEncrypt`이면 `securityPolicy=None`은 허용되지 않으며, client certificate/key가 필요합니다.
+
+`Sign` only 모드는 OPC UA 서버와 JSH OPC UA client 조합에 따라 연결이 실패할 수 있습니다. 서버 profile 등록 후 `/opcua/connect` 또는 `/opcua/read`로 실제 연결 가능 여부를 확인하는 것을 권장합니다.
 
 **응답 (성공)**
 
@@ -985,6 +1003,7 @@ OPC UA 서버 profile을 등록합니다. 현재는 endpoint와 security 사용 
 | `name` 누락 | `"name is required"` |
 | `endpoint` 누락 | `"config.endpoint is required"` |
 | 동일한 이름 이미 존재 | `"opcua server 'xxx' already exists"` |
+| security 조합 오류 | `"security.xxx ..."` |
 
 ---
 
@@ -1002,18 +1021,45 @@ OPC UA 서버 profile을 조회합니다.
     "config": {
       "endpoint": "opc.tcp://192.168.1.100:4840",
       "security": {
-        "enabled": false
+        "enabled": true,
+        "securityPolicy": "Basic256Sha256",
+        "messageSecurityMode": "SignAndEncrypt",
+        "authMode": "UserName",
+        "username": "opcuser",
+        "hasPassword": true,
+        "hasCertificateFile": true,
+        "hasKeyFile": true,
+        "certificateUpdatedAt": "2026-06-05T06:00:00.000Z",
+        "keyUpdatedAt": "2026-06-05T06:00:01.000Z"
       }
     }
   }
 }
 ```
 
+`password`, `certificateFile`, `keyFile` 원문은 응답하지 않습니다. 등록 여부는 `hasPassword`, `hasCertificateFile`, `hasKeyFile`로 확인합니다. Certificate/key가 package 관리 디렉터리에 등록되어 있으면 마지막 수정 시각을 `certificateUpdatedAt`, `keyUpdatedAt` ISO 문자열로 반환합니다.
+
 ---
 
 ### PUT /opcua/server?name=
 
-OPC UA 서버 profile을 수정합니다. 요청 본문은 POST와 동일하며, 저장 시 `security.enabled` 생략값은 `false`입니다.
+OPC UA 서버 profile을 수정합니다. 요청 본문은 POST와 동일합니다. `password`, `certificatePem`, `keyPem`을 생략하면 기존 값을 유지합니다.
+
+민감정보 삭제가 필요하면 다음 플래그를 사용합니다.
+
+```json
+{
+  "endpoint": "opc.tcp://192.168.1.100:4840",
+  "security": {
+    "enabled": true,
+    "securityPolicy": "None",
+    "messageSecurityMode": "None",
+    "authMode": "Anonymous",
+    "clearPassword": true,
+    "clearCertificate": true
+  }
+}
+```
 
 **응답 (성공)**
 
@@ -1038,7 +1084,7 @@ OPC UA 서버 profile을 삭제합니다.
 }
 ```
 
-주의: 이 API는 collector config의 참조 여부를 검사하지 않습니다. 사용 중인 profile을 삭제하면 해당 collector 실행 또는 one-shot 호출에서 `"opcua server 'xxx' not found"` 오류가 발생합니다.
+주의: 이 API는 collector config의 참조 여부를 검사하지 않습니다. 사용 중인 profile을 삭제하면 해당 collector 실행 또는 one-shot 호출에서 `"opcua server 'xxx' not found"` 오류가 발생합니다. profile 삭제 시 package가 관리하는 client certificate/key 파일도 삭제합니다.
 
 ---
 
@@ -1055,7 +1101,16 @@ OPC UA 서버 profile 목록을 반환합니다.
       "config": {
         "endpoint": "opc.tcp://192.168.1.100:4840",
         "security": {
-          "enabled": false
+          "enabled": true,
+          "securityPolicy": "Basic256Sha256",
+          "messageSecurityMode": "SignAndEncrypt",
+          "authMode": "UserName",
+          "username": "opcuser",
+          "hasPassword": true,
+          "hasCertificateFile": true,
+          "hasKeyFile": true,
+          "certificateUpdatedAt": "2026-06-05T06:00:00.000Z",
+          "keyUpdatedAt": "2026-06-05T06:00:01.000Z"
         }
       }
     }
@@ -1067,7 +1122,7 @@ OPC UA 서버 profile 목록을 반환합니다.
 
 ### POST /opcua/connect
 
-OPC UA 서버에 접속 가능한지 확인합니다. 노드 읽기나 브라우즈는 수행하지 않고 연결 성공 여부만 확인한 뒤 즉시 연결을 종료합니다. `server`가 있으면 등록된 OPC UA server profile의 endpoint를 사용하고, 없으면 `endpoint`를 직접 사용합니다.
+OPC UA 서버에 접속 가능한지 확인합니다. 노드 읽기나 브라우즈는 수행하지 않고 연결 성공 여부만 확인한 뒤 즉시 연결을 종료합니다. `server`가 있으면 등록된 OPC UA server profile의 endpoint와 security 설정을 사용합니다. `endpoint`를 직접 사용할 때는 저장 전 connection test를 위해 `security`를 함께 전달할 수 있습니다.
 
 **요청 본문**
 
@@ -1078,13 +1133,33 @@ OPC UA 서버에 접속 가능한지 확인합니다. 노드 읽기나 브라우
 }
 ```
 
+저장 전 security 설정을 직접 테스트하는 예:
+
+```json
+{
+  "endpoint": "opc.tcp://192.168.1.100:4840",
+  "security": {
+    "enabled": true,
+    "securityPolicy": "Basic256Sha256",
+    "messageSecurityMode": "SignAndEncrypt",
+    "authMode": "Certificate",
+    "certificatePem": "-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----\n",
+    "keyPem": "-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"
+  },
+  "readRetryInterval": 100
+}
+```
+
 | 필드 | 필수 | 설명 |
 |------|------|------|
 | `server` | Y* | 등록된 OPC UA server profile 이름 |
 | `endpoint` | Y* | OPC UA 서버 주소 |
+| `security` | N | `endpoint` 직접 테스트 시 사용할 security 설정. 형식은 `/opcua/server`의 `security`와 동일합니다 |
 | `readRetryInterval` | N | 읽기 재시도 간격 (ms). 생략 시 기본값 `100` |
 
-`server`와 `endpoint` 중 하나는 필요합니다. 둘 다 있으면 `server`가 우선합니다.
+`server`와 `endpoint` 중 하나는 필요합니다. 둘 다 있으면 `server`가 우선합니다. `server`를 사용하면 요청 본문의 `security`는 사용하지 않고 해당 profile의 security 설정을 적용합니다.
+
+`endpoint` 직접 테스트에서 `certificatePem`/`keyPem`을 전달하면 backend가 임시 파일로 저장한 뒤 연결 테스트 종료 후 삭제합니다.
 
 **응답 (성공)**
 
@@ -1118,7 +1193,7 @@ OPC UA 서버에서 노드 값을 일회성으로 읽습니다.
 | `endpoint` | Y* | OPC UA 서버 주소 (예: `opc.tcp://192.168.1.100:4840`) |
 | `nodes` | Y | 쉼표로 구분된 노드 ID 목록 (예: `ns=3;i=1001,ns=3;i=1002`) |
 
-`server`와 `endpoint` 중 하나는 필요합니다. 둘 다 있으면 `server`가 우선합니다.
+`server`와 `endpoint` 중 하나는 필요합니다. 둘 다 있으면 `server`가 우선합니다. `server`를 사용하면 해당 profile의 security 설정도 적용됩니다.
 
 **응답 (성공)**
 
@@ -1173,7 +1248,7 @@ OPC UA 서버 노드에 값을 일회성으로 씁니다.
 | `endpoint` | Y* | OPC UA 서버 주소 |
 | `writes` | Y | 쓰기 요청 배열 |
 
-`server`와 `endpoint` 중 하나는 필요합니다. 둘 다 있으면 `server`가 우선합니다.
+`server`와 `endpoint` 중 하나는 필요합니다. 둘 다 있으면 `server`가 우선합니다. `server`를 사용하면 해당 profile의 security 설정도 적용됩니다.
 
 **응답 (성공)** — `data`는 OPC UA 서버가 반환한 WriteResult 원본 배열입니다.
 

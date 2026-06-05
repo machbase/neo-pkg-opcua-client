@@ -324,6 +324,198 @@ function normalizeOpcuaServerName(name) {
   return value;
 }
 
+const OPCUA_SECURITY_POLICIES = {
+  None: true,
+  Basic128Rsa15: true,
+  Basic256: true,
+  Basic256Sha256: true,
+  Aes128_Sha256_RsaOaep: true,
+  Aes256_Sha256_RsaPss: true,
+};
+
+const OPCUA_MESSAGE_SECURITY_MODES = {
+  None: true,
+  Sign: true,
+  SignAndEncrypt: true,
+};
+
+const OPCUA_AUTH_MODES = {
+  Anonymous: true,
+  UserName: true,
+  Certificate: true,
+};
+
+function hasOwn(obj, key) {
+  return Object.prototype.hasOwnProperty.call(obj || {}, key);
+}
+
+function normalizeText(value) {
+  return value === undefined || value === null ? '' : String(value).trim();
+}
+
+function normalizeChoice(value, choices, label) {
+  const text = normalizeText(value);
+  if (!text || !choices[text]) {
+    throw userFacingError(`${label} is invalid`);
+  }
+  return text;
+}
+
+function validatePemText(value, label, marker) {
+  const text = value === undefined || value === null ? '' : String(value);
+  if (!text.trim()) {
+    throw userFacingError(`${label} is required`);
+  }
+  if (text.indexOf(marker) < 0) {
+    throw userFacingError(`${label} must be PEM format`);
+  }
+  return text;
+}
+
+function normalizeOpcuaServerSecurity(security, options = {}) {
+  const input = security && typeof security === 'object' ? { ...security } : {};
+  const previous = options.previous && typeof options.previous === 'object' ? options.previous : {};
+  const serverName = options.serverName || '';
+  const forStorage = options.forStorage === true;
+
+  const normalized = {};
+  normalized.enabled = input.enabled === true;
+  if (!normalized.enabled) {
+    if (forStorage && serverName && (previous.certificateFile || previous.keyFile)) {
+      normalized.__removeCertificate = true;
+    }
+    return normalized;
+  }
+
+  const securityPolicy = hasOwn(input, 'securityPolicy')
+    ? input.securityPolicy
+    : (previous.securityPolicy || 'None');
+  const messageSecurityMode = hasOwn(input, 'messageSecurityMode')
+    ? input.messageSecurityMode
+    : (hasOwn(input, 'securityMode') ? input.securityMode : (previous.messageSecurityMode || 'None'));
+  const authMode = hasOwn(input, 'authMode')
+    ? input.authMode
+    : (previous.authMode || 'Anonymous');
+
+  normalized.securityPolicy = normalizeChoice(securityPolicy, OPCUA_SECURITY_POLICIES, 'security.securityPolicy');
+  normalized.messageSecurityMode = normalizeChoice(messageSecurityMode, OPCUA_MESSAGE_SECURITY_MODES, 'security.messageSecurityMode');
+  normalized.authMode = normalizeChoice(authMode, OPCUA_AUTH_MODES, 'security.authMode');
+
+  if (normalized.messageSecurityMode === 'None' && normalized.securityPolicy !== 'None') {
+    throw userFacingError('security.securityPolicy must be None when messageSecurityMode is None');
+  }
+  if (normalized.messageSecurityMode !== 'None' && normalized.securityPolicy === 'None') {
+    throw userFacingError('security.securityPolicy is required when messageSecurityMode is not None');
+  }
+
+  const username = hasOwn(input, 'username') ? normalizeText(input.username) : normalizeText(previous.username);
+  if (username) {
+    normalized.username = username;
+  }
+
+  if (input.clearPassword === true) {
+    delete normalized.password;
+  } else if (hasOwn(input, 'password')) {
+    const password = input.password === undefined || input.password === null ? '' : String(input.password);
+    if (password) normalized.password = password;
+  } else if (previous.password) {
+    normalized.password = previous.password;
+  }
+
+  const hasCertificatePem = hasOwn(input, 'certificatePem') && normalizeText(input.certificatePem) !== '';
+  const hasKeyPem = hasOwn(input, 'keyPem') && normalizeText(input.keyPem) !== '';
+  if (hasCertificatePem !== hasKeyPem) {
+    throw userFacingError('security.certificatePem and security.keyPem must be provided together');
+  }
+
+  if (normalized.authMode === 'UserName') {
+    if (!normalized.username) {
+      throw userFacingError('security.username is required when authMode is UserName');
+    }
+    if (!normalized.password) {
+      throw userFacingError('security.password is required when authMode is UserName');
+    }
+  }
+
+  const certificateRequired = normalized.authMode === 'Certificate' || normalized.messageSecurityMode !== 'None';
+  const existingCertificateFiles = normalizeText(input.certificateFile)
+    || (!input.clearCertificate && normalizeText(previous.certificateFile));
+  const existingKeyFiles = normalizeText(input.keyFile)
+    || (!input.clearCertificate && normalizeText(previous.keyFile));
+  const willHaveCertificate = (hasCertificatePem && hasKeyPem) || (existingCertificateFiles && existingKeyFiles);
+  if (certificateRequired && !willHaveCertificate) {
+    throw userFacingError('security.certificatePem and security.keyPem are required for certificate authentication or secure mode');
+  }
+
+  if (input.clearCertificate === true) {
+    if (forStorage && serverName) {
+      normalized.__removeCertificate = true;
+    }
+  } else if (hasCertificatePem && hasKeyPem) {
+    if (!forStorage || !serverName) {
+      throw userFacingError('opcua server name is required to store certificate files');
+    }
+    const certificatePem = validatePemText(input.certificatePem, 'security.certificatePem', 'BEGIN CERTIFICATE');
+    const keyPem = validatePemText(input.keyPem, 'security.keyPem', 'PRIVATE KEY');
+    const paths = CGI.writeOpcuaServerCredentialFiles(serverName, certificatePem, keyPem);
+    normalized.certificateFile = paths.certificateFile;
+    normalized.keyFile = paths.keyFile;
+  } else {
+    const certificateFile = normalizeText(input.certificateFile) || normalizeText(previous.certificateFile);
+    const keyFile = normalizeText(input.keyFile) || normalizeText(previous.keyFile);
+    if (certificateFile && keyFile) {
+      normalized.certificateFile = certificateFile;
+      normalized.keyFile = keyFile;
+    }
+  }
+
+  return normalized;
+}
+
+function safeOpcuaServerConfig(config, serverName) {
+  const safe = { ...(config || {}) };
+  const security = safe.security && typeof safe.security === 'object'
+    ? { ...safe.security }
+    : {};
+  const credentialInfo = serverName ? CGI.getOpcuaServerCredentialFileInfo(serverName) : {};
+  if (security.password !== undefined && security.password !== null && security.password !== '') {
+    security.hasPassword = true;
+  }
+  delete security.password;
+  if (security.certificateFile) {
+    security.hasCertificateFile = true;
+    if (credentialInfo.certificate && credentialInfo.certificate.updatedAt) {
+      security.certificateUpdatedAt = credentialInfo.certificate.updatedAt;
+    }
+  }
+  if (security.keyFile) {
+    security.hasKeyFile = true;
+    if (credentialInfo.key && credentialInfo.key.updatedAt) {
+      security.keyUpdatedAt = credentialInfo.key.updatedAt;
+    }
+  }
+  delete security.certificateFile;
+  delete security.keyFile;
+  delete security.certificatePem;
+  delete security.keyPem;
+  delete security.clearPassword;
+  delete security.clearCertificate;
+  delete security.__removeCertificate;
+  safe.security = security;
+  return safe;
+}
+
+function consumeOpcuaCredentialCleanupFlag(config) {
+  const security = config && config.security && typeof config.security === 'object'
+    ? config.security
+    : null;
+  const removeCredential = security && security.__removeCertificate === true;
+  if (security) {
+    delete security.__removeCertificate;
+  }
+  return removeCredential;
+}
+
 function autoOpcuaServerNameBase(collectorName) {
   const base = String(collectorName || '')
     .trim()
@@ -344,13 +536,7 @@ function nextAutoOpcuaServerName(collectorName) {
   return `${base}-${idx}`;
 }
 
-function normalizeOpcuaServerSecurity(security) {
-  const normalized = security && typeof security === 'object' ? { ...security } : {};
-  normalized.enabled = normalized.enabled === true;
-  return normalized;
-}
-
-function normalizeOpcuaServerConfig(config) {
+function normalizeOpcuaServerConfig(config, options = {}) {
   if (!config || typeof config !== 'object') {
     throw userFacingError('config is required');
   }
@@ -361,7 +547,11 @@ function normalizeOpcuaServerConfig(config) {
   return {
     ...config,
     endpoint,
-    security: normalizeOpcuaServerSecurity(config.security),
+    security: normalizeOpcuaServerSecurity(config.security, {
+      previous: options.previousConfig && options.previousConfig.security,
+      serverName: options.serverName,
+      forStorage: options.forStorage === true,
+    }),
   };
 }
 
@@ -438,6 +628,45 @@ function prepareCollectorOpcuaServerConfig(collectorName, config) {
 function rollbackAutoCreatedOpcuaServer(name) {
   if (!name) return;
   try { CGI.removeOpcuaServerConfig(name); } catch (_) {}
+}
+
+function opcuaClientConfig(resolved, readRetryInterval) {
+  const config = resolved && resolved.config && typeof resolved.config === 'object'
+    ? { ...resolved.config }
+    : { endpoint: resolved && resolved.endpoint };
+  config.endpoint = resolved.endpoint;
+  if (readRetryInterval !== undefined && readRetryInterval !== null && readRetryInterval !== '') {
+    config.readRetryInterval = readRetryInterval;
+  }
+  return config;
+}
+
+function temporaryOpcuaConnectSecurityName() {
+  return `opcua-connect-test-${Date.now()}-${Math.floor(Math.random() * 1000000)}`;
+}
+
+function cleanupTemporaryOpcuaConnectSecurity(name) {
+  if (!name) return;
+  try {
+    CGI.removeOpcuaServerCredentialFiles(name);
+  } catch (_) {}
+}
+
+function applyDirectOpcuaConnectSecurity(resolved, request) {
+  if (!resolved || resolved.server) return null;
+  if (!request || typeof request !== 'object' || !hasOwn(request, 'security')) return null;
+
+  const tempName = temporaryOpcuaConnectSecurityName();
+  try {
+    resolved.config.security = normalizeOpcuaServerSecurity(request.security, {
+      serverName: tempName,
+      forStorage: true,
+    });
+    return tempName;
+  } catch (err) {
+    cleanupTemporaryOpcuaConnectSecurity(tempName);
+    throw err;
+  }
 }
 
 function prepareAutoCreateTableRequest(config) {
@@ -1157,7 +1386,6 @@ function opcuaServerPost(name, config, reply) {
   let normalized;
   try {
     serverName = normalizeOpcuaServerName(name);
-    normalized = normalizeOpcuaServerConfig(config);
   } catch (err) {
     reply({ ok: false, reason: errorMessage(err) });
     return;
@@ -1170,7 +1398,24 @@ function opcuaServerPost(name, config, reply) {
     return;
   }
   try {
+    normalized = normalizeOpcuaServerConfig(config, {
+      serverName,
+      forStorage: true,
+    });
+  } catch (err) {
+    reply({ ok: false, reason: errorMessage(err) });
+    return;
+  }
+  try {
+    const removeCredential = consumeOpcuaCredentialCleanupFlag(normalized);
     CGI.writeOpcuaServerConfig(serverName, normalized);
+    if (removeCredential) {
+      const credentialErr = CGI.removeOpcuaServerCredentialFiles(serverName);
+      if (credentialErr) {
+        reply({ ok: false, reason: errorMessage(credentialErr) });
+        return;
+      }
+    }
     reply({
       ok: true,
       data: { name: serverName },
@@ -1195,7 +1440,7 @@ function opcuaServerGet(name, reply) {
   }
   reply({
     ok: true,
-    data: { name: resolved.name, config: resolved.config },
+    data: { name: resolved.name, config: safeOpcuaServerConfig(resolved.config, resolved.name) },
   });
 }
 
@@ -1208,14 +1453,20 @@ function opcuaServerGet(name, reply) {
 function opcuaServerPut(name, body, reply) {
   let serverName;
   let normalized;
+  let existing;
   try {
     serverName = normalizeOpcuaServerName(name);
-    normalized = normalizeOpcuaServerConfig(body);
+    existing = CGI.getOpcuaServerConfig(serverName);
+    normalized = normalizeOpcuaServerConfig(body, {
+      serverName,
+      previousConfig: existing,
+      forStorage: true,
+    });
   } catch (err) {
     reply({ ok: false, reason: errorMessage(err) });
     return;
   }
-  if (!CGI.getOpcuaServerConfig(serverName)) {
+  if (!existing) {
     reply({
       ok: false,
       reason: `opcua server '${serverName}' not found`,
@@ -1223,7 +1474,15 @@ function opcuaServerPut(name, body, reply) {
     return;
   }
   try {
+    const removeCredential = consumeOpcuaCredentialCleanupFlag(normalized);
     CGI.writeOpcuaServerConfig(serverName, normalized);
+    if (removeCredential) {
+      const credentialErr = CGI.removeOpcuaServerCredentialFiles(serverName);
+      if (credentialErr) {
+        reply({ ok: false, reason: errorMessage(credentialErr) });
+        return;
+      }
+    }
     reply({
       ok: true,
       data: { name: serverName },
@@ -1261,6 +1520,14 @@ function opcuaServerDelete(name, reply) {
     });
     return;
   }
+  const credentialErr = CGI.removeOpcuaServerCredentialFiles(serverName);
+  if (credentialErr) {
+    reply({
+      ok: false,
+      reason: errorMessage(credentialErr),
+    });
+    return;
+  }
   reply({ ok: true });
 }
 
@@ -1273,7 +1540,7 @@ function opcuaServerList(reply) {
     const config = CGI.getOpcuaServerConfig(name);
     return {
       name,
-      config: normalizeOpcuaServerConfig(config),
+      config: safeOpcuaServerConfig(normalizeOpcuaServerConfig(config), name),
     };
   });
   reply({
@@ -1465,15 +1732,19 @@ function dbTableColumns(db, table, reply) {
  */
 function opcuaConnect(endpointOrRequest, readRetryInterval, reply) {
   let resolved;
+  let temporarySecurityName = null;
   try {
     resolved = resolveOpcuaEndpoint(endpointOrRequest);
+    temporarySecurityName = applyDirectOpcuaConnectSecurity(resolved, endpointOrRequest);
   } catch (err) {
+    cleanupTemporaryOpcuaConnectSecurity(temporarySecurityName);
     reply({ ok: false, reason: errorMessage(err) });
     return;
   }
   const endpoint = resolved.endpoint;
-  const client = new OpcuaClient(endpoint, readRetryInterval);
+  const client = new OpcuaClient(opcuaClientConfig(resolved, readRetryInterval));
   if (!client.open()) {
+    cleanupTemporaryOpcuaConnectSecurity(temporarySecurityName);
     reply({
       ok: false,
       reason: 'connect failed: ' + endpoint,
@@ -1491,6 +1762,7 @@ function opcuaConnect(endpointOrRequest, readRetryInterval, reply) {
     });
   } finally {
     client.close();
+    cleanupTemporaryOpcuaConnectSecurity(temporarySecurityName);
   }
 }
 
@@ -1509,7 +1781,7 @@ function opcuaRead(endpointOrRequest, nodeIds, reply) {
     return;
   }
   const endpoint = resolved.endpoint;
-  const client = new OpcuaClient(endpoint);
+  const client = new OpcuaClient(opcuaClientConfig(resolved));
   if (!client.open()) {
     reply({
       ok: false,
@@ -1553,7 +1825,7 @@ function opcuaWrite(endpointOrRequest, writes, reply) {
     return;
   }
   const endpoint = resolved.endpoint;
-  const client = new OpcuaClient(endpoint);
+  const client = new OpcuaClient(opcuaClientConfig(resolved));
   if (!client.open()) {
     reply({
       ok: false,
@@ -1638,7 +1910,7 @@ function nodeDescendants(body, reply) {
     reply({ ok: false, reason: errorMessage(err) });
     return;
   }
-  const client = new OpcuaClient(resolved.endpoint);
+  const client = new OpcuaClient(opcuaClientConfig(resolved));
   if (!client.open()) {
     reply({
       ok: false,
