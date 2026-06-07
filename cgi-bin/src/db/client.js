@@ -262,6 +262,42 @@ class MachbaseClient {
   }
 
   /**
+   * TAG META 테이블에서 name 기준 단건 조회.
+   * @param {string} logicalTable
+   * @param {string} name
+   * @param {string[]} metaColNames
+   * @returns {{ _ID: bigint, name: string, [col]: any }|null}
+   */
+  selectTagMetaByName(logicalTable, name, metaColNames = []) {
+    const extraCols = metaColNames.length > 0 ? ', ' + metaColNames.join(', ') : '';
+    const rows = this.query(
+      `SELECT _ID, name${extraCols} FROM _${logicalTable}_META WHERE NAME = ?`,
+      [name]
+    );
+    return rows?.[0] ?? null;
+  }
+
+  /**
+   * TAG META에 신규 name/metadata를 등록한다.
+   * @param {string} logicalTable
+   * @param {string[]} columns - NAME을 포함한 metadata column 이름 목록
+   * @param {Array<any>} values - columns와 같은 순서의 값
+   */
+  insertTagMeta(logicalTable, columns, values) {
+    const placeholders = values.map(() => '?').join(', ');
+    this.execute(`INSERT INTO ${logicalTable} METADATA (${columns.join(', ')}) VALUES (${placeholders})`, ...values);
+  }
+
+  /**
+   * TAG META를 name 기준으로 삭제한다. 해당 tag data가 있으면 DB에서 실패할 수 있다.
+   * @param {string} logicalTable
+   * @param {string} name
+   */
+  deleteTagMetaByName(logicalTable, name) {
+    this.execute(`DELETE FROM ${logicalTable} METADATA WHERE NAME = ?`, name);
+  }
+
+  /**
    * TAG META 테이블에서 tagId 기준 단건 조회
    * @param {string} logicalTable
    * @param {number|bigint} tagId
@@ -308,6 +344,18 @@ class MachbaseClient {
       sql += ' WITH ROLLUP';
     }
     this.execute(sql);
+  }
+
+  /**
+   * TAG/ROLLUP 테이블에 대해 rollup을 생성한다.
+   * @param {string} rollupName
+   * @param {string} sourceTable
+   * @param {string} valueColumn
+   * @param {number} interval
+   * @param {'SEC'|'MIN'|'HOUR'} unit
+   */
+  createRollup(rollupName, sourceTable, valueColumn, interval, unit) {
+    this.execute(`CREATE ROLLUP ${rollupName} ON ${sourceTable}(${valueColumn}) INTERVAL ${interval} ${unit}`);
   }
 
   /**

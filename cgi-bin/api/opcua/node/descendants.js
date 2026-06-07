@@ -1,7 +1,7 @@
 /**
  * POST /cgi-bin/api/opcua/node/descendants  -- OPC UA 노드 하위 전체 탐색
  *
- * body: { endpoint, node, nodeClassMask? }
+ * body: { endpoint?, server?, node, nodeClassMask? }
  */
 
 const path = require('path');
@@ -16,8 +16,8 @@ const reply = (r) => CGI.reply(r);
 const handlers = {
   POST: () => {
     const body = CGI.readBody();
-    if (!body.endpoint) {
-      reply({ ok: false, reason: 'endpoint is required' });
+    if (!body.endpoint && !body.server) {
+      reply({ ok: false, reason: 'endpoint or server is required' });
       return;
     }
     if (!body.node) {
