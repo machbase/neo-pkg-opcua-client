@@ -298,7 +298,7 @@ runner.run('Collector constructor', {
             db: { client: new MockMachbaseClient(), stream: dbStream2 },
         });
         c.start();
-        clearInterval(c.timer);
+        clearTimeout(c.timer);
         t.assertEqual(dbStream2.openedValueColumn, 'VALUE', 'default value column should be VALUE');
     },
 });
@@ -309,7 +309,7 @@ runner.run('Collector.collect — stringValueColumn', {
         const { c, dbStream } = makeCollector(config);
         c.start();
         t.assertEqual(dbStream.openedStringValueColumn, 'TEXT_VALUE');
-        clearInterval(c.timer);
+        clearTimeout(c.timer);
     },
 
     'string values go to auxiliary column when configured': (t) => {
@@ -331,7 +331,7 @@ runner.run('Collector.collect — stringValueColumn', {
         t.assertEqual(dbStream.appended[0].stringValue, '2026-04-22T10:00:00Z');
         t.assertEqual(dbStream.appended[0].TEXT_VALUE, '2026-04-22T10:00:00Z');
         t.assertEqual(detailWrites.length, 1, 'lastCollectedAt should be updated');
-        clearInterval(c.timer);
+        clearTimeout(c.timer);
     },
 
     'unsupported string values are skipped without auxiliary column': (t) => {
@@ -350,7 +350,7 @@ runner.run('Collector.collect — stringValueColumn', {
         c.collect();
         t.assertEqual(dbStream.appended.length, 0, 'string row should be skipped');
         t.assertEqual(detailWrites.length, 0, 'lastCollectedAt should not be updated');
-        clearInterval(c.timer);
+        clearTimeout(c.timer);
     },
 
     'boolean values stay in numeric column even when auxiliary column exists': (t) => {
@@ -370,7 +370,7 @@ runner.run('Collector.collect — stringValueColumn', {
         t.assertEqual(dbStream.appended.length, 1, 'boolean row should be appended');
         t.assertEqual(dbStream.appended[0].value, 1, 'boolean should stay numeric');
         t.assertNull(dbStream.appended[0].stringValue, 'string column should remain empty');
-        clearInterval(c.timer);
+        clearTimeout(c.timer);
     },
 });
 
@@ -382,7 +382,7 @@ runner.run('Collector.collect — stringOnly', {
         t.assert(dbStream.stringOnly, 'stream should be opened in stringOnly mode');
         t.assertNull(dbStream.openedValueColumn, 'valueColumn should not be used');
         t.assertEqual(dbStream.openedStringValueColumn, 'TEXT_VALUE');
-        clearInterval(c.timer);
+        clearTimeout(c.timer);
     },
 
     'empty valueColumn is allowed when stringOnly is true': (t) => {
@@ -392,7 +392,7 @@ runner.run('Collector.collect — stringOnly', {
         t.assert(dbStream.stringOnly, 'stream should be opened in stringOnly mode');
         t.assertNull(dbStream.openedValueColumn, 'empty valueColumn should be treated as omitted');
         t.assertEqual(dbStream.openedStringValueColumn, 'TEXT_VALUE');
-        clearInterval(c.timer);
+        clearTimeout(c.timer);
     },
 
     'all collected values are stored as strings': (t) => {
@@ -424,7 +424,7 @@ runner.run('Collector.collect — stringOnly', {
         t.assertEqual(dbStream.appended[2].TEXT_VALUE, '2026-04-22T10:00:00Z');
         t.assertEqual(dbStream.appended[0].value, undefined, 'numeric value column should not be used');
         t.assert(!Object.prototype.hasOwnProperty.call(dbStream.appended[0], 'VALUE'), 'VALUE should not be present');
-        clearInterval(c.timer);
+        clearTimeout(c.timer);
     },
 
     'valueColumn is rejected when stringOnly is true': (t) => {
@@ -432,7 +432,7 @@ runner.run('Collector.collect — stringOnly', {
         const { c, dbStream } = makeCollector(config);
         c.start();
         t.assert(!dbStream.stream, 'db stream should not open');
-        clearInterval(c.timer);
+        clearTimeout(c.timer);
     },
 
     'onChanged initial load uses string column': (t) => {
@@ -453,7 +453,7 @@ runner.run('Collector.collect — stringOnly', {
         t.assertEqual(dbQueries.length, 1, 'initial load should query db once');
         t.assert(dbQueries[0].sql.indexOf('SELECT NAME, TEXT_VALUE') >= 0, 'query should select string column');
         t.assertEqual(c._previousValues['sensor.time'], 'same');
-        clearInterval(c.timer);
+        clearTimeout(c.timer);
     },
 });
 
@@ -489,7 +489,7 @@ runner.run('Collector.collect — json mode', {
         t.assertEqual(payload.status, true);
         t.assertEqual(payload.serverTime, '2026-04-22T10:00:00Z');
         t.assertEqual(detailWrites.length, 1, 'lastCollectedAt should be updated');
-        clearInterval(c.timer);
+        clearTimeout(c.timer);
     },
 
     'stores failed node values as null in JSON payload': (t) => {
@@ -518,7 +518,7 @@ runner.run('Collector.collect — json mode', {
         const payload = JSON.parse(dbStream.appended[0].PAYLOAD);
         t.assertNull(payload.status, 'bad status should become null');
         t.assertEqual(payload.serverTime, '2026-04-22T10:00:00Z');
-        clearInterval(c.timer);
+        clearTimeout(c.timer);
     },
 
     'skips second collect when all onChanged values are unchanged in JSON mode': (t) => {
@@ -549,7 +549,7 @@ runner.run('Collector.collect — json mode', {
         t.assertEqual(dbStream.appended.length, 0, 'unchanged json payload should be skipped');
         t.assert(!dbStream.flushed, 'append should not be called');
         t.assertEqual(detailWrites.length, 0, 'lastCollectedAt should not be updated');
-        clearInterval(c.timer);
+        clearTimeout(c.timer);
     },
 });
 
@@ -575,7 +575,7 @@ runner.run('Collector.collect — tag key columns', {
         t.assert(dbStream.appended[0].TS instanceof Date, 'basetime should be written to TS');
         t.assertEqual(dbStream.appended[0].VALUE, 12.5);
         t.assertEqual(dbStream.appended[0].name, 'sensor.temp');
-        clearInterval(c.timer);
+        clearTimeout(c.timer);
     },
 
     'json rows use primary and basetime column names from stream metadata': (t) => {
@@ -600,7 +600,7 @@ runner.run('Collector.collect — tag key columns', {
         t.assertEqual(dbStream.appended[0].TAG_ID, 'collector-a');
         t.assert(dbStream.appended[0].TS instanceof Date, 'basetime should be written to TS');
         t.assertEqual(JSON.parse(dbStream.appended[0].PAYLOAD).status, true);
-        clearInterval(c.timer);
+        clearTimeout(c.timer);
     },
 
     'onChanged initial load queries primary and basetime column names': (t) => {
@@ -625,7 +625,7 @@ runner.run('Collector.collect — tag key columns', {
         t.assert(dbQueries[0].sql.indexOf('WHERE TAG_ID IN') >= 0, 'query should filter custom primary column');
         t.assert(dbQueries[0].sql.indexOf('TS >=') >= 0, 'query should filter custom basetime column');
         t.assertEqual(c._previousValues['sensor.temp'], 11);
-        clearInterval(c.timer);
+        clearTimeout(c.timer);
     },
 });
 
@@ -639,7 +639,7 @@ runner.run('Collector._isDbOpen', {
     'returns true after db is opened': (t) => {
         const { c } = makeCollector();
         c.start();
-        clearInterval(c.timer);
+        clearTimeout(c.timer);
         t.assert(c._isDbOpen(), 'should be true after start() opens db');
     },
     'returns false after db is closed': (t) => {
@@ -730,7 +730,7 @@ runner.run('Collector.collect — onChanged', {
         c.collect();
         t.assertEqual(dbStream.appended.length, 1, 'first collect should append');
         t.assertEqual(dbStream.appended[0].value, 5.0);
-        clearInterval(c.timer);
+        clearTimeout(c.timer);
     },
 
     'onChanged: true — same value on second collect is skipped': (t) => {
@@ -747,7 +747,7 @@ runner.run('Collector.collect — onChanged', {
         t.assertEqual(dbStream.appended.length, 0, 'same value should be skipped');
         t.assert(!dbStream.flushed, 'append should not be called');
         t.assertEqual(detailWrites.length, 0, 'lastCollectedAt should not be updated');
-        clearInterval(c.timer);
+        clearTimeout(c.timer);
     },
 
     'onChanged: true — changed value on second collect is appended': (t) => {
@@ -762,7 +762,7 @@ runner.run('Collector.collect — onChanged', {
         c.collect();
         t.assertEqual(dbStream.appended.length, 1, 'changed value should be appended');
         t.assertEqual(dbStream.appended[0].value, 9.9);
-        clearInterval(c.timer);
+        clearTimeout(c.timer);
     },
 
     'onChanged absent — always appends regardless of value': (t) => {
@@ -775,7 +775,7 @@ runner.run('Collector.collect — onChanged', {
         dbStream.appended = [];
         c.collect();
         t.assertEqual(dbStream.appended.length, 1, 'node without onChanged should always append');
-        clearInterval(c.timer);
+        clearTimeout(c.timer);
     },
 
     'all nodes onChanged:true and all skipped — append and lastCollectedAt not called': (t) => {
@@ -798,7 +798,7 @@ runner.run('Collector.collect — onChanged', {
         t.assertEqual(dbStream.appended.length, 0, 'nothing should be appended');
         t.assert(!dbStream.flushed, 'append should not be called');
         t.assertEqual(detailWrites.length, 0, 'lastCollectedAt should not be updated');
-        clearInterval(c.timer);
+        clearTimeout(c.timer);
     },
 
     'onChanged: true — consecutive NaN values are treated as equal (Object.is)': (t) => {
@@ -813,7 +813,7 @@ runner.run('Collector.collect — onChanged', {
         c.collect();
         t.assertEqual(dbStream.appended.length, 0, 'second NaN should be skipped');
         t.assert(!dbStream.flushed, 'append should not be called for repeated NaN');
-        clearInterval(c.timer);
+        clearTimeout(c.timer);
     },
 
     'onChanged: true — _previousValues reset after error allows re-append': (t) => {
@@ -834,7 +834,7 @@ runner.run('Collector.collect — onChanged', {
         c.collect(); // 5.0 not in _previousValues → appends
         t.assertEqual(dbStream.appended.length, 1, 'should append after _previousValues reset');
         t.assertEqual(dbStream.appended[0].value, 5.0);
-        clearInterval(c.timer);
+        clearTimeout(c.timer);
     },
 });
 
@@ -905,7 +905,7 @@ runner.run('Collector.collect — general', {
         t.assertEqual(dbStream.appended[0].name, 'sensor.tag1');
         t.assertEqual(dbStream.appended[1].name, 'sensor.tag2');
         t.assertEqual(detailWrites.length, 1, 'lastCollectedAt should be updated once');
-        clearInterval(c.timer);
+        clearTimeout(c.timer);
     },
 
     'uses current Date when sourceTimestamp is falsy': (t) => {
@@ -919,7 +919,7 @@ runner.run('Collector.collect — general', {
         c.collect();
         t.assert(dbStream.appended[0].time instanceof Date, 'time should be a Date');
         t.assert(dbStream.appended[1].time instanceof Date, 'time should be a Date');
-        clearInterval(c.timer);
+        clearTimeout(c.timer);
     },
 
     'converts boolean true to 1 and false to 0': (t) => {
@@ -933,7 +933,7 @@ runner.run('Collector.collect — general', {
         c.collect();
         t.assertEqual(dbStream.appended[0].value, 1, 'true should become 1');
         t.assertEqual(dbStream.appended[1].value, 0, 'false should become 0');
-        clearInterval(c.timer);
+        clearTimeout(c.timer);
     },
 
     'does not append and closes opcua on read error': (t) => {
@@ -945,7 +945,7 @@ runner.run('Collector.collect — general', {
         t.assertEqual(dbStream.appended.length, 0, 'nothing should be appended on error');
         t.assert(opcuaClient.closed, 'opcua should be closed on error');
         t.assertEqual(detailWrites.length, 0, 'lastCollectedAt should not be updated on error');
-        clearInterval(c.timer);
+        clearTimeout(c.timer);
     },
 
     'does not append and closes opcua on append error': (t) => {
@@ -959,7 +959,7 @@ runner.run('Collector.collect — general', {
         c.collect();
         t.assert(opcuaClient.closed, 'opcua should be closed on append error');
         t.assertEqual(detailWrites.length, 0, 'lastCollectedAt should not be updated on append error');
-        clearInterval(c.timer);
+        clearTimeout(c.timer);
     },
 
     'reopens db if stream is closed before collect': (t) => {
@@ -974,7 +974,7 @@ runner.run('Collector.collect — general', {
         c.collect();
         t.assertNotNull(dbStream.stream, 'db should be reopened');
         t.assertEqual(dbStream.appended.length, 2, 'should append after reopen');
-        clearInterval(c.timer);
+        clearTimeout(c.timer);
     },
 
     'skips cycle when db reopen fails': (t) => {
@@ -986,7 +986,7 @@ runner.run('Collector.collect — general', {
         c.collect();
         t.assertEqual(dbStream.appended.length, 0, 'nothing should be appended if db reopen fails');
         t.assertEqual(detailWrites.length, 0, 'lastCollectedAt should not be updated');
-        clearInterval(c.timer);
+        clearTimeout(c.timer);
     },
 });
 
@@ -1078,7 +1078,7 @@ runner.run('Collector.start / close', {
         c.start();
         t.assertNotNull(c.timer, 'timer should be set');
         t.assertNotNull(dbStream.stream, 'db should be opened');
-        clearInterval(c.timer);
+        clearTimeout(c.timer);
     },
 
     'start() is a no-op if already running': (t) => {
@@ -1087,7 +1087,7 @@ runner.run('Collector.start / close', {
         const first = c.timer;
         c.start();
         t.assertEqual(c.timer, first, 'timer should not be replaced');
-        clearInterval(c.timer);
+        clearTimeout(c.timer);
     },
 
     'close() clears timer and releases resources': (t) => {
@@ -1097,6 +1097,48 @@ runner.run('Collector.start / close', {
         t.assertNull(c.timer, 'timer should be null after close');
         t.assert(opcuaClient.closed, 'opcua should be closed');
         t.assert(dbStream.closed, 'db stream should be closed');
+    },
+
+    'scheduler skips missed interval boundaries after a slow collect': (t) => {
+        const originalSetTimeout = global.setTimeout;
+        const originalClearTimeout = global.clearTimeout;
+        const logger = new MockLogger();
+        const config = { ...baseConfig, opcua: { ...baseConfig.opcua, interval: 1000 } };
+        const scheduled = [];
+        let now = 0;
+        let c = null;
+
+        try {
+            global.setTimeout = (fn, delay) => {
+                const handle = { fn, delay };
+                scheduled.push(handle);
+                return handle;
+            };
+            global.clearTimeout = () => {};
+
+            ({ c } = makeCollector(config, { logger }));
+            c._now = () => now;
+            c.collect = () => {
+                now = 3200;
+            };
+
+            c.start();
+            t.assertEqual(scheduled.length, 1, 'start should schedule first run');
+            t.assertEqual(scheduled[0].delay, 1000, 'first run should be scheduled at the configured interval');
+
+            scheduled[0].fn();
+
+            t.assertEqual(scheduled.length, 2, 'slow collect should schedule next run once');
+            t.assertEqual(scheduled[1].delay, 800, 'next run should return to the fixed interval boundary');
+            t.assertEqual(c._nextRunAt, 4000, 'missed boundaries should be skipped');
+            const skipped = logger.entries.find(e => e.stage === 'skipped overdue cycles');
+            t.assert(skipped, 'skipped cycles should be logged at trace level');
+            t.assertEqual(skipped.fields.skipped, 2, 'two overdue boundaries should be skipped');
+        } finally {
+            if (c) c.close();
+            global.setTimeout = originalSetTimeout;
+            global.clearTimeout = originalClearTimeout;
+        }
     },
 });
 

@@ -82,6 +82,8 @@ class Collector {
         this._warnSummaryEvery = WARN_SUMMARY_EVERY;
         this._warnSummaryIntervalMs = WARN_SUMMARY_INTERVAL_MS;
         this._now = () => Date.now();
+        this._schedulerActive = false;
+        this._nextRunAt = null;
     }
 
     _storageMode() {
@@ -557,8 +559,10 @@ class Collector {
     }
 
     close() {
+        this._schedulerActive = false;
+        this._nextRunAt = null;
         if (this.timer !== null) {
-            clearInterval(this.timer);
+            clearTimeout(this.timer);
             this.timer = null;
         }
         try {
@@ -731,8 +735,45 @@ class Collector {
         }
     }
 
+    _scheduleNextRun() {
+        if (!this._schedulerActive) {
+            return;
+        }
+        const now = this._now();
+        if (this._nextRunAt === null) {
+            this._nextRunAt = now + this.interval;
+        }
+
+        let skipped = 0;
+        while (this._nextRunAt <= now) {
+            this._nextRunAt += this.interval;
+            skipped++;
+        }
+        if (skipped > 0) {
+            this._logger.trace("skipped overdue cycles", { skipped, interval: this.interval });
+        }
+
+        const delay = Math.max(0, this._nextRunAt - this._now());
+        this.timer = setTimeout(() => {
+            this.timer = null;
+            if (!this._schedulerActive) {
+                return;
+            }
+            try {
+                this.collect();
+            } catch (e) {
+                this._logger.error("interval error", { error: e.message });
+            }
+            if (!this._schedulerActive) {
+                return;
+            }
+            this._nextRunAt += this.interval;
+            this._scheduleNextRun();
+        }, delay);
+    }
+
     start() {
-        if (this.timer !== null) {
+        if (this._schedulerActive) {
             return;
         }
         this._logger.info("starting", {
@@ -751,13 +792,9 @@ class Collector {
         if (this._isDbOpen()) {
             this._loadInitialValuesFromDb();
         }
-        this.timer = setInterval(() => {
-            try {
-                this.collect();
-            } catch (e) {
-                this._logger.error("interval error", { error: e.message });
-            }
-        }, this.interval);
+        this._schedulerActive = true;
+        this._nextRunAt = this._now() + this.interval;
+        this._scheduleNextRun();
     }
 }
 
