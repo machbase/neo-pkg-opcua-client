@@ -955,6 +955,12 @@ OPC UA 서버 profile을 등록합니다. Collector와 one-shot OPC UA API는 `s
 {
   "name": "opc-main",
   "endpoint": "opc.tcp://192.168.1.100:4840",
+  "readBatchSize": 32,
+  "capabilities": {
+    "maxNodesPerRead": 32,
+    "maxNodesPerReadSource": "server",
+    "checkedAt": "2026-06-08T00:00:00.000Z"
+  },
   "security": {
     "enabled": true,
     "securityPolicy": "Basic256Sha256",
@@ -972,6 +978,10 @@ OPC UA 서버 profile을 등록합니다. Collector와 one-shot OPC UA API는 `s
 |------|------|------|
 | `name` | Y | OPC UA 서버 profile 이름 |
 | `endpoint` | Y | OPC UA 서버 endpoint |
+| `readBatchSize` | N | 한 번의 OPC UA ReadRequest에 포함할 최대 node 수. 사용자가 수정 가능한 값입니다 |
+| `capabilities.maxNodesPerRead` | N | `/opcua/connect`에서 조회한 서버의 `MaxNodesPerRead` 값. 서버가 제공하지 않으면 `null`입니다 |
+| `capabilities.maxNodesPerReadSource` | N | `"server"` 또는 `"default"`. 서버에서 조회한 값인지 backend 기본값인지 구분합니다 |
+| `capabilities.checkedAt` | N | capability를 확인한 시각 ISO 문자열 |
 | `security.enabled` | N | 보안 설정 사용 여부. 생략하면 `false`로 저장됩니다 |
 | `security.securityPolicy` | N | `None`, `Basic128Rsa15`, `Basic256`, `Basic256Sha256`, `Aes128_Sha256_RsaOaep`, `Aes256_Sha256_RsaPss` |
 | `security.messageSecurityMode` | N | `None`, `Sign`, `SignAndEncrypt` |
@@ -984,6 +994,8 @@ OPC UA 서버 profile을 등록합니다. Collector와 one-shot OPC UA API는 `s
 `security.enabled=false`이면 상세 security 필드는 사용하지 않습니다. `messageSecurityMode`가 `Sign` 또는 `SignAndEncrypt`이면 `securityPolicy=None`은 허용되지 않으며, client certificate/key가 필요합니다.
 
 `Sign` only 모드는 OPC UA 서버와 JSH OPC UA client 조합에 따라 연결이 실패할 수 있습니다. 서버 profile 등록 후 `/opcua/connect` 또는 `/opcua/read`로 실제 연결 가능 여부를 확인하는 것을 권장합니다.
+
+`readBatchSize`는 collector와 `/opcua/read`가 여러 node를 읽을 때 내부적으로 chunking하는 기준입니다. 서버에서 `MaxNodesPerRead`를 조회한 경우 `readBatchSize`는 그 값을 초과할 수 없습니다. 서버가 값을 제공하지 않으면 backend는 기본값 `32`를 적용하고, `readBatchSize`도 `32`를 초과할 수 없습니다.
 
 **응답 (성공)**
 
@@ -1020,6 +1032,12 @@ OPC UA 서버 profile을 조회합니다.
     "name": "opc-main",
     "config": {
       "endpoint": "opc.tcp://192.168.1.100:4840",
+      "readBatchSize": 32,
+      "capabilities": {
+        "maxNodesPerRead": 32,
+        "maxNodesPerReadSource": "server",
+        "checkedAt": "2026-06-08T00:00:00.000Z"
+      },
       "security": {
         "enabled": true,
         "securityPolicy": "Basic256Sha256",
@@ -1044,6 +1062,8 @@ OPC UA 서버 profile을 조회합니다.
 ### PUT /opcua/server?name=
 
 OPC UA 서버 profile을 수정합니다. 요청 본문은 POST와 동일합니다. `password`, `certificatePem`, `keyPem`을 생략하면 기존 값을 유지합니다.
+
+`readBatchSize`는 수정 가능합니다. 같은 endpoint에서 `capabilities`를 생략하면 기존 capability 정보를 유지합니다. endpoint를 바꾸거나 `/opcua/connect`를 다시 수행한 경우에는 새 capability 정보를 함께 전달하는 것을 권장합니다.
 
 민감정보 삭제가 필요하면 다음 플래그를 사용합니다.
 
@@ -1100,6 +1120,12 @@ OPC UA 서버 profile 목록을 반환합니다.
       "name": "opc-main",
       "config": {
         "endpoint": "opc.tcp://192.168.1.100:4840",
+        "readBatchSize": 32,
+        "capabilities": {
+          "maxNodesPerRead": 32,
+          "maxNodesPerReadSource": "server",
+          "checkedAt": "2026-06-08T00:00:00.000Z"
+        },
         "security": {
           "enabled": true,
           "securityPolicy": "Basic256Sha256",
@@ -1168,10 +1194,18 @@ OPC UA 서버에 접속 가능한지 확인합니다. 노드 읽기나 브라우
   "ok": true,
   "data": {
     "endpoint": "opc.tcp://192.168.1.100:4840",
-    "connected": true
+    "connected": true,
+    "readBatchSize": 32,
+    "capabilities": {
+      "maxNodesPerRead": 32,
+      "maxNodesPerReadSource": "server",
+      "checkedAt": "2026-06-08T00:00:00.000Z"
+    }
   }
 }
 ```
+
+`/opcua/connect`는 연결 성공 후 OPC UA standard OperationLimits의 `MaxNodesPerRead`를 best-effort로 읽습니다. 성공하면 `capabilities.maxNodesPerReadSource`가 `"server"`이고 `readBatchSize`는 해당 값으로 반환됩니다. 읽을 수 없으면 `capabilities.maxNodesPerRead`는 `null`, source는 `"default"`, `readBatchSize`는 `32`입니다.
 
 **응답 (실패)**
 
@@ -1194,6 +1228,8 @@ OPC UA 서버에서 노드 값을 일회성으로 읽습니다.
 | `nodes` | Y | 쉼표로 구분된 노드 ID 목록 (예: `ns=3;i=1001,ns=3;i=1002`) |
 
 `server`와 `endpoint` 중 하나는 필요합니다. 둘 다 있으면 `server`가 우선합니다. `server`를 사용하면 해당 profile의 security 설정도 적용됩니다.
+
+등록된 server profile에 `readBatchSize`가 있으면 여러 node를 읽을 때 해당 크기대로 나누어 순차 ReadRequest를 수행합니다. batch 중 하나라도 실패하면 전체 read 요청은 실패합니다.
 
 **응답 (성공)**
 

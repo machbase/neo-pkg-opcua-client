@@ -18,6 +18,8 @@ const reply = (r) => CGI.reply(r);
 function configFromBody(body) {
   return {
     endpoint: body.endpoint,
+    readBatchSize: body.readBatchSize,
+    capabilities: body.capabilities,
     security: body.security,
   };
 }

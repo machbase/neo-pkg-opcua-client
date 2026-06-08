@@ -2,6 +2,8 @@ const opcua = require("opcua");
 const path = require("path");
 const process = require("process");
 
+const DEFAULT_READ_BATCH_SIZE = 32;
+
 function _asText(value) {
     return value === undefined || value === null ? "" : String(value).trim();
 }
@@ -29,6 +31,14 @@ function _nativeFilePathSpec(filePath) {
     return text;
 }
 
+function _positiveInteger(value, fallback) {
+    const num = Number(value);
+    if (!Number.isFinite(num) || Math.floor(num) !== num || num < 1) {
+        return fallback;
+    }
+    return num;
+}
+
 class OpcuaClient {
     /**
      * @param {string|object} endpointOrConfig - OPC UA 서버 주소 또는 server profile config.
@@ -41,6 +51,7 @@ class OpcuaClient {
         this.endpoint = _asText(config.endpoint);
         this.security = config.security && typeof config.security === "object" ? { ...config.security } : { enabled: false };
         this.readRetryInterval = readRetryInterval || config.readRetryInterval || 100;
+        this.readBatchSize = _positiveInteger(config.readBatchSize, DEFAULT_READ_BATCH_SIZE);
         this.client = null;
     }
 
@@ -95,7 +106,7 @@ class OpcuaClient {
      * @returns {ReadResult[]}
      * @throws {Error} 미연결 또는 읽기 실패 시
      */
-    read(nodeIds) {
+    _readNodes(nodeIds) {
         if (this.client === null) {
             throw new Error("not connected");
         }
@@ -103,6 +114,21 @@ class OpcuaClient {
             nodes: nodeIds,
             timestampsToReturn: opcua.TimestampsToReturn.Both,
         });
+    }
+
+    read(nodeIds) {
+        if (!Array.isArray(nodeIds) || nodeIds.length <= this.readBatchSize) {
+            return this._readNodes(nodeIds);
+        }
+        const results = [];
+        for (let i = 0; i < nodeIds.length; i += this.readBatchSize) {
+            const batch = nodeIds.slice(i, i + this.readBatchSize);
+            const batchResults = this._readNodes(batch);
+            for (const result of batchResults) {
+                results.push(result);
+            }
+        }
+        return results;
     }
 
     /**
