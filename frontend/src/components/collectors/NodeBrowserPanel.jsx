@@ -230,6 +230,7 @@ export default function NodeBrowserPanel({ endpoint, existingNodes, onSync, onCl
         const add = Array.from(selected.entries()).map(([nodeId, { path, pathLabels, node }]) => ({
             nodeId,
             name: path,
+            treePath: path.split("_").filter(Boolean),
             dataType: getDataType(node) || undefined,
             nodeTree: buildNodeTree({ rootNodeId, pathLabels, node }),
         }));

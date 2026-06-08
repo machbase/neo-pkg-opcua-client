@@ -1,0 +1,130 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+
+import {
+    buildTagRows,
+    buildTagChartSeries,
+    buildDataViewerPath,
+    defaultSelectedTag,
+    formatDataViewerTime,
+    formatTimeRangeInput,
+    formatTimeRangeLabel,
+    QUICK_TIME_RANGE_GROUPS,
+    resolveTimeRangeInput,
+    resolveTagNodes,
+} from "./dataViewerModel.js";
+
+test("buildDataViewerPath encodes collector id for route navigation", () => {
+    assert.equal(buildDataViewerPath("job/a b"), "/data-viewer/job%2Fa%20b");
+});
+
+test("buildTagRows keeps ordinary tags as a flat list", () => {
+    const rows = buildTagRows([
+        { name: "sensor_a", nodeId: "ns=1;s=sensor.a", dataType: "Double" },
+        { name: "sensor_b", nodeId: "ns=1;s=sensor.b", dataType: "Double" },
+    ]);
+
+    assert.deepEqual(rows.map((row) => [row.type, row.depth, row.label]), [
+        ["tag", 0, "sensor_a"],
+        ["tag", 0, "sensor_b"],
+    ]);
+});
+
+test("buildTagRows uses treePath only when it exists", () => {
+    const rows = buildTagRows([
+        {
+            name: "Line1_Temperature",
+            nodeId: "ns=1;s=line1.temperature",
+            dataType: "Double",
+            treePath: ["Line1", "Temperature"],
+        },
+        {
+            name: "Line1_Pressure",
+            nodeId: "ns=1;s=line1.pressure",
+            dataType: "Double",
+            treePath: ["Line1", "Pressure"],
+        },
+    ]);
+
+    assert.deepEqual(rows.map((row) => [row.type, row.depth, row.label]), [
+        ["folder", 0, "Line1"],
+        ["tag", 1, "Temperature"],
+        ["tag", 1, "Pressure"],
+    ]);
+});
+
+test("defaultSelectedTag returns the first selectable tag", () => {
+    const rows = buildTagRows([
+        { name: "Line1_Temperature", treePath: ["Line1", "Temperature"] },
+    ]);
+
+    assert.equal(defaultSelectedTag(rows).name, "Line1_Temperature");
+});
+
+test("resolveTagNodes falls back to DB tag names when collector nodes are empty", () => {
+    const nodes = resolveTagNodes([], [
+        { name: "sensor.a" },
+        { name: "sensor.b" },
+    ]);
+
+    assert.deepEqual(nodes, [
+        { name: "sensor.a" },
+        { name: "sensor.b" },
+    ]);
+});
+
+test("buildTagChartSeries uses real time values and sorts points by time", () => {
+    const series = buildTagChartSeries([
+        { time: "2026-06-04T10:02:00Z", name: "sensor.a", value: "12.5" },
+        { time: "2026-06-04T10:00:00Z", name: "sensor.a", value: "10.5" },
+        { time: "bad-time", name: "sensor.a", value: "99" },
+        { time: "2026-06-04T10:01:00Z", name: "sensor.a", value: "not-number" },
+    ]);
+
+    assert.equal(series.length, 1);
+    assert.equal(series[0].name, "sensor.a");
+    assert.deepEqual(series[0].data, [
+        [Date.parse("2026-06-04T10:00:00Z"), 10.5],
+        [Date.parse("2026-06-04T10:02:00Z"), 12.5],
+    ]);
+});
+
+test("formatDataViewerTime supports default millisecond format", () => {
+    const text = formatDataViewerTime("2026-06-01T12:34:56.789Z", "YYYY-MM-DD HH24:MI:SS.mmm");
+
+    assert.match(text, /^2026-06-01 \d\d:34:56\.789$/);
+});
+
+test("formatTimeRangeInput renders stored ISO values as editable text", () => {
+    const text = formatTimeRangeInput("2026-06-01T12:34:56.000Z");
+
+    assert.match(text, /^2026-06-01 \d\d:34:56$/);
+});
+
+test("quick ranges match Neo now and last-of-data groups", () => {
+    assert.deepEqual(QUICK_TIME_RANGE_GROUPS[0][2].value, ["now-5m", "now"]);
+    assert.equal(QUICK_TIME_RANGE_GROUPS[1][2].name, "Last 5 minutes of data");
+    assert.deepEqual(QUICK_TIME_RANGE_GROUPS[1][2].value, ["last-5m", "last"]);
+    assert.deepEqual(QUICK_TIME_RANGE_GROUPS[1][9].value, ["last-1y", "last"]);
+});
+
+test("resolveTimeRangeInput supports now and last quick ranges", () => {
+    const base = new Date("2026-06-01T12:00:00.000Z");
+
+    assert.equal(resolveTimeRangeInput("now", base), "2026-06-01T12:00:00.000Z");
+    assert.equal(resolveTimeRangeInput("last", base), "2026-06-01T12:00:00.000Z");
+    assert.equal(resolveTimeRangeInput("now-5m", base), "2026-06-01T11:55:00.000Z");
+    assert.equal(resolveTimeRangeInput("last-5m", base), "2026-06-01T11:55:00.000Z");
+});
+
+test("formatTimeRangeLabel keeps relative quick ranges readable", () => {
+    assert.equal(formatTimeRangeLabel("last-5m", "last"), "last-5m ~ last");
+    assert.equal(formatTimeRangeLabel("", ""), "Time range not set");
+});
+
+test("formatTimeRangeLabel shortens concrete date ranges", () => {
+    assert.equal(
+        formatTimeRangeLabel("2026-06-01 12:34:56.789", "2026-06-01 12:35:01.789"),
+        "2026-06-01 12:34:56 ~ 2026-06-01 12:35:01"
+    );
+});

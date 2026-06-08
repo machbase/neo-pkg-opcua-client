@@ -539,6 +539,17 @@ pre {
     border-color: var(--color-primary-light);
 }
 
+.btn-secondary {
+    background-color: transparent;
+    color: var(--color-on-surface-disabled);
+    border: 1px solid var(--color-border);
+}
+.btn-secondary:hover {
+    background-color: var(--color-surface-hover);
+    color: var(--color-on-surface);
+    border-color: var(--color-border-focus);
+}
+
 .btn-primary-outline {
     background-color: var(--color-primary);
     color: var(--color-on-surface);
@@ -2300,6 +2311,11 @@ label.switch input:checked + .switch-slider::before {
     padding: 0;
 }
 
+.side-list-static {
+    flex: 0 0 auto;
+    overflow: visible;
+}
+
 .side-empty {
     padding: var(--spacing-12) var(--spacing-8);
     font-size: var(--font-size-sm);
@@ -2533,10 +2549,14 @@ label.switch input:checked + .switch-slider::before {
     align-items: center;
     gap: var(--spacing-6);
     padding: var(--spacing-8) var(--spacing-12);
+    border: none;
+    border-bottom: 2px solid transparent;
+    background: transparent;
     font-size: var(--font-size-sm);
     font-weight: 500;
+    font-family: inherit;
     color: var(--color-on-surface-tertiary);
-    border-bottom: 2px solid transparent;
+    cursor: pointer;
     transition: color 0.2s ease, border-color 0.2s ease;
     text-decoration: none;
     white-space: nowrap;
@@ -2551,6 +2571,15 @@ label.switch input:checked + .switch-slider::before {
 .tab-item[aria-current="page"] {
     color: var(--color-on-surface);
     border-color: var(--color-primary);
+}
+
+.detail-tab-bar {
+    margin-bottom: var(--spacing-16);
+    border-bottom: 1px solid var(--color-border);
+}
+
+.detail-tab-bar .tab-item {
+    margin-bottom: -1px;
 }
 
 /* ─── TABLE ─── */
@@ -3053,6 +3082,510 @@ label.switch input:checked + .switch-slider::before {
 .pagination-current {
     font-size: var(--font-size-sm);
     color: var(--color-on-surface-secondary);
+}
+
+.pagination-input {
+    width: 48px;
+    height: var(--size-control-height-sm);
+    padding: 0 var(--spacing-8);
+    text-align: center;
+    font-family: var(--font-family-mono);
+    font-size: var(--font-size-sm);
+}
+
+/* ─── DATA VIEWER ─── */
+
+.data-viewer-embedded {
+    display: flex;
+    flex-direction: column;
+    min-height: calc(100vh - 190px);
+}
+
+.data-viewer-embedded-body,
+.data-viewer-embedded-inner {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+    width: 100%;
+}
+
+.data-viewer-layout {
+    display: grid;
+    grid-template-columns: minmax(320px, 420px) minmax(0, 1fr);
+    gap: var(--spacing-16);
+    flex: 1;
+    min-height: 0;
+}
+
+.data-viewer-tags,
+.data-viewer-results {
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+.data-viewer-tag-search {
+    padding: var(--spacing-12) 0;
+    flex-shrink: 0;
+}
+
+.data-viewer-tag-list {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-base);
+    background-color: var(--color-surface);
+}
+
+.data-viewer-tag-row {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-6);
+    min-height: 32px;
+    padding: var(--spacing-6) var(--spacing-8);
+    cursor: pointer;
+    color: var(--color-on-surface-secondary);
+}
+
+.data-viewer-tag-row:hover {
+    background-color: var(--color-surface-hover);
+}
+
+.data-viewer-tag-row.is-active {
+    background-color: var(--color-surface-active);
+    color: var(--color-on-primary);
+}
+
+.data-viewer-toolbar {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--spacing-8);
+    margin-bottom: var(--spacing-16);
+    flex-shrink: 0;
+}
+
+.data-viewer-title-row,
+.data-viewer-query-row {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+}
+
+.data-viewer-title-row {
+    gap: var(--spacing-8);
+}
+
+.data-viewer-title-row .form-card-header {
+    flex-shrink: 0;
+    white-space: nowrap;
+}
+
+.data-viewer-query-row {
+    justify-content: space-between;
+    gap: var(--spacing-8);
+}
+
+.data-viewer-title-actions,
+.data-viewer-query-controls {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-8);
+    flex-wrap: wrap;
+}
+
+.data-viewer-title-actions {
+    margin-left: auto;
+    flex-shrink: 0;
+    flex-wrap: nowrap;
+}
+
+.data-viewer-query-controls {
+    justify-content: flex-end;
+    margin-left: auto;
+}
+
+.data-viewer-scan-toggle {
+    min-width: 104px;
+}
+
+.data-viewer-time-range-button {
+    height: var(--size-control-height);
+    max-width: min(480px, 100%);
+    padding: 0 var(--spacing-12);
+}
+
+.data-viewer-time-range-button span:last-child {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.data-viewer-time-overlay {
+    background-color: rgba(0, 0, 0, 0.7);
+}
+
+.data-viewer-time-modal.modal {
+    width: auto;
+    min-width: 450px;
+    max-width: 80vw;
+    max-height: 80vh;
+    background-color: #2a2a2a;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    color: var(--color-on-surface);
+    cursor: default;
+}
+
+.data-viewer-time-modal .modal-header {
+    padding: var(--spacing-16) var(--spacing-20);
+}
+
+.data-viewer-time-modal .modal-header-title {
+    gap: var(--spacing-8);
+    justify-content: center;
+    font-size: var(--font-size-lg);
+    font-weight: var(--font-weight-semibold);
+    color: var(--color-on-surface);
+}
+
+.data-viewer-time-modal .modal-body {
+    padding: var(--spacing-16) var(--spacing-32);
+    color: rgba(255, 255, 255, 0.7);
+    gap: var(--spacing-12);
+    background:
+        linear-gradient(#2a2a2a 30%, rgba(42, 42, 42, 0)) center top,
+        linear-gradient(rgba(42, 42, 42, 0), #2a2a2a 70%) center bottom,
+        radial-gradient(farthest-side at 50% 0, rgba(0, 0, 0, 0.3), rgba(0, 0, 0, 0)) center top,
+        radial-gradient(farthest-side at 50% 100%, rgba(0, 0, 0, 0.3), rgba(0, 0, 0, 0)) center bottom;
+    background-repeat: no-repeat;
+    background-size: 100% 40px, 100% 40px, 100% 14px, 100% 14px;
+    background-attachment: local, local, scroll, scroll;
+}
+
+.data-viewer-time-modal .modal-footer {
+    padding: var(--spacing-16) var(--spacing-20);
+}
+
+.data-viewer-time-modal .btn-primary {
+    min-height: 36px;
+    padding: var(--spacing-8);
+    border: 1px solid rgb(0, 108, 210);
+    border-radius: var(--radius-base);
+    background-color: rgb(0, 108, 210);
+    color: var(--color-white);
+    font-size: var(--font-size-base);
+    font-weight: var(--font-weight-medium);
+}
+
+.data-viewer-time-modal .btn-primary:hover:not(:disabled) {
+    border-color: rgb(0, 90, 180);
+    background-color: rgb(0, 90, 180);
+}
+
+.data-viewer-time-modal .btn-secondary {
+    min-height: 36px;
+    padding: var(--spacing-8);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-base);
+    background-color: transparent;
+    color: var(--color-on-surface-disabled);
+    font-size: var(--font-size-base);
+    font-weight: var(--font-weight-medium);
+}
+
+.data-viewer-time-modal .btn-secondary:hover:not(:disabled) {
+    background-color: var(--color-surface-hover);
+    color: var(--color-on-surface);
+}
+
+.data-viewer-time-body {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-16);
+}
+
+.data-viewer-time-fields {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-12);
+}
+
+.data-viewer-time-field {
+    display: grid;
+    grid-template-columns: 120px minmax(0, 1fr);
+    align-items: center;
+    gap: var(--spacing-12);
+    color: var(--color-on-surface-secondary);
+    font-size: var(--font-size-base);
+    font-weight: var(--font-weight-medium);
+    user-select: none;
+}
+
+.data-viewer-time-field .input-icon-wrap {
+    width: 100%;
+    height: 32px;
+    padding: 0 var(--spacing-2) 0 var(--spacing-12);
+    background-color: #2a2a2a;
+    border: 1px solid #3e3e3e;
+    border-radius: var(--radius-base);
+    transition: border-color 0.3s ease;
+}
+
+.data-viewer-time-field .input-icon-wrap:hover {
+    border-color: #5a5a5a;
+}
+
+.data-viewer-time-field .input-icon-wrap:focus-within {
+    border-color: var(--color-border-focus);
+}
+
+.data-viewer-time-field input {
+    width: 100%;
+    height: 100%;
+    min-width: 0;
+    padding: 0 var(--spacing-8) 0 0;
+    border: none;
+    outline: none;
+    background: transparent;
+    color: var(--color-on-surface);
+    font-size: var(--font-size-base);
+}
+
+.data-viewer-time-field input::placeholder {
+    color: var(--color-on-surface-disabled);
+    font-size: var(--font-size-sm);
+}
+
+.data-viewer-date-icon-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: 28px;
+    height: 28px;
+    padding: var(--spacing-2);
+    border: 1px solid transparent;
+    border-radius: var(--radius-base);
+    background-color: transparent;
+    color: var(--color-on-surface-tertiary);
+    cursor: pointer;
+    transition: background-color var(--transition-duration-fast), color var(--transition-duration-fast);
+}
+
+.data-viewer-date-icon-button:hover {
+    background-color: var(--color-surface-hover);
+    color: var(--color-on-surface);
+}
+
+.data-viewer-date-picker-popover {
+    position: fixed;
+    z-index: calc(var(--z-index-modal) + 1);
+}
+
+.data-viewer-date-picker-content {
+    display: flex;
+    flex-direction: column;
+    max-height: calc(100vh - 32px);
+    overflow: hidden;
+    background-color: var(--color-surface-elevated);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-lg);
+}
+
+.data-viewer-date-picker-form {
+    display: flex;
+    gap: var(--spacing-16);
+    padding: var(--spacing-16);
+    overflow-y: auto;
+}
+
+.data-viewer-date-picker-calendar {
+    width: 292px;
+    flex-shrink: 0;
+}
+
+.data-viewer-date-picker-calendar-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    height: 36px;
+    margin-bottom: var(--spacing-8);
+    color: var(--color-on-surface);
+    font-size: var(--font-size-base);
+    font-weight: var(--font-weight-semibold);
+}
+
+.data-viewer-date-picker-weekdays,
+.data-viewer-date-picker-days {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: var(--spacing-4);
+}
+
+.data-viewer-date-picker-weekdays {
+    margin-bottom: var(--spacing-4);
+    color: var(--color-on-surface-tertiary);
+    font-size: var(--font-size-sm);
+    text-align: center;
+}
+
+.data-viewer-date-picker-weekdays span {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 28px;
+}
+
+.data-viewer-date-picker-days span,
+.data-viewer-date-picker-day {
+    width: 36px;
+    height: 32px;
+}
+
+.data-viewer-date-picker-day {
+    border: none;
+    border-radius: var(--radius-circle);
+    background-color: transparent;
+    color: var(--color-on-surface-secondary);
+    cursor: pointer;
+    font-size: var(--font-size-sm);
+}
+
+.data-viewer-date-picker-day:hover {
+    background-color: var(--color-surface-hover);
+    color: var(--color-on-surface);
+}
+
+.data-viewer-date-picker-day.is-selected {
+    background-color: var(--color-primary);
+    color: var(--color-white);
+}
+
+.data-viewer-date-picker-time {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: var(--spacing-12);
+    min-width: 120px;
+}
+
+.data-viewer-date-picker-time label {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-4);
+    color: var(--color-on-surface-secondary);
+    font-size: var(--font-size-sm);
+}
+
+.data-viewer-date-picker-time input {
+    width: 96px;
+    height: 32px;
+    padding: 0 var(--spacing-8);
+    color: var(--color-on-surface);
+    background-color: var(--color-surface-input);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-base);
+    outline: none;
+}
+
+.data-viewer-date-picker-time input:focus {
+    border-color: var(--color-border-focus);
+}
+
+.data-viewer-date-picker-actions {
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    gap: var(--spacing-8);
+    padding: 0 var(--spacing-16) var(--spacing-16);
+}
+
+.data-viewer-quick-range {
+    display: flex;
+    gap: 0;
+    padding-top: var(--spacing-4);
+}
+
+.data-viewer-quick-range-title {
+    width: 100px;
+    flex-shrink: 0;
+    color: var(--color-on-surface-secondary);
+    font-size: var(--font-size-sm);
+}
+
+.data-viewer-quick-range-grid {
+    display: flex;
+    flex: 1;
+    min-width: 0;
+}
+
+.data-viewer-quick-range-group {
+    display: flex;
+    flex: 1;
+    min-width: 0;
+    flex-direction: column;
+}
+
+.data-viewer-quick-range-button {
+    border: none;
+    border-radius: var(--radius-base);
+    background: transparent;
+    color: var(--color-primary-light);
+    cursor: pointer;
+    font-size: var(--font-size-sm);
+    padding: var(--spacing-4) var(--spacing-8);
+    text-align: left;
+    white-space: nowrap;
+    transition: background-color var(--transition-duration-fast), color var(--transition-duration-fast), opacity var(--transition-duration-fast);
+}
+
+.data-viewer-quick-range-button:hover {
+    background-color: var(--color-surface-hover);
+    color: var(--color-primary-hover);
+}
+
+.data-viewer-quick-range-button:active {
+    opacity: 0.5;
+}
+
+.data-viewer-chart {
+    flex: 1;
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+    padding: 0;
+    background-color: #252525;
+}
+
+.data-viewer-chart-card .table-card-body {
+    display: flex;
+    overflow: hidden;
+}
+
+.data-viewer-chart > div,
+.data-viewer-chart .highcharts-container,
+.data-viewer-chart .highcharts-root {
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+}
+
+@media (max-width: 960px) {
+    .data-viewer-layout {
+        grid-template-columns: 1fr;
+    }
+
+    .data-viewer-toolbar {
+        align-items: stretch;
+    }
+
+    .data-viewer-query-row,
+    .data-viewer-query-controls {
+        justify-content: flex-start;
+    }
 }
 
 /* ─── LIST ITEM (event rule, generic row) ─── */
