@@ -8,6 +8,7 @@ import {
     getNodeRangeRows,
     isNumericDataType,
 } from "./nodeRangeSelection";
+import { buildNodeTree } from "./nodeTree";
 
 const DEFAULT_ROOT = "ns=0;i=85";
 const NODE_CLASS_OBJECT = 1;
@@ -20,7 +21,7 @@ function getLabel(node) {
     return node.displayName || node.browseName || node.nodeId;
 }
 
-function flattenTree(parentId, childrenMap, expandedIds, depth, parentPath, visitedIds) {
+function flattenTree(parentId, childrenMap, expandedIds, depth, parentPath, parentLabels, visitedIds) {
     const children = childrenMap.get(parentId);
     if (!children) return [];
 
@@ -29,13 +30,14 @@ function flattenTree(parentId, childrenMap, expandedIds, depth, parentPath, visi
         const isObject = node.nodeClass === NODE_CLASS_OBJECT;
         const label = getLabel(node);
         const currentPath = parentPath ? `${parentPath}_${label}` : label;
+        const pathLabels = [...parentLabels, label];
         const isCycle = visitedIds.has(node.nodeId);
 
-        rows.push({ node, depth, parentPath: currentPath, isObject, isCycle });
+        rows.push({ node, depth, parentPath: currentPath, pathLabels, isObject, isCycle });
 
         if (isObject && expandedIds.has(node.nodeId) && !isCycle) {
             const nextVisited = new Set([...visitedIds, node.nodeId]);
-            rows.push(...flattenTree(node.nodeId, childrenMap, expandedIds, depth + 1, currentPath, nextVisited));
+            rows.push(...flattenTree(node.nodeId, childrenMap, expandedIds, depth + 1, currentPath, pathLabels, nextVisited));
         }
     }
     return rows;
@@ -182,7 +184,7 @@ export default function NodeBrowserPanel({ endpoint, existingNodes, onSync, onCl
 
     const allRows = useMemo(() => {
         if (!childrenMap.has(rootNodeId)) return [];
-        return flattenTree(rootNodeId, childrenMap, expandedIds, 0, "", new Set([rootNodeId]));
+        return flattenTree(rootNodeId, childrenMap, expandedIds, 0, "", [], new Set([rootNodeId]));
     }, [rootNodeId, childrenMap, expandedIds]);
 
     useEffect(() => {
@@ -225,10 +227,11 @@ export default function NodeBrowserPanel({ endpoint, existingNodes, onSync, onCl
     );
 
     const handleApply = () => {
-        const add = Array.from(selected.entries()).map(([nodeId, { path, node }]) => ({
+        const add = Array.from(selected.entries()).map(([nodeId, { path, pathLabels, node }]) => ({
             nodeId,
             name: path,
             dataType: getDataType(node) || undefined,
+            nodeTree: buildNodeTree({ rootNodeId, pathLabels, node }),
         }));
         onSync({ add, remove: Array.from(removedIds) });
         onClose();

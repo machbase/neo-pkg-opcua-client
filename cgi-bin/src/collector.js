@@ -13,6 +13,16 @@ function _configuredColumn(value) {
 
 const WARN_SUMMARY_EVERY = 60;
 const WARN_SUMMARY_INTERVAL_MS = 5 * 60 * 1000;
+const NUMERIC_DATA_TYPES = new Set([
+    'Boolean',
+    'SByte', 'Byte',
+    'Int16', 'UInt16',
+    'Int32', 'UInt32',
+    'Int64', 'UInt64',
+    'Float', 'Double',
+    'Integer', 'UInteger', 'Number',
+]);
+const STRING_DATA_TYPES = new Set(['String']);
 
 class Collector {
     constructor(config, { opcuaClient, db, collectorName, lastCollectedAtWriter, logger } = {}) {
@@ -105,6 +115,39 @@ class Collector {
             return null;
         }
         return String(value);
+    }
+
+    _nodeDataTypeHint(node) {
+        const dataType = node && node.dataType !== undefined && node.dataType !== null
+            ? String(node.dataType).trim()
+            : '';
+        if (!dataType) {
+            return 'auto';
+        }
+        if (NUMERIC_DATA_TYPES.has(dataType)) {
+            return 'numeric';
+        }
+        if (STRING_DATA_TYPES.has(dataType)) {
+            return 'string';
+        }
+        return 'auto';
+    }
+
+    _canNormalizeNumericValue(value) {
+        if (typeof value === 'boolean') {
+            return true;
+        }
+        if (typeof value === 'number') {
+            return Number.isFinite(value);
+        }
+        if (typeof value === 'string' && value.trim() !== '') {
+            return Number.isFinite(Number(value));
+        }
+        return false;
+    }
+
+    _isRuntimeNumericValue(value) {
+        return typeof value === 'boolean' || (typeof value === 'number' && Number.isFinite(value));
     }
 
     _normalizeJsonValue(value, node) {
@@ -212,11 +255,13 @@ class Collector {
         this._clearWarnState(this._nodeWarnKey('unsupported-string-only-empty', node));
         this._clearWarnState(this._nodeWarnKey('unsupported-string-empty', node));
         this._clearWarnState(this._nodeWarnKey('unsupported-value-no-string', node));
+        this._clearWarnState(this._nodeWarnKey('unsupported-numeric-value', node));
     }
 
     _buildStandardRow(node, result) {
         const ts = this._timestampOf(result);
         const rawValue = result ? result.value : null;
+        const dataTypeHint = this._nodeDataTypeHint(node);
         let numericValue = null;
         let stringValue = null;
         let storedValue;
@@ -231,7 +276,42 @@ class Collector {
                 return { skipped: true, ts, rawValue, value: null, stringValue: null, reason: 'empty-string' };
             }
             storedValue = stringValue;
-        } else if (typeof rawValue === 'boolean' || typeof rawValue === 'number') {
+        } else if (dataTypeHint === 'numeric') {
+            if (!this._canNormalizeNumericValue(rawValue)) {
+                this._warnRepeated(this._nodeWarnKey('unsupported-numeric-value', node), "unsupported value for numeric data type", {
+                    nodeId: node.nodeId,
+                    name: node.name,
+                    dataType: node.dataType,
+                    type: rawValue === null ? 'null' : typeof rawValue,
+                });
+                return { skipped: true, ts, rawValue, value: null, stringValue: null, reason: 'unsupported-numeric' };
+            }
+            numericValue = this._normalizeValue(rawValue, node);
+            storedValue = numericValue;
+        } else if (dataTypeHint === 'string') {
+            if (!this._stringValueColumn) {
+                this._warnRepeated(this._nodeWarnKey('unsupported-value-no-string', node), "unsupported value without string column", {
+                    nodeId: node.nodeId,
+                    name: node.name,
+                    dataType: node.dataType,
+                    type: rawValue === null ? 'null' : typeof rawValue,
+                });
+                return { skipped: true, ts, rawValue, value: null, stringValue: null, reason: 'unsupported' };
+            }
+            stringValue = this._coerceStringValue(rawValue);
+            if (stringValue === null) {
+                this._warnRepeated(this._nodeWarnKey('unsupported-string-empty', node), "unsupported empty value for string column", {
+                    nodeId: node.nodeId,
+                    name: node.name,
+                    dataType: node.dataType,
+                });
+                return { skipped: true, ts, rawValue, value: null, stringValue: null, reason: 'empty-string' };
+            }
+            // TAG tables reject NULL in the selected value column, so string rows
+            // keep a numeric placeholder and store the actual value in stringValueColumn.
+            numericValue = 0;
+            storedValue = stringValue;
+        } else if (this._isRuntimeNumericValue(rawValue)) {
             numericValue = this._normalizeValue(rawValue, node);
             storedValue = numericValue;
         } else if (this._stringValueColumn) {

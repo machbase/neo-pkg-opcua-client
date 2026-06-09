@@ -7,6 +7,7 @@ import OpcuaSection from '../components/collectors/OpcuaSection'
 import DbSection from '../components/collectors/DbSection'
 import LogSection from '../components/collectors/LogSection'
 import NodeListEditor from '../components/collectors/NodeListEditor'
+import { normalizeCollectorNodes } from '../components/collectors/nodeTree'
 import { koToEn } from '../utils/korean'
 
 const DEFAULTS = {
@@ -56,7 +57,7 @@ export default function CollectorFormPage({ detail, onRefresh, onRefreshDetail, 
       const c = detail.config
       setForm({
         name: detail.name || id,
-        opcua: { ...DEFAULTS.opcua, ...c.opcua, nodes: c.opcua?.nodes || [] },
+        opcua: { ...DEFAULTS.opcua, ...c.opcua, nodes: normalizeCollectorNodes(c.opcua?.nodes) },
         db: {
           server: typeof c.db === 'string' ? c.db : '',
           table: c.dbTable || '',
