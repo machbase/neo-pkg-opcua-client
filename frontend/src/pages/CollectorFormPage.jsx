@@ -25,6 +25,7 @@ const DEFAULTS = {
     stringColumn: '',
     stringOnly: false,
     columnKind: '',
+    autoCreateTable: false,
   },
   log: {
     level: 'INFO',
@@ -65,6 +66,7 @@ export default function CollectorFormPage({ detail, onRefresh, onRefreshDetail, 
           stringColumn: c.stringValueColumn || '',
           stringOnly: Boolean(c.stringOnly),
           columnKind: '',
+          autoCreateTable: false,
         },
         log: {
           ...DEFAULTS.log,
@@ -92,14 +94,21 @@ export default function CollectorFormPage({ detail, onRefresh, onRefreshDetail, 
   }
 
   const nodeSelectionMode =
-    form.db.stringOnly || form.db.columnKind === 'json' || !!form.db.stringColumn
+    form.db.autoCreateTable || form.db.stringOnly || form.db.columnKind === 'json' || !!form.db.stringColumn
       ? 'all'
       : 'numeric-only'
 
   const handleSubmit = async (e) => {
     e.preventDefault()
 
-    if (form.db.stringOnly) {
+    const autoCreateTable = !isEdit && form.db.autoCreateTable === true
+
+    if (autoCreateTable) {
+      if (!form.db.table) {
+        notify('Table is required', 'error')
+        return
+      }
+    } else if (form.db.stringOnly) {
       if (!form.db.stringColumn) {
         notify('String Value Column is required for string-only mode', 'error')
         return
@@ -132,7 +141,9 @@ export default function CollectorFormPage({ detail, onRefresh, onRefreshDetail, 
         },
       }
 
-      if (form.db.stringOnly) {
+      if (autoCreateTable) {
+        config.autoCreateTable = true
+      } else if (form.db.stringOnly) {
         config.stringOnly = true
         config.stringValueColumn = form.db.stringColumn
       } else {
@@ -229,6 +240,7 @@ export default function CollectorFormPage({ detail, onRefresh, onRefreshDetail, 
                   servers={servers}
                   onOpenServerSettings={onOpenServerSettings}
                   onRefreshServers={onRefreshServers}
+                  isEdit={isEdit}
                 />
               </div>
 
@@ -244,7 +256,7 @@ export default function CollectorFormPage({ detail, onRefresh, onRefreshDetail, 
                   onChange={nodes => update('opcua.nodes', nodes)}
                   endpoint={form.opcua.endpoint}
                   selectionMode={nodeSelectionMode}
-                  storageMode={form.db.stringOnly ? 'string' : form.db.columnKind === 'json' ? 'json' : 'default'}
+                  storageMode={form.db.autoCreateTable || form.db.stringOnly ? 'string' : form.db.columnKind === 'json' ? 'json' : 'default'}
                 />
               </div>
 
