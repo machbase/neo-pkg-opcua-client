@@ -963,6 +963,23 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
                                                 <span>Latest first</span>
                                             </label>
                                         )}
+                                        {mode === "raw" && (
+                                            <div className="data-viewer-query-controls">
+                                                <button
+                                                    type="button"
+                                                    aria-label="Set time format and timezone"
+                                                    title={timeFormatButtonText}
+                                                    className="btn btn-sm btn-ghost data-viewer-format-button"
+                                                    onClick={() => setFormatOpen(true)}
+                                                >
+                                                    <Icon name="public" className="icon-sm" />
+                                                </button>
+                                                <button type="button" aria-label="Set time range" title={timeRangeButtonText} className="btn btn-sm btn-ghost data-viewer-time-range-button" onClick={() => setRangeOpen(true)}>
+                                                    <Icon name="calendar_month" className="icon-sm" />
+                                                    <span>{timeRangeButtonText}</span>
+                                                </button>
+                                            </div>
+                                        )}
                                         <div className="log-level-group" role="tablist" aria-label="Result mode">
                                             <button type="button" className={`log-level-item ${mode === "raw" ? "is-included" : "is-excluded"}`} onClick={() => setMode("raw")}>
                                                 Raw
@@ -973,25 +990,6 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
                                         </div>
                                     </div>
                                 </div>
-                                {mode === "raw" && (
-                                    <div className="data-viewer-query-row">
-                                        <div className="data-viewer-query-controls">
-                                            <button
-                                                type="button"
-                                                aria-label="Set time format and timezone"
-                                                title={timeFormatButtonText}
-                                                className="btn btn-sm btn-ghost data-viewer-format-button"
-                                                onClick={() => setFormatOpen(true)}
-                                            >
-                                                <Icon name="public" className="icon-sm" />
-                                            </button>
-                                            <button type="button" aria-label="Set time range" title={timeRangeButtonText} className="btn btn-sm btn-ghost data-viewer-time-range-button" onClick={() => setRangeOpen(true)}>
-                                                <Icon name="calendar_month" className="icon-sm" />
-                                                <span>{timeRangeButtonText}</span>
-                                            </button>
-                                        </div>
-                                    </div>
-                                )}
                             </div>
 
                             {error && <div className="error-box">{error}</div>}

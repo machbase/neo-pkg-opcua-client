@@ -3165,13 +3165,11 @@ label.switch input:checked + .switch-slider::before {
     display: flex;
     flex-direction: column;
     align-items: stretch;
-    gap: var(--spacing-8);
     margin-bottom: var(--spacing-16);
     flex-shrink: 0;
 }
 
-.data-viewer-title-row,
-.data-viewer-query-row {
+.data-viewer-title-row {
     display: flex;
     align-items: center;
     min-width: 0;
@@ -3186,17 +3184,12 @@ label.switch input:checked + .switch-slider::before {
     white-space: nowrap;
 }
 
-.data-viewer-query-row {
-    justify-content: space-between;
-    gap: var(--spacing-8);
-}
-
 .data-viewer-title-actions,
 .data-viewer-query-controls {
     display: flex;
     align-items: center;
     gap: var(--spacing-8);
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
 }
 
 .data-viewer-title-actions {
@@ -3206,8 +3199,7 @@ label.switch input:checked + .switch-slider::before {
 }
 
 .data-viewer-query-controls {
-    justify-content: flex-end;
-    margin-left: auto;
+    min-width: 0;
 }
 
 .data-viewer-scan-toggle {
@@ -3222,7 +3214,7 @@ label.switch input:checked + .switch-slider::before {
 
 .data-viewer-time-range-button {
     height: var(--size-control-height);
-    max-width: min(480px, 100%);
+    max-width: min(360px, 32vw);
     padding: 0 var(--spacing-12);
 }
 
@@ -3632,9 +3624,13 @@ label.switch input:checked + .switch-slider::before {
         align-items: stretch;
     }
 
-    .data-viewer-query-row,
-    .data-viewer-query-controls {
-        justify-content: flex-start;
+    .data-viewer-title-row {
+        align-items: flex-start;
+    }
+
+    .data-viewer-title-actions {
+        flex-wrap: wrap;
+        justify-content: flex-end;
     }
 }
 
