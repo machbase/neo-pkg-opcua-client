@@ -6,6 +6,8 @@ import {
     buildTagRows,
     buildTagChartSeries,
     buildDataViewerPath,
+    buildDataViewerHeaderLabels,
+    buildRawResultColumns,
     defaultSelectedTag,
     formatDataViewerTime,
     formatTimeRangeInput,
@@ -22,6 +24,53 @@ test("buildDataViewerPath encodes collector id for route navigation", () => {
 
 test("DATA_VIEWER_BACK_PATH returns to the jobs dashboard", () => {
     assert.equal(DATA_VIEWER_BACK_PATH, "/");
+});
+
+test("buildDataViewerHeaderLabels places job name in title and table name in detail", () => {
+    assert.deepEqual(buildDataViewerHeaderLabels("collector-a", "SYS.TAG_TABLE"), {
+        title: "collector-a",
+        detail: "SYS.TAG_TABLE",
+    });
+    assert.deepEqual(buildDataViewerHeaderLabels("collector-a", ""), {
+        title: "collector-a",
+        detail: "",
+    });
+});
+
+test("buildRawResultColumns keeps time name value first and appends extra fields", () => {
+    const columns = buildRawResultColumns([
+        {
+            str_value: "running",
+            name: "sensor.a",
+            value: 12.5,
+            time: "2026-06-01",
+            quality: "GOOD",
+            buffer: ["internal"],
+            names: ["TIME", "NAME", "VALUE"],
+        },
+        { extra_status: "ok", name: "sensor.a", value: 13.5, time: "2026-06-02" },
+    ]);
+
+    assert.deepEqual(columns.map((column) => column.key), [
+        "time",
+        "name",
+        "value",
+        "str_value",
+        "quality",
+        "extra_status",
+    ]);
+    assert.deepEqual(columns.map((column) => column.label), [
+        "Time",
+        "Name",
+        "Value",
+        "Str Value",
+        "Quality",
+        "Extra Status",
+    ]);
+});
+
+test("buildRawResultColumns returns default columns when rows are empty", () => {
+    assert.deepEqual(buildRawResultColumns([]).map((column) => column.key), ["time", "name", "value"]);
 });
 
 test("buildTagRows keeps ordinary tags as a flat list", () => {

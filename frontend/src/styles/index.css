@@ -3224,6 +3224,50 @@ label.switch input:checked + .switch-slider::before {
     white-space: nowrap;
 }
 
+.data-viewer-raw-card .table-card-body {
+    overflow: auto;
+}
+
+.data-viewer-raw-table {
+    border-collapse: separate;
+    border-spacing: 0;
+    table-layout: auto;
+    font-size: 14px;
+}
+
+.data-viewer-raw-table th,
+.data-viewer-raw-table td {
+    height: 25px;
+    max-width: 50vw;
+    padding: 0 16px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.data-viewer-raw-table th {
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--color-on-surface);
+    text-align: start;
+    text-transform: none;
+    letter-spacing: 0;
+}
+
+.data-viewer-raw-table td {
+    font-size: 14px;
+    font-weight: 300;
+    vertical-align: middle;
+}
+
+.data-viewer-raw-table tbody tr:nth-child(even) td {
+    background-color: transparent;
+}
+
+.data-viewer-raw-table tbody tr:hover td {
+    background-color: var(--color-surface-hover);
+}
+
 .data-viewer-time-overlay {
     background-color: rgba(0, 0, 0, 0.7);
 }

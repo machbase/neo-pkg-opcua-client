@@ -51,6 +51,53 @@ export function buildDataViewerPath(collectorId) {
     return `${DATA_VIEWER_ROUTE_BASE}/${encodeURIComponent(String(collectorId || ""))}`;
 }
 
+export function buildDataViewerHeaderLabels(jobName, tableName) {
+    const job = String(jobName || "").trim();
+    const table = String(tableName || "").trim();
+    return {
+        title: job || table,
+        detail: table,
+    };
+}
+
+const RAW_COLUMN_ORDER = ["time", "name", "value"];
+const INTERNAL_RAW_RESULT_KEYS = new Set(["buffer", "names"]);
+
+function formatRawColumnLabel(key) {
+    return String(key || "")
+        .split("_")
+        .filter(Boolean)
+        .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+        .join(" ");
+}
+
+export function buildRawResultColumns(rows = []) {
+    const keys = [];
+    const seen = new Set();
+
+    for (const row of rows) {
+        if (!row || typeof row !== "object") continue;
+        for (const key of Object.keys(row)) {
+            if (INTERNAL_RAW_RESULT_KEYS.has(String(key).toLowerCase())) continue;
+            if (seen.has(key)) continue;
+            seen.add(key);
+            keys.push(key);
+        }
+    }
+
+    const orderedKeys = keys.length > 0
+        ? [
+            ...RAW_COLUMN_ORDER.filter((key) => seen.has(key)),
+            ...keys.filter((key) => !RAW_COLUMN_ORDER.includes(key)),
+        ]
+        : RAW_COLUMN_ORDER;
+
+    return orderedKeys.map((key) => ({
+        key,
+        label: formatRawColumnLabel(key),
+    }));
+}
+
 export const QUICK_TIME_RANGE_GROUPS = [
     [
         { key: "now-5s", name: "Last 5 seconds", value: ["now-5s", "now"] },

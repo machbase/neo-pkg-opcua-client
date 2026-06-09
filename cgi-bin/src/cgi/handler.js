@@ -1883,6 +1883,36 @@ function rowCountValue(row) {
   return Number.isFinite(n) ? n : 0;
 }
 
+const INTERNAL_QUERY_ROW_FIELDS = new Set(['buffer', 'names']);
+
+function normalizeTagDataRow(row, req) {
+  const normalized = {};
+  for (const [key, value] of Object.entries(row || {})) {
+    const normalizedKey = String(key).toLowerCase();
+    if (INTERNAL_QUERY_ROW_FIELDS.has(normalizedKey)) continue;
+    normalized[normalizedKey] = value;
+  }
+
+  const primaryKey = String(req.primaryColumn || 'NAME').toLowerCase();
+  const timeKey = String(req.timeColumn || 'TIME').toLowerCase();
+  const valueKey = String(req.valueColumn || 'VALUE').toLowerCase();
+
+  if (primaryKey !== 'name' && Object.prototype.hasOwnProperty.call(normalized, primaryKey)) {
+    normalized.name = normalized[primaryKey];
+    delete normalized[primaryKey];
+  }
+  if (timeKey !== 'time' && Object.prototype.hasOwnProperty.call(normalized, timeKey)) {
+    normalized.time = normalized[timeKey];
+    delete normalized[timeKey];
+  }
+  if (valueKey !== 'value' && Object.prototype.hasOwnProperty.call(normalized, valueKey)) {
+    normalized.value = normalized[valueKey];
+    delete normalized[valueKey];
+  }
+
+  return normalized;
+}
+
 function buildTagMetaTableRef(table) {
   return table.tableUser ? `${table.tableUser}._${table.tableName}_META` : `_${table.tableName}_META`;
 }
@@ -2040,28 +2070,12 @@ function dbTableData(db, params, reply) {
     const fetchLimit = offset + req.pageSize;
     const scan = req.direction === 'oldest' ? 'SCAN_FORWARD' : 'SCAN_BACKWARD';
     const orderDir = req.direction === 'oldest' ? 'ASC' : 'DESC';
-    const selectedColumns = [
-      `${req.timeColumn} AS TIME`,
-      `${req.primaryColumn} AS NAME`,
-      `${req.valueColumn} AS VALUE`,
-    ];
-    if (req.stringValueColumn && req.stringValueColumn !== req.valueColumn) {
-      selectedColumns.push(`${req.stringValueColumn} AS STRING_VALUE`);
-    }
     const dataRows = client.query(
-      `SELECT /*+ ${scan}(${req.tableRef}) */ ${selectedColumns.join(', ')} ` +
+      `SELECT /*+ ${scan}(${req.tableRef}) */ * ` +
       `FROM ${req.tableRef} WHERE ${where.sql} ORDER BY ${req.timeColumn} ${orderDir} LIMIT ?`,
       [...where.values, fetchLimit]
     );
-    const rows = (dataRows || []).slice(offset, offset + req.pageSize).map((row) => {
-      const numericValue = pickRowValue(row, ['VALUE', 'value', req.valueColumn]);
-      const stringValue = pickRowValue(row, ['STRING_VALUE', 'string_value', req.stringValueColumn]);
-      return {
-        time: pickRowValue(row, ['TIME', 'time', req.timeColumn]),
-        name: pickRowValue(row, ['NAME', 'name', req.primaryColumn]),
-        value: numericValue !== undefined && numericValue !== null ? numericValue : stringValue,
-      };
-    });
+    const rows = (dataRows || []).slice(offset, offset + req.pageSize).map((row) => normalizeTagDataRow(row, req));
 
     reply({
       ok: true,

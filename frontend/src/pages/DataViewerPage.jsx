@@ -13,6 +13,8 @@ import {
     QUICK_TIME_RANGE_GROUPS,
     TIME_FORMATS,
     TIME_ZONE_OPTIONS,
+    buildDataViewerHeaderLabels,
+    buildRawResultColumns,
     buildTagChartSeries,
     buildTagRows,
     defaultSelectedTag,
@@ -790,6 +792,8 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
 
     const timeRangeButtonText = formatTimeRangeLabel(range.from, range.to);
     const timeFormatButtonText = `${getTimeFormatLabel(timeFormat)} / ${getTimeZoneLabel(timeZone)}`;
+    const headerLabels = buildDataViewerHeaderLabels(collector.id, dbTable);
+    const rawColumns = buildRawResultColumns(result.rows);
     const handleLatestFirstChange = (event) => {
         setLatestFirst(event.target.checked);
         setResultPage(1);
@@ -844,8 +848,8 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
                             <Icon name="arrow_back" />
                         </button>
                         <Icon name="query_stats" className="text-primary" />
-                        <h2 className="page-title truncate">Data Viewer</h2>
-                        <span className="badge badge-muted truncate">{collector.id}</span>
+                        <h2 className="page-title truncate">{headerLabels.title}</h2>
+                        {headerLabels.detail && <span className="badge badge-muted truncate">{headerLabels.detail}</span>}
                     </div>
                 </div>
             </header>
@@ -959,22 +963,26 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
                             {error && <div className="error-box">{error}</div>}
                             {!canQuery && <div className="empty-state">Database table and tag are required</div>}
                             {canQuery && mode === "raw" && (
-                                <div className="table-card">
+                                <div className="table-card data-viewer-raw-card">
                                     <div className="table-card-body">
-                                        <table className="table-clean">
+                                        <table className="table-clean data-viewer-raw-table">
                                             <thead>
                                                 <tr>
-                                                    <th>Time</th>
-                                                    <th>Name</th>
-                                                    <th>Value</th>
+                                                    {rawColumns.map((column) => (
+                                                        <th key={column.key}>{column.label}</th>
+                                                    ))}
                                                 </tr>
                                             </thead>
                                             <tbody>
                                                 {result.rows.map((row, i) => (
                                                     <tr key={`${row.name}-${row.time}-${i}`}>
-                                                        <td className="mono">{formatDataViewerTime(row.time, timeFormat, timeZone)}</td>
-                                                        <td className="mono">{row.name}</td>
-                                                        <td className="mono">{String(row.value ?? "")}</td>
+                                                        {rawColumns.map((column) => (
+                                                            <td key={column.key} className="mono">
+                                                                {column.key === "time"
+                                                                    ? formatDataViewerTime(row[column.key], timeFormat, timeZone)
+                                                                    : String(row[column.key] ?? "")}
+                                                            </td>
+                                                        ))}
                                                     </tr>
                                                 ))}
                                             </tbody>

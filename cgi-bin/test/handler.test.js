@@ -1229,7 +1229,15 @@ runner.run('Handler: dbTableData', {
         mockMachbaseClient.tableMeta = { ID: 10, TYPE: 6, NAME: 'TAG' };
         mockMachbaseClient.queryResults = [
             [
-                { TIME: new Date('2026-06-01T00:02:00Z'), NAME: 'sensor.a', VALUE: 12.5 },
+                {
+                    TIME: new Date('2026-06-01T00:02:00Z'),
+                    NAME: 'sensor.a',
+                    VALUE: 12.5,
+                    STR_VALUE: 'running',
+                    QUALITY: 'GOOD',
+                    buffer: ['internal'],
+                    names: ['TIME', 'NAME', 'VALUE'],
+                },
                 { TIME: new Date('2026-06-01T00:01:00Z'), NAME: 'sensor.a', VALUE: 11.5 },
                 { TIME: new Date('2026-06-01T00:00:00Z'), NAME: 'sensor.a', VALUE: 10.5 },
             ],
@@ -1257,7 +1265,12 @@ runner.run('Handler: dbTableData', {
         t.assertEqual(result.data.rows.length, 2, 'should return current page rows only');
         t.assertEqual(result.data.rows[0].name, 'sensor.a');
         t.assertEqual(result.data.rows[0].value, 12.5);
+        t.assertEqual(result.data.rows[0].str_value, 'running');
+        t.assertEqual(result.data.rows[0].quality, 'GOOD');
+        t.assert(!Object.prototype.hasOwnProperty.call(result.data.rows[0], 'buffer'), 'internal row buffer should not be returned');
+        t.assert(!Object.prototype.hasOwnProperty.call(result.data.rows[0], 'names'), 'internal row names should not be returned');
         t.assertEqual(mockMachbaseClient.queries.length, 1, 'should not run count query');
+        t.assert(mockMachbaseClient.queries[0].sql.includes('SELECT /*+ SCAN_BACKWARD(TAG) */ *'), 'raw query should select every table field');
         t.assert(mockMachbaseClient.queries[0].sql.includes('SCAN_BACKWARD(TAG)'), 'latest should scan backward');
         t.assert(mockMachbaseClient.queries[0].sql.includes('ORDER BY TIME DESC'), 'latest should sort newest first');
         t.assertEqual(mockMachbaseClient.queries[0].values[0], 'sensor.a');
