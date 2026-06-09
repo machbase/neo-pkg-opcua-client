@@ -11,6 +11,33 @@ function _configuredColumn(value) {
     return value === undefined || value === null || value === '' ? null : value;
 }
 
+function _resolveOpcuaConfig(config) {
+    const opcua = config && config.opcua ? config.opcua : {};
+    if (opcua.server !== undefined && opcua.server !== null && String(opcua.server).trim() !== '') {
+        const serverName = String(opcua.server).trim();
+        const serverConfig = CGI.getOpcuaServerConfig(serverName);
+        const endpoint = serverConfig && serverConfig.endpoint ? String(serverConfig.endpoint).trim() : '';
+        if (!endpoint) {
+            throw new Error(`opcua server '${serverName}' not found`);
+        }
+        return {
+            ...serverConfig,
+            endpoint,
+        };
+    }
+
+    const endpoint = opcua.endpoint !== undefined && opcua.endpoint !== null
+        ? String(opcua.endpoint).trim()
+        : '';
+    if (!endpoint) {
+        throw new Error('config.opcua.server or config.opcua.endpoint is required');
+    }
+    return {
+        endpoint,
+        security: { enabled: false },
+    };
+}
+
 const WARN_SUMMARY_EVERY = 60;
 const WARN_SUMMARY_INTERVAL_MS = 5 * 60 * 1000;
 const NUMERIC_DATA_TYPES = new Set([
@@ -35,7 +62,9 @@ class Collector {
         this.nodes = config.opcua.nodes;
         this.nodeIds = this.nodes.map(n => n.nodeId);
         this.interval = config.opcua.interval;
-        this.opcua = opcuaClient || new OpcuaClient(config.opcua.endpoint, config.opcua.readRetryInterval);
+        this._opcuaConfig = _resolveOpcuaConfig(config);
+        this._opcuaEndpoint = this._opcuaConfig.endpoint;
+        this.opcua = opcuaClient || new OpcuaClient(this._opcuaConfig, config.opcua.readRetryInterval);
         this._dbConf = dbConf;
         this._table = table;
         this._configuredValueColumn = configuredValueColumn;
@@ -63,6 +92,8 @@ class Collector {
         this._warnSummaryEvery = WARN_SUMMARY_EVERY;
         this._warnSummaryIntervalMs = WARN_SUMMARY_INTERVAL_MS;
         this._now = () => Date.now();
+        this._schedulerActive = false;
+        this._nextRunAt = null;
     }
 
     _storageMode() {
@@ -608,8 +639,10 @@ class Collector {
     }
 
     close() {
+        this._schedulerActive = false;
+        this._nextRunAt = null;
         if (this.timer !== null) {
-            clearInterval(this.timer);
+            clearTimeout(this.timer);
             this.timer = null;
         }
         try {
@@ -782,8 +815,45 @@ class Collector {
         }
     }
 
+    _scheduleNextRun() {
+        if (!this._schedulerActive) {
+            return;
+        }
+        const now = this._now();
+        if (this._nextRunAt === null) {
+            this._nextRunAt = now + this.interval;
+        }
+
+        let skipped = 0;
+        while (this._nextRunAt <= now) {
+            this._nextRunAt += this.interval;
+            skipped++;
+        }
+        if (skipped > 0) {
+            this._logger.trace("skipped overdue cycles", { skipped, interval: this.interval });
+        }
+
+        const delay = Math.max(0, this._nextRunAt - this._now());
+        this.timer = setTimeout(() => {
+            this.timer = null;
+            if (!this._schedulerActive) {
+                return;
+            }
+            try {
+                this.collect();
+            } catch (e) {
+                this._logger.error("interval error", { error: e.message });
+            }
+            if (!this._schedulerActive) {
+                return;
+            }
+            this._nextRunAt += this.interval;
+            this._scheduleNextRun();
+        }, delay);
+    }
+
     start() {
-        if (this.timer !== null) {
+        if (this._schedulerActive) {
             return;
         }
         this._logger.info("starting", {
@@ -802,13 +872,9 @@ class Collector {
         if (this._isDbOpen()) {
             this._loadInitialValuesFromDb();
         }
-        this.timer = setInterval(() => {
-            try {
-                this.collect();
-            } catch (e) {
-                this._logger.error("interval error", { error: e.message });
-            }
-        }, this.interval);
+        this._schedulerActive = true;
+        this._nextRunAt = this._now() + this.interval;
+        this._scheduleNextRun();
     }
 }
 

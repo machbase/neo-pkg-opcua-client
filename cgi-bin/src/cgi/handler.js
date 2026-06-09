@@ -313,6 +313,472 @@ function userFacingError(message) {
   return err;
 }
 
+function normalizeOpcuaServerName(name) {
+  const value = String(name || '').trim();
+  if (!value) {
+    throw userFacingError('name is required');
+  }
+  if (value.indexOf('/') >= 0 || value.indexOf('\\') >= 0 || value.indexOf('..') >= 0) {
+    throw userFacingError('invalid opcua server name');
+  }
+  return value;
+}
+
+const OPCUA_SECURITY_POLICIES = {
+  None: true,
+  Basic128Rsa15: true,
+  Basic256: true,
+  Basic256Sha256: true,
+  Aes128_Sha256_RsaOaep: true,
+  Aes256_Sha256_RsaPss: true,
+};
+
+const OPCUA_MESSAGE_SECURITY_MODES = {
+  None: true,
+  Sign: true,
+  SignAndEncrypt: true,
+};
+
+const OPCUA_AUTH_MODES = {
+  Anonymous: true,
+  UserName: true,
+  Certificate: true,
+};
+const OPCUA_DEFAULT_READ_BATCH_SIZE = 32;
+const OPCUA_MAX_NODES_PER_READ_NODE_ID = 'ns=0;i=11705';
+const OPCUA_CAPABILITY_SOURCES = {
+  server: true,
+  default: true,
+};
+
+function hasOwn(obj, key) {
+  return Object.prototype.hasOwnProperty.call(obj || {}, key);
+}
+
+function normalizeText(value) {
+  return value === undefined || value === null ? '' : String(value).trim();
+}
+
+function normalizeChoice(value, choices, label) {
+  const text = normalizeText(value);
+  if (!text || !choices[text]) {
+    throw userFacingError(`${label} is invalid`);
+  }
+  return text;
+}
+
+function normalizePositiveInteger(value, label) {
+  const num = Number(value);
+  if (!Number.isFinite(num) || Math.floor(num) !== num || num < 1) {
+    throw userFacingError(`${label} must be a positive integer`);
+  }
+  return num;
+}
+
+function defaultOpcuaCapabilities(checkedAt) {
+  return {
+    maxNodesPerRead: null,
+    maxNodesPerReadSource: 'default',
+    checkedAt: checkedAt || new Date().toISOString(),
+  };
+}
+
+function normalizeOpcuaCapabilities(value, previous) {
+  const input = value && typeof value === 'object' ? value : null;
+  if (!input) {
+    if (previous && typeof previous === 'object') {
+      return {
+        maxNodesPerRead: previous.maxNodesPerRead === undefined || previous.maxNodesPerRead === null
+          ? null
+          : normalizePositiveInteger(previous.maxNodesPerRead, 'capabilities.maxNodesPerRead'),
+        maxNodesPerReadSource: OPCUA_CAPABILITY_SOURCES[previous.maxNodesPerReadSource] ? previous.maxNodesPerReadSource : 'default',
+        checkedAt: normalizeText(previous.checkedAt) || new Date().toISOString(),
+      };
+    }
+    return defaultOpcuaCapabilities();
+  }
+
+  const source = OPCUA_CAPABILITY_SOURCES[input.maxNodesPerReadSource]
+    ? input.maxNodesPerReadSource
+    : (input.maxNodesPerRead === undefined || input.maxNodesPerRead === null ? 'default' : 'server');
+  const capabilities = {
+    maxNodesPerRead: null,
+    maxNodesPerReadSource: source,
+    checkedAt: normalizeText(input.checkedAt) || new Date().toISOString(),
+  };
+  if (input.maxNodesPerRead !== undefined && input.maxNodesPerRead !== null) {
+    capabilities.maxNodesPerRead = normalizePositiveInteger(input.maxNodesPerRead, 'capabilities.maxNodesPerRead');
+    capabilities.maxNodesPerReadSource = 'server';
+  } else {
+    capabilities.maxNodesPerReadSource = 'default';
+  }
+  return capabilities;
+}
+
+function normalizeOpcuaReadBatchSize(config, previous, capabilities, preservePrevious) {
+  const hasInput = config.readBatchSize !== undefined && config.readBatchSize !== null && config.readBatchSize !== '';
+  const hasPrevious = previous && previous.readBatchSize !== undefined && previous.readBatchSize !== null;
+  const defaultValue = capabilities.maxNodesPerRead || OPCUA_DEFAULT_READ_BATCH_SIZE;
+  const value = hasInput
+    ? config.readBatchSize
+    : (preservePrevious && hasPrevious ? previous.readBatchSize : defaultValue);
+  const readBatchSize = normalizePositiveInteger(value, 'readBatchSize');
+  const limit = capabilities.maxNodesPerRead || OPCUA_DEFAULT_READ_BATCH_SIZE;
+  if (readBatchSize > limit) {
+    const suffix = capabilities.maxNodesPerRead ? ' (capabilities.maxNodesPerRead)' : '';
+    throw userFacingError(`readBatchSize must be <= ${limit}${suffix}`);
+  }
+  return readBatchSize;
+}
+
+function detectOpcuaCapabilities(client) {
+  const checkedAt = new Date().toISOString();
+  const capabilities = defaultOpcuaCapabilities(checkedAt);
+  try {
+    const results = client.read([OPCUA_MAX_NODES_PER_READ_NODE_ID]) || [];
+    const value = results[0] && results[0].value;
+    const maxNodesPerRead = Number(value);
+    if (Number.isFinite(maxNodesPerRead) && Math.floor(maxNodesPerRead) === maxNodesPerRead && maxNodesPerRead > 0) {
+      capabilities.maxNodesPerRead = maxNodesPerRead;
+      capabilities.maxNodesPerReadSource = 'server';
+      return {
+        capabilities,
+        readBatchSize: maxNodesPerRead,
+      };
+    }
+  } catch (err) {
+    capabilities.error = errorMessage(err);
+  }
+  return {
+    capabilities,
+    readBatchSize: OPCUA_DEFAULT_READ_BATCH_SIZE,
+  };
+}
+
+function validatePemText(value, label, marker) {
+  const text = value === undefined || value === null ? '' : String(value);
+  if (!text.trim()) {
+    throw userFacingError(`${label} is required`);
+  }
+  if (text.indexOf(marker) < 0) {
+    throw userFacingError(`${label} must be PEM format`);
+  }
+  return text;
+}
+
+function normalizeOpcuaServerSecurity(security, options = {}) {
+  const input = security && typeof security === 'object' ? { ...security } : {};
+  const previous = options.previous && typeof options.previous === 'object' ? options.previous : {};
+  const serverName = options.serverName || '';
+  const forStorage = options.forStorage === true;
+
+  const normalized = {};
+  normalized.enabled = input.enabled === true;
+  if (!normalized.enabled) {
+    if (forStorage && serverName && (previous.certificateFile || previous.keyFile)) {
+      normalized.__removeCertificate = true;
+    }
+    return normalized;
+  }
+
+  const securityPolicy = hasOwn(input, 'securityPolicy')
+    ? input.securityPolicy
+    : (previous.securityPolicy || 'None');
+  const messageSecurityMode = hasOwn(input, 'messageSecurityMode')
+    ? input.messageSecurityMode
+    : (hasOwn(input, 'securityMode') ? input.securityMode : (previous.messageSecurityMode || 'None'));
+  const authMode = hasOwn(input, 'authMode')
+    ? input.authMode
+    : (previous.authMode || 'Anonymous');
+
+  normalized.securityPolicy = normalizeChoice(securityPolicy, OPCUA_SECURITY_POLICIES, 'security.securityPolicy');
+  normalized.messageSecurityMode = normalizeChoice(messageSecurityMode, OPCUA_MESSAGE_SECURITY_MODES, 'security.messageSecurityMode');
+  normalized.authMode = normalizeChoice(authMode, OPCUA_AUTH_MODES, 'security.authMode');
+
+  if (normalized.messageSecurityMode === 'None' && normalized.securityPolicy !== 'None') {
+    throw userFacingError('security.securityPolicy must be None when messageSecurityMode is None');
+  }
+  if (normalized.messageSecurityMode !== 'None' && normalized.securityPolicy === 'None') {
+    throw userFacingError('security.securityPolicy is required when messageSecurityMode is not None');
+  }
+
+  const username = hasOwn(input, 'username') ? normalizeText(input.username) : normalizeText(previous.username);
+  if (username) {
+    normalized.username = username;
+  }
+
+  if (input.clearPassword === true) {
+    delete normalized.password;
+  } else if (hasOwn(input, 'password')) {
+    const password = input.password === undefined || input.password === null ? '' : String(input.password);
+    if (password) normalized.password = password;
+  } else if (previous.password) {
+    normalized.password = previous.password;
+  }
+
+  const hasCertificatePem = hasOwn(input, 'certificatePem') && normalizeText(input.certificatePem) !== '';
+  const hasKeyPem = hasOwn(input, 'keyPem') && normalizeText(input.keyPem) !== '';
+  if (hasCertificatePem !== hasKeyPem) {
+    throw userFacingError('security.certificatePem and security.keyPem must be provided together');
+  }
+
+  if (normalized.authMode === 'UserName') {
+    if (!normalized.username) {
+      throw userFacingError('security.username is required when authMode is UserName');
+    }
+    if (!normalized.password) {
+      throw userFacingError('security.password is required when authMode is UserName');
+    }
+  }
+
+  const certificateRequired = normalized.authMode === 'Certificate' || normalized.messageSecurityMode !== 'None';
+  const existingCertificateFiles = normalizeText(input.certificateFile)
+    || (!input.clearCertificate && normalizeText(previous.certificateFile));
+  const existingKeyFiles = normalizeText(input.keyFile)
+    || (!input.clearCertificate && normalizeText(previous.keyFile));
+  const willHaveCertificate = (hasCertificatePem && hasKeyPem) || (existingCertificateFiles && existingKeyFiles);
+  if (certificateRequired && !willHaveCertificate) {
+    throw userFacingError('security.certificatePem and security.keyPem are required for certificate authentication or secure mode');
+  }
+
+  if (input.clearCertificate === true) {
+    if (forStorage && serverName) {
+      normalized.__removeCertificate = true;
+    }
+  } else if (hasCertificatePem && hasKeyPem) {
+    if (!forStorage || !serverName) {
+      throw userFacingError('opcua server name is required to store certificate files');
+    }
+    const certificatePem = validatePemText(input.certificatePem, 'security.certificatePem', 'BEGIN CERTIFICATE');
+    const keyPem = validatePemText(input.keyPem, 'security.keyPem', 'PRIVATE KEY');
+    const paths = CGI.writeOpcuaServerCredentialFiles(serverName, certificatePem, keyPem);
+    normalized.certificateFile = paths.certificateFile;
+    normalized.keyFile = paths.keyFile;
+  } else {
+    const certificateFile = normalizeText(input.certificateFile) || normalizeText(previous.certificateFile);
+    const keyFile = normalizeText(input.keyFile) || normalizeText(previous.keyFile);
+    if (certificateFile && keyFile) {
+      normalized.certificateFile = certificateFile;
+      normalized.keyFile = keyFile;
+    }
+  }
+
+  return normalized;
+}
+
+function safeOpcuaServerConfig(config, serverName) {
+  const safe = { ...(config || {}) };
+  const security = safe.security && typeof safe.security === 'object'
+    ? { ...safe.security }
+    : {};
+  const credentialInfo = serverName ? CGI.getOpcuaServerCredentialFileInfo(serverName) : {};
+  if (security.password !== undefined && security.password !== null && security.password !== '') {
+    security.hasPassword = true;
+  }
+  delete security.password;
+  if (security.certificateFile) {
+    security.hasCertificateFile = true;
+    if (credentialInfo.certificate && credentialInfo.certificate.updatedAt) {
+      security.certificateUpdatedAt = credentialInfo.certificate.updatedAt;
+    }
+  }
+  if (security.keyFile) {
+    security.hasKeyFile = true;
+    if (credentialInfo.key && credentialInfo.key.updatedAt) {
+      security.keyUpdatedAt = credentialInfo.key.updatedAt;
+    }
+  }
+  delete security.certificateFile;
+  delete security.keyFile;
+  delete security.certificatePem;
+  delete security.keyPem;
+  delete security.clearPassword;
+  delete security.clearCertificate;
+  delete security.__removeCertificate;
+  safe.security = security;
+  return safe;
+}
+
+function consumeOpcuaCredentialCleanupFlag(config) {
+  const security = config && config.security && typeof config.security === 'object'
+    ? config.security
+    : null;
+  const removeCredential = security && security.__removeCertificate === true;
+  if (security) {
+    delete security.__removeCertificate;
+  }
+  return removeCredential;
+}
+
+function autoOpcuaServerNameBase(collectorName) {
+  const base = String(collectorName || '')
+    .trim()
+    .replace(/[^A-Za-z0-9_-]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  return base || 'collector';
+}
+
+function nextAutoOpcuaServerName(collectorName) {
+  const base = `${autoOpcuaServerNameBase(collectorName)}-opcua`;
+  if (!CGI.getOpcuaServerConfig(base)) {
+    return base;
+  }
+  let idx = 2;
+  while (CGI.getOpcuaServerConfig(`${base}-${idx}`)) {
+    idx += 1;
+  }
+  return `${base}-${idx}`;
+}
+
+function normalizeOpcuaServerConfig(config, options = {}) {
+  if (!config || typeof config !== 'object') {
+    throw userFacingError('config is required');
+  }
+  const endpoint = String(config.endpoint || '').trim();
+  if (!endpoint) {
+    throw userFacingError('config.endpoint is required');
+  }
+  const previous = options.previousConfig && typeof options.previousConfig === 'object'
+    ? options.previousConfig
+    : null;
+  const hasCapabilitiesInput = config.capabilities !== undefined && config.capabilities !== null;
+  const preservePrevious = previous
+    && previous.endpoint === endpoint
+    && !hasCapabilitiesInput;
+  const capabilities = normalizeOpcuaCapabilities(
+    hasCapabilitiesInput ? config.capabilities : null,
+    preservePrevious ? previous.capabilities : null
+  );
+  const readBatchSize = normalizeOpcuaReadBatchSize(config, previous, capabilities, preservePrevious);
+  return {
+    ...config,
+    endpoint,
+    readBatchSize,
+    capabilities,
+    security: normalizeOpcuaServerSecurity(config.security, {
+      previous: options.previousConfig && options.previousConfig.security,
+      serverName: options.serverName,
+      forStorage: options.forStorage === true,
+    }),
+  };
+}
+
+function getOpcuaServerConfigOrThrow(name) {
+  const serverName = normalizeOpcuaServerName(name);
+  const config = CGI.getOpcuaServerConfig(serverName);
+  if (!config) {
+    throw userFacingError(`opcua server '${serverName}' not found`);
+  }
+  return {
+    name: serverName,
+    config: normalizeOpcuaServerConfig(config),
+  };
+}
+
+function resolveOpcuaEndpoint(request) {
+  const source = request && typeof request === 'object' ? request : { endpoint: request };
+  const serverName = source.server !== undefined && source.server !== null
+    ? String(source.server).trim()
+    : '';
+  if (serverName) {
+    const resolved = getOpcuaServerConfigOrThrow(serverName);
+    return {
+      server: resolved.name,
+      endpoint: resolved.config.endpoint,
+      config: resolved.config,
+    };
+  }
+  const endpoint = String(source.endpoint || '').trim();
+  if (!endpoint) {
+    throw userFacingError('endpoint or server is required');
+  }
+  return {
+    server: '',
+    endpoint,
+    config: {
+      endpoint,
+      security: { enabled: false },
+    },
+  };
+}
+
+function prepareCollectorOpcuaServerConfig(collectorName, config) {
+  const opcua = config && config.opcua;
+  if (!opcua) {
+    throw userFacingError('config.opcua is required');
+  }
+
+  const serverName = opcua.server !== undefined && opcua.server !== null
+    ? String(opcua.server).trim()
+    : '';
+  if (serverName) {
+    const resolved = getOpcuaServerConfigOrThrow(serverName);
+    opcua.server = resolved.name;
+    delete opcua.endpoint;
+    return null;
+  }
+
+  const endpoint = String(opcua.endpoint || '').trim();
+  if (!endpoint) {
+    throw userFacingError('config.opcua.server or config.opcua.endpoint is required');
+  }
+
+  const autoName = nextAutoOpcuaServerName(collectorName);
+  CGI.writeOpcuaServerConfig(autoName, {
+    endpoint,
+    readBatchSize: OPCUA_DEFAULT_READ_BATCH_SIZE,
+    capabilities: defaultOpcuaCapabilities(),
+    security: { enabled: false },
+  });
+  opcua.server = autoName;
+  delete opcua.endpoint;
+  return autoName;
+}
+
+function rollbackAutoCreatedOpcuaServer(name) {
+  if (!name) return;
+  try { CGI.removeOpcuaServerConfig(name); } catch (_) {}
+}
+
+function opcuaClientConfig(resolved, readRetryInterval) {
+  const config = resolved && resolved.config && typeof resolved.config === 'object'
+    ? { ...resolved.config }
+    : { endpoint: resolved && resolved.endpoint };
+  config.endpoint = resolved.endpoint;
+  if (readRetryInterval !== undefined && readRetryInterval !== null && readRetryInterval !== '') {
+    config.readRetryInterval = readRetryInterval;
+  }
+  return config;
+}
+
+function temporaryOpcuaConnectSecurityName() {
+  return `opcua-connect-test-${Date.now()}-${Math.floor(Math.random() * 1000000)}`;
+}
+
+function cleanupTemporaryOpcuaConnectSecurity(name) {
+  if (!name) return;
+  try {
+    CGI.removeOpcuaServerCredentialFiles(name);
+  } catch (_) {}
+}
+
+function applyDirectOpcuaConnectSecurity(resolved, request) {
+  if (!resolved || resolved.server) return null;
+  if (!request || typeof request !== 'object' || !hasOwn(request, 'security')) return null;
+
+  const tempName = temporaryOpcuaConnectSecurityName();
+  try {
+    resolved.config.security = normalizeOpcuaServerSecurity(request.security, {
+      serverName: tempName,
+      forStorage: true,
+    });
+    return tempName;
+  } catch (err) {
+    cleanupTemporaryOpcuaConnectSecurity(tempName);
+    throw err;
+  }
+}
+
 function prepareAutoCreateTableRequest(config) {
   const tableName = normalizeIdentifier(config.dbTable, 'config.dbTable');
   if (!config.db) {
@@ -390,6 +856,11 @@ function validateConfig(config) {
     return `config.opcua.interval must be >= ${MIN_INTERVAL_MS} (ms)`;
   }
   config.opcua.interval = interval;
+  const hasServer = config.opcua.server !== undefined && config.opcua.server !== null && String(config.opcua.server).trim() !== '';
+  const hasEndpoint = config.opcua.endpoint !== undefined && config.opcua.endpoint !== null && String(config.opcua.endpoint).trim() !== '';
+  if (!hasServer && !hasEndpoint) {
+    return 'config.opcua.server or config.opcua.endpoint is required';
+  }
   return null;
 }
 
@@ -417,12 +888,24 @@ function collectorPost(name, config, reply) {
     delete config.autoCreateTable;
   }
 
+  let autoCreatedOpcuaServer = null;
+  try {
+    autoCreatedOpcuaServer = prepareCollectorOpcuaServerConfig(name, config);
+  } catch (err) {
+    reply({
+      ok: false,
+      reason: errorMessage(err),
+    });
+    return;
+  }
+
   let autoCreated = null;
   if (autoCreateTable) {
     try {
       autoCreated = createAutoCollectorTable(config);
       applyAutoCreateConfig(config, autoCreated.tableName);
     } catch (err) {
+      rollbackAutoCreatedOpcuaServer(autoCreatedOpcuaServer);
       reply({
         ok: false,
         reason: errorMessage(err),
@@ -437,6 +920,7 @@ function collectorPost(name, config, reply) {
     if (autoCreated) {
       try { dropAutoCreatedTable(autoCreated.db, autoCreated.tableName); } catch (_) {}
     }
+    rollbackAutoCreatedOpcuaServer(autoCreatedOpcuaServer);
     reply({
       ok: false,
       reason: errorMessage(err),
@@ -449,6 +933,7 @@ function collectorPost(name, config, reply) {
       if (autoCreated) {
         try { dropAutoCreatedTable(autoCreated.db, autoCreated.tableName); } catch (_) {}
       }
+      rollbackAutoCreatedOpcuaServer(autoCreatedOpcuaServer);
       reply({
         ok: false,
         reason: errorMessage(err),
@@ -501,15 +986,42 @@ function collectorPut(name, body, reply) {
     return;
   }
   const nextConfig = body;
+  const validErr = validateConfig(nextConfig);
+  if (validErr) {
+    reply({ ok: false, reason: validErr });
+    return;
+  }
+
+  let autoCreatedOpcuaServer = null;
+  try {
+    autoCreatedOpcuaServer = prepareCollectorOpcuaServerConfig(name, nextConfig);
+  } catch (err) {
+    reply({
+      ok: false,
+      reason: errorMessage(err),
+    });
+    return;
+  }
+
   Service.status(name, (statusErr, serviceInfo) => {
     if (statusErr && !Service.isMissingServiceError(statusErr)) {
+      rollbackAutoCreatedOpcuaServer(autoCreatedOpcuaServer);
       reply({
         ok: false,
         reason: errorMessage(statusErr),
       });
       return;
     }
-    CGI.writeConfig(name, nextConfig);
+    try {
+      CGI.writeConfig(name, nextConfig);
+    } catch (err) {
+      rollbackAutoCreatedOpcuaServer(autoCreatedOpcuaServer);
+      reply({
+        ok: false,
+        reason: errorMessage(err),
+      });
+      return;
+    }
     const isRunning = !statusErr && serviceInfo
       && String(serviceInfo.status).toUpperCase() === 'RUNNING';
     if (!isRunning) {
@@ -971,6 +1483,182 @@ function serverList(reply) {
   });
 }
 
+// ── OPC UA Server config CRUD ─────────────────────────────────────────────────
+
+/**
+ * POST /cgi-bin/api/opcua/server
+ * @param {string} name
+ * @param {object} config
+ * @param {function} reply
+ */
+function opcuaServerPost(name, config, reply) {
+  let serverName;
+  let normalized;
+  try {
+    serverName = normalizeOpcuaServerName(name);
+  } catch (err) {
+    reply({ ok: false, reason: errorMessage(err) });
+    return;
+  }
+  if (CGI.getOpcuaServerConfig(serverName)) {
+    reply({
+      ok: false,
+      reason: `opcua server '${serverName}' already exists`,
+    });
+    return;
+  }
+  try {
+    normalized = normalizeOpcuaServerConfig(config, {
+      serverName,
+      forStorage: true,
+    });
+  } catch (err) {
+    reply({ ok: false, reason: errorMessage(err) });
+    return;
+  }
+  try {
+    const removeCredential = consumeOpcuaCredentialCleanupFlag(normalized);
+    CGI.writeOpcuaServerConfig(serverName, normalized);
+    if (removeCredential) {
+      const credentialErr = CGI.removeOpcuaServerCredentialFiles(serverName);
+      if (credentialErr) {
+        reply({ ok: false, reason: errorMessage(credentialErr) });
+        return;
+      }
+    }
+    reply({
+      ok: true,
+      data: { name: serverName },
+    });
+  } catch (err) {
+    reply({ ok: false, reason: errorMessage(err) });
+  }
+}
+
+/**
+ * GET /cgi-bin/api/opcua/server?name=xxx
+ * @param {string} name
+ * @param {function} reply
+ */
+function opcuaServerGet(name, reply) {
+  let resolved;
+  try {
+    resolved = getOpcuaServerConfigOrThrow(name);
+  } catch (err) {
+    reply({ ok: false, reason: errorMessage(err) });
+    return;
+  }
+  reply({
+    ok: true,
+    data: { name: resolved.name, config: safeOpcuaServerConfig(resolved.config, resolved.name) },
+  });
+}
+
+/**
+ * PUT /cgi-bin/api/opcua/server?name=xxx
+ * @param {string} name
+ * @param {object} body
+ * @param {function} reply
+ */
+function opcuaServerPut(name, body, reply) {
+  let serverName;
+  let normalized;
+  let existing;
+  try {
+    serverName = normalizeOpcuaServerName(name);
+    existing = CGI.getOpcuaServerConfig(serverName);
+    normalized = normalizeOpcuaServerConfig(body, {
+      serverName,
+      previousConfig: existing,
+      forStorage: true,
+    });
+  } catch (err) {
+    reply({ ok: false, reason: errorMessage(err) });
+    return;
+  }
+  if (!existing) {
+    reply({
+      ok: false,
+      reason: `opcua server '${serverName}' not found`,
+    });
+    return;
+  }
+  try {
+    const removeCredential = consumeOpcuaCredentialCleanupFlag(normalized);
+    CGI.writeOpcuaServerConfig(serverName, normalized);
+    if (removeCredential) {
+      const credentialErr = CGI.removeOpcuaServerCredentialFiles(serverName);
+      if (credentialErr) {
+        reply({ ok: false, reason: errorMessage(credentialErr) });
+        return;
+      }
+    }
+    reply({
+      ok: true,
+      data: { name: serverName },
+    });
+  } catch (err) {
+    reply({ ok: false, reason: errorMessage(err) });
+  }
+}
+
+/**
+ * DELETE /cgi-bin/api/opcua/server?name=xxx
+ * @param {string} name
+ * @param {function} reply
+ */
+function opcuaServerDelete(name, reply) {
+  let serverName;
+  try {
+    serverName = normalizeOpcuaServerName(name);
+  } catch (err) {
+    reply({ ok: false, reason: errorMessage(err) });
+    return;
+  }
+  if (!CGI.getOpcuaServerConfig(serverName)) {
+    reply({
+      ok: false,
+      reason: `opcua server '${serverName}' not found`,
+    });
+    return;
+  }
+  const err = CGI.removeOpcuaServerConfig(serverName);
+  if (err) {
+    reply({
+      ok: false,
+      reason: errorMessage(err),
+    });
+    return;
+  }
+  const credentialErr = CGI.removeOpcuaServerCredentialFiles(serverName);
+  if (credentialErr) {
+    reply({
+      ok: false,
+      reason: errorMessage(credentialErr),
+    });
+    return;
+  }
+  reply({ ok: true });
+}
+
+/**
+ * GET /cgi-bin/api/opcua/server/list
+ * @param {function} reply
+ */
+function opcuaServerList(reply) {
+  const data = CGI.getOpcuaServerConfigList().sort().map((name) => {
+    const config = CGI.getOpcuaServerConfig(name);
+    return {
+      name,
+      config: safeOpcuaServerConfig(normalizeOpcuaServerConfig(config), name),
+    };
+  });
+  reply({
+    ok: true,
+    data,
+  });
+}
+
 // ── DB endpoints ────────────────────────────────────────────────────────────
 
 /**
@@ -1148,13 +1836,25 @@ function dbTableColumns(db, table, reply) {
 
 /**
  * POST /cgi-bin/api/opcua/connect
- * @param {string} endpoint
+ * @param {string|{endpoint?: string, server?: string}} endpoint
  * @param {number} [readRetryInterval]
  * @param {function} reply
  */
-function opcuaConnect(endpoint, readRetryInterval, reply) {
-  const client = new OpcuaClient(endpoint, readRetryInterval);
+function opcuaConnect(endpointOrRequest, readRetryInterval, reply) {
+  let resolved;
+  let temporarySecurityName = null;
+  try {
+    resolved = resolveOpcuaEndpoint(endpointOrRequest);
+    temporarySecurityName = applyDirectOpcuaConnectSecurity(resolved, endpointOrRequest);
+  } catch (err) {
+    cleanupTemporaryOpcuaConnectSecurity(temporarySecurityName);
+    reply({ ok: false, reason: errorMessage(err) });
+    return;
+  }
+  const endpoint = resolved.endpoint;
+  const client = new OpcuaClient(opcuaClientConfig(resolved, readRetryInterval));
   if (!client.open()) {
+    cleanupTemporaryOpcuaConnectSecurity(temporarySecurityName);
     reply({
       ok: false,
       reason: 'connect failed: ' + endpoint,
@@ -1162,26 +1862,39 @@ function opcuaConnect(endpoint, readRetryInterval, reply) {
     return;
   }
   try {
+    const capabilityInfo = detectOpcuaCapabilities(client);
     reply({
       ok: true,
       data: {
+        server: resolved.server || undefined,
         endpoint,
         connected: true,
+        readBatchSize: capabilityInfo.readBatchSize,
+        capabilities: capabilityInfo.capabilities,
       },
     });
   } finally {
     client.close();
+    cleanupTemporaryOpcuaConnectSecurity(temporarySecurityName);
   }
 }
 
 /**
  * GET /cgi-bin/api/opcua/read?endpoint=xxx&nodes=id1,id2
- * @param {string} endpoint
+ * @param {string|{endpoint?: string, server?: string}} endpoint
  * @param {string[]} nodeIds
  * @param {function} reply
  */
-function opcuaRead(endpoint, nodeIds, reply) {
-  const client = new OpcuaClient(endpoint);
+function opcuaRead(endpointOrRequest, nodeIds, reply) {
+  let resolved;
+  try {
+    resolved = resolveOpcuaEndpoint(endpointOrRequest);
+  } catch (err) {
+    reply({ ok: false, reason: errorMessage(err) });
+    return;
+  }
+  const endpoint = resolved.endpoint;
+  const client = new OpcuaClient(opcuaClientConfig(resolved));
   if (!client.open()) {
     reply({
       ok: false,
@@ -1212,12 +1925,20 @@ function opcuaRead(endpoint, nodeIds, reply) {
 
 /**
  * POST /cgi-bin/api/opcua/write
- * @param {string} endpoint
+ * @param {string|{endpoint?: string, server?: string}} endpoint
  * @param {Array<{ node: string, value: any }>} writes
  * @param {function} reply
  */
-function opcuaWrite(endpoint, writes, reply) {
-  const client = new OpcuaClient(endpoint);
+function opcuaWrite(endpointOrRequest, writes, reply) {
+  let resolved;
+  try {
+    resolved = resolveOpcuaEndpoint(endpointOrRequest);
+  } catch (err) {
+    reply({ ok: false, reason: errorMessage(err) });
+    return;
+  }
+  const endpoint = resolved.endpoint;
+  const client = new OpcuaClient(opcuaClientConfig(resolved));
   if (!client.open()) {
     reply({
       ok: false,
@@ -1295,11 +2016,18 @@ function _browseDescendants(client, rootNode, nodeClassMask) {
 }
 
 function nodeDescendants(body, reply) {
-  const client = new OpcuaClient(body.endpoint);
+  let resolved;
+  try {
+    resolved = resolveOpcuaEndpoint(body);
+  } catch (err) {
+    reply({ ok: false, reason: errorMessage(err) });
+    return;
+  }
+  const client = new OpcuaClient(opcuaClientConfig(resolved));
   if (!client.open()) {
     reply({
       ok: false,
-      reason: 'connect failed: ' + body.endpoint,
+      reason: 'connect failed: ' + resolved.endpoint,
     });
     return;
   }
@@ -1345,6 +2073,11 @@ module.exports = {
   serverPut,
   serverDelete,
   serverList,
+  opcuaServerPost,
+  opcuaServerGet,
+  opcuaServerPut,
+  opcuaServerDelete,
+  opcuaServerList,
   dbConnect,
   dbTableCreate,
   dbTableList,

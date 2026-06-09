@@ -1,14 +1,91 @@
 const opcua = require("opcua");
+const path = require("path");
+const process = require("process");
+
+const DEFAULT_READ_BATCH_SIZE = 32;
+
+function _asText(value) {
+    return value === undefined || value === null ? "" : String(value).trim();
+}
+
+function _enumValue(group, key, label) {
+    if (!group || group[key] === undefined) {
+        throw new Error(`${label} is invalid: ${key}`);
+    }
+    return group[key];
+}
+
+function _nativeFilePathSpec(filePath) {
+    const text = _asText(filePath);
+    if (!text || text[0] === "@") {
+        return text;
+    }
+    if (text === "/work" || text.indexOf("/work/") === 0) {
+        const exePath = process.argv && process.argv[0] ? String(process.argv[0]) : "";
+        if (path.isAbsolute(exePath)) {
+            const workDir = path.dirname(exePath);
+            const rel = text === "/work" ? "" : text.slice("/work/".length);
+            return "@" + path.join(workDir, rel);
+        }
+    }
+    return text;
+}
+
+function _positiveInteger(value, fallback) {
+    const num = Number(value);
+    if (!Number.isFinite(num) || Math.floor(num) !== num || num < 1) {
+        return fallback;
+    }
+    return num;
+}
 
 class OpcuaClient {
     /**
-     * @param {string} endpoint - OPC UA 서버 주소 (예: opc.tcp://localhost:4840)
+     * @param {string|object} endpointOrConfig - OPC UA 서버 주소 또는 server profile config.
      * @param {number} readRetryInterval - 읽기 재시도 간격 (ms). 기본값 100
      */
-    constructor(endpoint, readRetryInterval) {
-        this.endpoint = endpoint;
-        this.readRetryInterval = readRetryInterval || 100;
+    constructor(endpointOrConfig, readRetryInterval) {
+        const config = endpointOrConfig && typeof endpointOrConfig === "object"
+            ? endpointOrConfig
+            : { endpoint: endpointOrConfig };
+        this.endpoint = _asText(config.endpoint);
+        this.security = config.security && typeof config.security === "object" ? { ...config.security } : { enabled: false };
+        this.readRetryInterval = readRetryInterval || config.readRetryInterval || 100;
+        this.readBatchSize = _positiveInteger(config.readBatchSize, DEFAULT_READ_BATCH_SIZE);
         this.client = null;
+    }
+
+    _clientOptions() {
+        const options = {
+            endpoint: this.endpoint,
+            readRetryInterval: this.readRetryInterval,
+        };
+        const security = this.security || {};
+        if (security.enabled !== true) {
+            return options;
+        }
+
+        const securityPolicy = _asText(security.securityPolicy) || "None";
+        const messageSecurityMode = _asText(security.messageSecurityMode) || "None";
+        const authMode = _asText(security.authMode) || "Anonymous";
+
+        options.securityPolicy = securityPolicy;
+        options.messageSecurityMode = _enumValue(opcua.MessageSecurityMode, messageSecurityMode, "messageSecurityMode");
+        options.authMode = _enumValue(opcua.AuthMode, authMode, "authMode");
+
+        if (security.username !== undefined && security.username !== null) {
+            options.username = String(security.username);
+        }
+        if (security.password !== undefined && security.password !== null) {
+            options.password = String(security.password);
+        }
+        if (security.certificateFile) {
+            options.certificateFile = _nativeFilePathSpec(security.certificateFile);
+        }
+        if (security.keyFile) {
+            options.keyFile = _nativeFilePathSpec(security.keyFile);
+        }
+        return options;
     }
 
     open() {
@@ -16,10 +93,7 @@ class OpcuaClient {
             return true;
         }
         try {
-            this.client = new opcua.Client({
-                endpoint: this.endpoint,
-                readRetryInterval: this.readRetryInterval,
-            });
+            this.client = new opcua.Client(this._clientOptions());
             return true;
         } catch (e) {
             this.client = null;
@@ -32,7 +106,7 @@ class OpcuaClient {
      * @returns {ReadResult[]}
      * @throws {Error} 미연결 또는 읽기 실패 시
      */
-    read(nodeIds) {
+    _readNodes(nodeIds) {
         if (this.client === null) {
             throw new Error("not connected");
         }
@@ -40,6 +114,21 @@ class OpcuaClient {
             nodes: nodeIds,
             timestampsToReturn: opcua.TimestampsToReturn.Both,
         });
+    }
+
+    read(nodeIds) {
+        if (!Array.isArray(nodeIds) || nodeIds.length <= this.readBatchSize) {
+            return this._readNodes(nodeIds);
+        }
+        const results = [];
+        for (let i = 0; i < nodeIds.length; i += this.readBatchSize) {
+            const batch = nodeIds.slice(i, i + this.readBatchSize);
+            const batchResults = this._readNodes(batch);
+            for (const result of batchResults) {
+                results.push(result);
+            }
+        }
+        return results;
     }
 
     /**

@@ -53,9 +53,36 @@ function revealServerConfig(config) {
   return next;
 }
 
+function protectOpcuaServerConfig(config) {
+  const next = { ...(config || {}) };
+  const security = next.security && typeof next.security === 'object'
+    ? { ...next.security }
+    : null;
+  if (security && security.password !== undefined && security.password !== null && security.password !== '') {
+    security.password = obfuscateSecret(security.password);
+    next.security = security;
+  }
+  return next;
+}
+
+function revealOpcuaServerConfig(config) {
+  if (!config) return config;
+  const next = { ...config };
+  const security = next.security && typeof next.security === 'object'
+    ? { ...next.security }
+    : null;
+  if (security && security.password !== undefined && security.password !== null && security.password !== '') {
+    security.password = revealSecret(security.password);
+    next.security = security;
+  }
+  return next;
+}
+
 module.exports = {
   obfuscateSecret,
   revealSecret,
   protectServerConfig,
   revealServerConfig,
+  protectOpcuaServerConfig,
+  revealOpcuaServerConfig,
 };

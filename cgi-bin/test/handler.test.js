@@ -17,6 +17,9 @@ class MockCGI {
     constructor() {
         this._configs = {};
         this._servers = {};
+        this._opcuaServers = {};
+        this._opcuaCredentialWrites = {};
+        this._opcuaCredentialRemoves = [];
     }
     getConfigList() { return Object.keys(this._configs); }
     getConfig(name) { return this._configs[name] || null; }
@@ -29,6 +32,32 @@ class MockCGI {
     removeServerConfig(name) {
         if (!this._servers[name]) return null;
         delete this._servers[name];
+        return null;
+    }
+    getOpcuaServerConfigList() { return Object.keys(this._opcuaServers); }
+    getOpcuaServerConfig(name) { return this._opcuaServers[name] || null; }
+    writeOpcuaServerConfig(name, cfg) { this._opcuaServers[name] = cfg; }
+    removeOpcuaServerConfig(name) {
+        if (!this._opcuaServers[name]) return null;
+        delete this._opcuaServers[name];
+        return null;
+    }
+    writeOpcuaServerCredentialFiles(name, certificatePem, keyPem) {
+        this._opcuaCredentialWrites[name] = { certificatePem, keyPem };
+        return {
+            certificateFile: `/mock/opcua-certs/${name}/client_cert.pem`,
+            keyFile: `/mock/opcua-certs/${name}/client_key.pem`,
+        };
+    }
+    getOpcuaServerCredentialFileInfo(name) {
+        if (!this._opcuaCredentialWrites[name]) return {};
+        return {
+            certificate: { exists: true, updatedAt: '2026-06-05T06:00:00.000Z' },
+            key: { exists: true, updatedAt: '2026-06-05T06:00:01.000Z' },
+        };
+    }
+    removeOpcuaServerCredentialFiles(name) {
+        this._opcuaCredentialRemoves.push(name);
         return null;
     }
 }
@@ -150,6 +179,7 @@ class MockMachbaseClient {
 
 class MockOpcuaClient {
     constructor() {
+        this.options = null;
         this.endpoint = null;
         this.readRetryInterval = null;
         this.opened = false;
@@ -157,6 +187,7 @@ class MockOpcuaClient {
         this.openResult = true;
         this.readResult = null;
         this.readError = null;
+        this.readCalls = [];
         this.writeResult = null;
         this.writeError = null;
         this.browseResult = {};
@@ -165,8 +196,9 @@ class MockOpcuaClient {
     open() { this.opened = true; return this.openResult; }
     close() { this.closed = true; }
     read(_nodeIds) {
+        this.readCalls.push(_nodeIds);
         if (this.readError) throw new Error(this.readError);
-        return this.readResult;
+        return this.readResult || [];
     }
     write(..._args) {
         if (this.writeError) throw new Error(this.writeError);
@@ -221,9 +253,15 @@ function makeHandler() {
     };
     require.cache[opcuaPath] = {
         id: opcuaPath, filename: opcuaPath, loaded: true,
-        exports: function(endpoint, readRetryInterval) {
-            mockOpcuaClient.endpoint = endpoint;
-            mockOpcuaClient.readRetryInterval = readRetryInterval;
+        exports: function(endpointOrConfig, readRetryInterval) {
+            mockOpcuaClient.options = endpointOrConfig;
+            if (endpointOrConfig && typeof endpointOrConfig === 'object') {
+                mockOpcuaClient.endpoint = endpointOrConfig.endpoint;
+                mockOpcuaClient.readRetryInterval = endpointOrConfig.readRetryInterval || readRetryInterval;
+            } else {
+                mockOpcuaClient.endpoint = endpointOrConfig;
+                mockOpcuaClient.readRetryInterval = readRetryInterval;
+            }
             return mockOpcuaClient;
         },
     };
@@ -254,10 +292,13 @@ runner.run('Handler: collectorPost', {
     'creates config and installs service': (t) => {
         const H = makeHandler();
         let result;
-        H.collectorPost('col-a', { opcua: {}, db: {} }, (r) => { result = r; });
+        H.collectorPost('col-a', { opcua: { endpoint: 'opc.tcp://h:4840' }, db: {} }, (r) => { result = r; });
         t.assert(result.ok, 'should be ok');
         t.assertEqual(result.data.name, 'col-a');
         t.assertNotNull(mockCGI._configs['col-a'], 'config should be written');
+        t.assertEqual(mockCGI._configs['col-a'].opcua.server, 'col-a-opcua');
+        t.assertEqual(mockCGI._configs['col-a'].opcua.endpoint, undefined, 'legacy endpoint should be removed');
+        t.assertEqual(mockCGI._opcuaServers['col-a-opcua'].endpoint, 'opc.tcp://h:4840');
         t.assert(mockService._installed['col-a'], 'service should be installed');
     },
 
@@ -265,7 +306,7 @@ runner.run('Handler: collectorPost', {
         const H = makeHandler();
         mockCGI._configs['col-a'] = {};
         let result;
-        H.collectorPost('col-a', { opcua: {} }, (r) => { result = r; });
+        H.collectorPost('col-a', { opcua: { endpoint: 'opc.tcp://h:4840' } }, (r) => { result = r; });
         t.assert(!result.ok, 'should not be ok');
         t.assert(result.reason.includes('already exists'));
     },
@@ -274,9 +315,10 @@ runner.run('Handler: collectorPost', {
         const H = makeHandler();
         mockService.installError = 'install failed';
         let result;
-        H.collectorPost('col-a', { opcua: {} }, (r) => { result = r; });
+        H.collectorPost('col-a', { opcua: { endpoint: 'opc.tcp://h:4840' } }, (r) => { result = r; });
         t.assert(!result.ok, 'should not be ok');
         t.assert(!mockCGI._configs['col-a'], 'config should be removed on install failure');
+        t.assert(!mockCGI._opcuaServers['col-a-opcua'], 'auto-created opcua server should be removed on install failure');
     },
 
     'auto-creates TAG table and stores normalized columns': (t) => {
@@ -291,6 +333,7 @@ runner.run('Handler: collectorPost', {
             dbTable: 'auto_tag',
             opcua: {
                 interval: 1000,
+                endpoint: 'opc.tcp://h:4840',
                 nodes: [{ nodeId: 'ns=1;s=a', name: longName }],
             },
         }, (r) => { result = r; });
@@ -324,7 +367,7 @@ runner.run('Handler: collectorPost', {
             autoCreateTable: true,
             db: 'server-a',
             dbTable: 'AUTO_TAG',
-            opcua: { interval: 1000, nodes: [] },
+            opcua: { interval: 1000, endpoint: 'opc.tcp://h:4840', nodes: [] },
         }, (r) => { result = r; });
 
         t.assert(!result.ok, 'should not be ok');
@@ -344,12 +387,40 @@ runner.run('Handler: collectorPost', {
             autoCreateTable: true,
             db: 'server-a',
             dbTable: 'AUTO_TAG',
-            opcua: { interval: 1000, nodes: [] },
+            opcua: { interval: 1000, endpoint: 'opc.tcp://h:4840', nodes: [] },
         }, (r) => { result = r; });
 
         t.assert(!result.ok, 'should not be ok');
         t.assert(!mockCGI._configs['col-a'], 'config should be removed');
         t.assertEqual(mockMachbaseClient.droppedTables[0], 'AUTO_TAG');
+    },
+
+    'uses existing OPC UA server profile when provided': (t) => {
+        const H = makeHandler();
+        mockCGI._opcuaServers['opc-main'] = { endpoint: 'opc.tcp://profile:4840' };
+        let result;
+        H.collectorPost('col-a', {
+            opcua: { server: 'opc-main', endpoint: 'opc.tcp://legacy:4840' },
+            db: 'server-a',
+        }, (r) => { result = r; });
+
+        t.assert(result.ok, 'should be ok');
+        t.assertEqual(mockCGI._configs['col-a'].opcua.server, 'opc-main');
+        t.assertEqual(mockCGI._configs['col-a'].opcua.endpoint, undefined, 'endpoint should be removed when server is provided');
+        t.assertEqual(Object.keys(mockCGI._opcuaServers).length, 1, 'should not create another profile');
+    },
+
+    'returns error when referenced OPC UA server is missing': (t) => {
+        const H = makeHandler();
+        let result;
+        H.collectorPost('col-a', {
+            opcua: { server: 'missing' },
+            db: 'server-a',
+        }, (r) => { result = r; });
+
+        t.assert(!result.ok, 'should not be ok');
+        t.assert(result.reason.includes("opcua server 'missing' not found"));
+        t.assert(!mockCGI._configs['col-a'], 'config should not be written');
     },
 });
 
@@ -381,18 +452,19 @@ runner.run('Handler: collectorPut', {
         const H = makeHandler();
         mockCGI._configs['col-a'] = { db: 'server-a', opcua: {} };
         let result;
-        H.collectorPut('col-a', { db: 'server-b', opcua: {} }, (r) => { result = r; });
+        H.collectorPut('col-a', { db: 'server-b', opcua: { endpoint: 'opc.tcp://h:4840' } }, (r) => { result = r; });
         t.assert(result.ok, 'should be ok');
         t.assertEqual(mockCGI._configs['col-a'].db, 'server-b');
+        t.assertEqual(mockCGI._configs['col-a'].opcua.server, 'col-a-opcua');
     },
 
     'stops and restarts service when running': (t) => {
         const H = makeHandler();
-        mockCGI._configs['col-a'] = { db: {} };
+        mockCGI._configs['col-a'] = { db: {}, opcua: { endpoint: 'opc.tcp://old:4840' } };
         mockService._installed['col-a'] = true;
         mockService._statusMap['col-a'] = 'RUNNING';
         let result;
-        H.collectorPut('col-a', { db: {} }, (r) => { result = r; });
+        H.collectorPut('col-a', { db: {}, opcua: { endpoint: 'opc.tcp://h:4840' } }, (r) => { result = r; });
         t.assert(result.ok, 'should be ok');
         t.assertEqual(mockService._statusMap['col-a'], 'RUNNING', 'service should be restarted');
     },
@@ -705,6 +777,263 @@ runner.run('Handler: server CRUD', {
     },
 });
 
+// ── opcuaServerPost / opcuaServerGet / opcuaServerPut / opcuaServerDelete / opcuaServerList ──
+
+runner.run('Handler: OPC UA server CRUD', {
+    'opcuaServerPost creates profile with default disabled security': (t) => {
+        const H = makeHandler();
+        let result;
+        H.opcuaServerPost('opc1', { endpoint: 'opc.tcp://h:4840' }, (r) => { result = r; });
+        t.assert(result.ok, 'should be ok');
+        t.assertEqual(result.data.name, 'opc1');
+        t.assertEqual(mockCGI._opcuaServers['opc1'].endpoint, 'opc.tcp://h:4840');
+        t.assertEqual(mockCGI._opcuaServers['opc1'].security.enabled, false);
+        t.assertEqual(mockCGI._opcuaServers['opc1'].readBatchSize, 32);
+        t.assertEqual(mockCGI._opcuaServers['opc1'].capabilities.maxNodesPerRead, null);
+        t.assertEqual(mockCGI._opcuaServers['opc1'].capabilities.maxNodesPerReadSource, 'default');
+    },
+
+    'opcuaServerPost stores readBatchSize and server maxNodesPerRead capability': (t) => {
+        const H = makeHandler();
+        let result;
+        H.opcuaServerPost('opc1', {
+            endpoint: 'opc.tcp://h:4840',
+            readBatchSize: 16,
+            capabilities: {
+                maxNodesPerRead: 32,
+                maxNodesPerReadSource: 'server',
+                checkedAt: '2026-06-08T00:00:00.000Z',
+            },
+        }, (r) => { result = r; });
+        t.assert(result.ok, 'should be ok');
+        t.assertEqual(mockCGI._opcuaServers['opc1'].readBatchSize, 16);
+        t.assertEqual(mockCGI._opcuaServers['opc1'].capabilities.maxNodesPerRead, 32);
+        t.assertEqual(mockCGI._opcuaServers['opc1'].capabilities.maxNodesPerReadSource, 'server');
+        t.assertEqual(mockCGI._opcuaServers['opc1'].capabilities.checkedAt, '2026-06-08T00:00:00.000Z');
+    },
+
+    'opcuaServerPost rejects readBatchSize greater than maxNodesPerRead': (t) => {
+        const H = makeHandler();
+        let result;
+        H.opcuaServerPost('opc1', {
+            endpoint: 'opc.tcp://h:4840',
+            readBatchSize: 33,
+            capabilities: {
+                maxNodesPerRead: 32,
+                maxNodesPerReadSource: 'server',
+            },
+        }, (r) => { result = r; });
+        t.assert(!result.ok, 'should not be ok');
+        t.assert(result.reason.includes('readBatchSize must be <= 32'));
+    },
+
+    'opcuaServerPost limits readBatchSize to 32 when maxNodesPerRead is unknown': (t) => {
+        const H = makeHandler();
+        let result;
+        H.opcuaServerPost('opc1', {
+            endpoint: 'opc.tcp://h:4840',
+            readBatchSize: 33,
+            capabilities: {
+                maxNodesPerRead: null,
+                maxNodesPerReadSource: 'default',
+            },
+        }, (r) => { result = r; });
+        t.assert(!result.ok, 'should not be ok');
+        t.assert(result.reason.includes('readBatchSize must be <= 32'));
+    },
+
+    'opcuaServerPost stores username auth and masks password on get': (t) => {
+        const H = makeHandler();
+        let result;
+        H.opcuaServerPost('opc1', {
+            endpoint: 'opc.tcp://h:4840',
+            security: {
+                enabled: true,
+                securityPolicy: 'None',
+                messageSecurityMode: 'None',
+                authMode: 'UserName',
+                username: 'user1',
+                password: 'secret',
+            },
+        }, (r) => { result = r; });
+        t.assert(result.ok, 'should be ok');
+        t.assertEqual(mockCGI._opcuaServers['opc1'].security.password, 'secret');
+
+        H.opcuaServerGet('opc1', (r) => { result = r; });
+        t.assert(result.ok, 'get should be ok');
+        t.assertEqual(result.data.config.security.password, undefined, 'password should be masked');
+        t.assertEqual(result.data.config.security.hasPassword, true);
+        t.assertEqual(result.data.config.security.username, 'user1');
+    },
+
+    'opcuaServerPost stores certificate files for secure mode and masks paths': (t) => {
+        const H = makeHandler();
+        let result;
+        H.opcuaServerPost('opc1', {
+            endpoint: 'opc.tcp://h:4840',
+            security: {
+                enabled: true,
+                securityPolicy: 'Basic256Sha256',
+                messageSecurityMode: 'SignAndEncrypt',
+                authMode: 'Anonymous',
+                certificatePem: '-----BEGIN CERTIFICATE-----\nmock\n-----END CERTIFICATE-----\n',
+                keyPem: '-----BEGIN PRIVATE KEY-----\nmock\n-----END PRIVATE KEY-----\n',
+            },
+        }, (r) => { result = r; });
+        t.assert(result.ok, 'should be ok');
+        t.assertEqual(mockCGI._opcuaCredentialWrites['opc1'].certificatePem.includes('BEGIN CERTIFICATE'), true);
+        t.assertEqual(mockCGI._opcuaServers['opc1'].security.certificateFile, '/mock/opcua-certs/opc1/client_cert.pem');
+
+        H.opcuaServerGet('opc1', (r) => { result = r; });
+        t.assert(result.ok, 'get should be ok');
+        t.assertEqual(result.data.config.security.certificateFile, undefined, 'certificate path should be masked');
+        t.assertEqual(result.data.config.security.keyFile, undefined, 'key path should be masked');
+        t.assertEqual(result.data.config.security.hasCertificateFile, true);
+        t.assertEqual(result.data.config.security.hasKeyFile, true);
+        t.assertEqual(result.data.config.security.certificateUpdatedAt, '2026-06-05T06:00:00.000Z');
+        t.assertEqual(result.data.config.security.keyUpdatedAt, '2026-06-05T06:00:01.000Z');
+    },
+
+    'opcuaServerPost returns error when profile already exists': (t) => {
+        const H = makeHandler();
+        mockCGI._opcuaServers['opc1'] = { endpoint: 'opc.tcp://h:4840', security: { enabled: false } };
+        let result;
+        H.opcuaServerPost('opc1', { endpoint: 'opc.tcp://h2:4840' }, (r) => { result = r; });
+        t.assert(!result.ok, 'should not be ok');
+        t.assert(result.reason.includes('already exists'));
+    },
+
+    'opcuaServerGet normalizes missing security': (t) => {
+        const H = makeHandler();
+        mockCGI._opcuaServers['opc1'] = { endpoint: 'opc.tcp://h:4840' };
+        let result;
+        H.opcuaServerGet('opc1', (r) => { result = r; });
+        t.assert(result.ok, 'should be ok');
+        t.assertEqual(result.data.config.security.enabled, false);
+    },
+
+    'opcuaServerPut updates profile': (t) => {
+        const H = makeHandler();
+        mockCGI._opcuaServers['opc1'] = { endpoint: 'opc.tcp://h:4840', security: { enabled: false } };
+        let result;
+        H.opcuaServerPut('opc1', { endpoint: 'opc.tcp://h2:4840', security: { enabled: true } }, (r) => { result = r; });
+        t.assert(result.ok, 'should be ok');
+        t.assertEqual(mockCGI._opcuaServers['opc1'].endpoint, 'opc.tcp://h2:4840');
+        t.assertEqual(mockCGI._opcuaServers['opc1'].security.enabled, true);
+    },
+
+    'opcuaServerPut preserves readBatchSize and capability for same endpoint': (t) => {
+        const H = makeHandler();
+        mockCGI._opcuaServers['opc1'] = {
+            endpoint: 'opc.tcp://h:4840',
+            readBatchSize: 16,
+            capabilities: {
+                maxNodesPerRead: 64,
+                maxNodesPerReadSource: 'server',
+                checkedAt: '2026-06-08T00:00:00.000Z',
+            },
+            security: { enabled: false },
+        };
+        let result;
+        H.opcuaServerPut('opc1', { endpoint: 'opc.tcp://h:4840', security: { enabled: false } }, (r) => { result = r; });
+        t.assert(result.ok, 'should be ok');
+        t.assertEqual(mockCGI._opcuaServers['opc1'].readBatchSize, 16);
+        t.assertEqual(mockCGI._opcuaServers['opc1'].capabilities.maxNodesPerRead, 64);
+        t.assertEqual(mockCGI._opcuaServers['opc1'].capabilities.maxNodesPerReadSource, 'server');
+    },
+
+    'opcuaServerPut resets readBatchSize and capability for changed endpoint': (t) => {
+        const H = makeHandler();
+        mockCGI._opcuaServers['opc1'] = {
+            endpoint: 'opc.tcp://h:4840',
+            readBatchSize: 16,
+            capabilities: {
+                maxNodesPerRead: 64,
+                maxNodesPerReadSource: 'server',
+                checkedAt: '2026-06-08T00:00:00.000Z',
+            },
+            security: { enabled: false },
+        };
+        let result;
+        H.opcuaServerPut('opc1', { endpoint: 'opc.tcp://h2:4840', security: { enabled: false } }, (r) => { result = r; });
+        t.assert(result.ok, 'should be ok');
+        t.assertEqual(mockCGI._opcuaServers['opc1'].readBatchSize, 32);
+        t.assertEqual(mockCGI._opcuaServers['opc1'].capabilities.maxNodesPerRead, null);
+        t.assertEqual(mockCGI._opcuaServers['opc1'].capabilities.maxNodesPerReadSource, 'default');
+    },
+
+    'opcuaServerPut preserves existing secret fields when omitted': (t) => {
+        const H = makeHandler();
+        mockCGI._opcuaServers['opc1'] = {
+            endpoint: 'opc.tcp://h:4840',
+            security: {
+                enabled: true,
+                securityPolicy: 'Basic256',
+                messageSecurityMode: 'Sign',
+                authMode: 'UserName',
+                username: 'user1',
+                password: 'old-secret',
+                certificateFile: '/old/client_cert.pem',
+                keyFile: '/old/client_key.pem',
+            },
+        };
+        let result;
+        H.opcuaServerPut('opc1', {
+            endpoint: 'opc.tcp://h2:4840',
+            security: {
+                enabled: true,
+                securityPolicy: 'Basic256',
+                messageSecurityMode: 'Sign',
+                authMode: 'UserName',
+                username: 'user2',
+            },
+        }, (r) => { result = r; });
+        t.assert(result.ok, 'should be ok');
+        t.assertEqual(mockCGI._opcuaServers['opc1'].security.password, 'old-secret');
+        t.assertEqual(mockCGI._opcuaServers['opc1'].security.certificateFile, '/old/client_cert.pem');
+        t.assertEqual(mockCGI._opcuaServers['opc1'].security.username, 'user2');
+    },
+
+    'opcuaServerPost rejects secure mode without certificate files': (t) => {
+        const H = makeHandler();
+        let result;
+        H.opcuaServerPost('opc1', {
+            endpoint: 'opc.tcp://h:4840',
+            security: {
+                enabled: true,
+                securityPolicy: 'Basic256',
+                messageSecurityMode: 'Sign',
+                authMode: 'Anonymous',
+            },
+        }, (r) => { result = r; });
+        t.assert(!result.ok, 'should not be ok');
+        t.assert(result.reason.includes('certificatePem'));
+    },
+
+    'opcuaServerDelete removes profile': (t) => {
+        const H = makeHandler();
+        mockCGI._opcuaServers['opc1'] = { endpoint: 'opc.tcp://h:4840' };
+        let result;
+        H.opcuaServerDelete('opc1', (r) => { result = r; });
+        t.assert(result.ok, 'should be ok');
+        t.assert(!mockCGI._opcuaServers['opc1'], 'profile should be removed');
+        t.assertEqual(mockCGI._opcuaCredentialRemoves[0], 'opc1');
+    },
+
+    'opcuaServerList returns sorted profiles': (t) => {
+        const H = makeHandler();
+        mockCGI._opcuaServers['opc-b'] = { endpoint: 'opc.tcp://b:4840' };
+        mockCGI._opcuaServers['opc-a'] = { endpoint: 'opc.tcp://a:4840' };
+        let result;
+        H.opcuaServerList((r) => { result = r; });
+        t.assert(result.ok, 'should be ok');
+        t.assertEqual(result.data.length, 2);
+        t.assertEqual(result.data[0].name, 'opc-a');
+        t.assertEqual(result.data[1].name, 'opc-b');
+        t.assertEqual(result.data[0].config.readBatchSize, 32);
+    },
+});
+
 // ── dbConnect ─────────────────────────────────────────────────────────────────
 
 runner.run('Handler: dbConnect', {
@@ -865,6 +1194,108 @@ runner.run('Handler: opcuaConnect', {
         t.assertEqual(mockOpcuaClient.readRetryInterval, 250);
         t.assert(mockOpcuaClient.opened, 'client should be opened');
         t.assert(mockOpcuaClient.closed, 'client should be closed');
+        t.assertEqual(result.data.readBatchSize, 32);
+        t.assertEqual(result.data.capabilities.maxNodesPerRead, null);
+        t.assertEqual(result.data.capabilities.maxNodesPerReadSource, 'default');
+    },
+
+    'returns maxNodesPerRead capability when server exposes it': (t) => {
+        const H = makeHandler();
+        mockOpcuaClient.readResult = [{ value: 64, sourceTimestamp: 100, serverTimestamp: 200 }];
+        let result;
+        H.opcuaConnect('opc.tcp://h:4840', undefined, (r) => { result = r; });
+        t.assert(result.ok, 'should be ok');
+        t.assertEqual(mockOpcuaClient.readCalls[0][0], 'ns=0;i=11705');
+        t.assertEqual(result.data.readBatchSize, 64);
+        t.assertEqual(result.data.capabilities.maxNodesPerRead, 64);
+        t.assertEqual(result.data.capabilities.maxNodesPerReadSource, 'server');
+    },
+
+    'resolves endpoint from OPC UA server profile': (t) => {
+        const H = makeHandler();
+        mockCGI._opcuaServers['opc-main'] = {
+            endpoint: 'opc.tcp://profile:4840',
+            security: {
+                enabled: true,
+                securityPolicy: 'None',
+                messageSecurityMode: 'None',
+                authMode: 'Anonymous',
+            },
+        };
+        let result;
+        H.opcuaConnect({ server: 'opc-main' }, 250, (r) => { result = r; });
+        t.assert(result.ok, 'should be ok');
+        t.assertEqual(result.data.server, 'opc-main');
+        t.assertEqual(result.data.endpoint, 'opc.tcp://profile:4840');
+        t.assertEqual(mockOpcuaClient.endpoint, 'opc.tcp://profile:4840');
+        t.assertEqual(mockOpcuaClient.options.security.enabled, true);
+        t.assertEqual(mockOpcuaClient.options.readRetryInterval, 250);
+    },
+
+    'uses direct security config for unsaved endpoint connection test': (t) => {
+        const H = makeHandler();
+        let result;
+        H.opcuaConnect({
+            endpoint: 'opc.tcp://secure:4840',
+            security: {
+                enabled: true,
+                securityPolicy: 'None',
+                messageSecurityMode: 'None',
+                authMode: 'UserName',
+                username: 'opcuser',
+                password: 'secret',
+            },
+        }, undefined, (r) => { result = r; });
+        t.assert(result.ok, 'should be ok');
+        t.assertEqual(mockOpcuaClient.endpoint, 'opc.tcp://secure:4840');
+        t.assertEqual(mockOpcuaClient.options.security.enabled, true);
+        t.assertEqual(mockOpcuaClient.options.security.authMode, 'UserName');
+        t.assertEqual(mockOpcuaClient.options.security.username, 'opcuser');
+        t.assertEqual(mockOpcuaClient.options.security.password, 'secret');
+    },
+
+    'uses temporary certificate files for direct secure connection test and cleans them up': (t) => {
+        const H = makeHandler();
+        let result;
+        H.opcuaConnect({
+            endpoint: 'opc.tcp://secure:4840',
+            security: {
+                enabled: true,
+                securityPolicy: 'Basic256Sha256',
+                messageSecurityMode: 'SignAndEncrypt',
+                authMode: 'Certificate',
+                certificatePem: '-----BEGIN CERTIFICATE-----\nCERT\n-----END CERTIFICATE-----\n',
+                keyPem: '-----BEGIN PRIVATE KEY-----\nKEY\n-----END PRIVATE KEY-----\n',
+            },
+        }, undefined, (r) => { result = r; });
+        t.assert(result.ok, 'should be ok');
+        const tempNames = Object.keys(mockCGI._opcuaCredentialWrites);
+        t.assertEqual(tempNames.length, 1);
+        const tempName = tempNames[0];
+        t.assert(tempName.indexOf('opcua-connect-test-') === 0, 'should use temp connect profile name');
+        t.assertEqual(mockOpcuaClient.options.security.certificateFile, `/mock/opcua-certs/${tempName}/client_cert.pem`);
+        t.assertEqual(mockOpcuaClient.options.security.keyFile, `/mock/opcua-certs/${tempName}/client_key.pem`);
+        t.assert(mockCGI._opcuaCredentialRemoves.indexOf(tempName) >= 0, 'should remove temp credential files');
+    },
+
+    'does not write temporary certificate files when direct security validation fails': (t) => {
+        const H = makeHandler();
+        let result;
+        H.opcuaConnect({
+            endpoint: 'opc.tcp://secure:4840',
+            security: {
+                enabled: true,
+                securityPolicy: 'Basic256Sha256',
+                messageSecurityMode: 'SignAndEncrypt',
+                authMode: 'UserName',
+                username: 'opcuser',
+                certificatePem: '-----BEGIN CERTIFICATE-----\nCERT\n-----END CERTIFICATE-----\n',
+                keyPem: '-----BEGIN PRIVATE KEY-----\nKEY\n-----END PRIVATE KEY-----\n',
+            },
+        }, undefined, (r) => { result = r; });
+        t.assert(!result.ok, 'should not be ok');
+        t.assert(result.reason.includes('security.password is required'));
+        t.assertEqual(Object.keys(mockCGI._opcuaCredentialWrites).length, 0);
     },
 
     'returns error when connect fails': (t) => {
@@ -891,6 +1322,18 @@ runner.run('Handler: opcuaRead', {
         t.assertEqual(result.data[0].nodeId, 'ns=1;s=T1');
         t.assertEqual(result.data[0].value, 1.1);
         t.assert(mockOpcuaClient.closed, 'client should be closed');
+    },
+
+    'resolves server profile before read': (t) => {
+        const H = makeHandler();
+        mockCGI._opcuaServers['opc-main'] = { endpoint: 'opc.tcp://profile:4840' };
+        mockOpcuaClient.readResult = [
+            { value: 1.1, sourceTimestamp: 100, serverTimestamp: 200 },
+        ];
+        let result;
+        H.opcuaRead({ server: 'opc-main' }, ['ns=1;s=T1'], (r) => { result = r; });
+        t.assert(result.ok, 'should be ok');
+        t.assertEqual(mockOpcuaClient.endpoint, 'opc.tcp://profile:4840');
     },
 
     'returns error when connect fails': (t) => {
@@ -923,6 +1366,16 @@ runner.run('Handler: opcuaWrite', {
         H.opcuaWrite('opc.tcp://h:4840', [{ node: 'ns=1;s=T1', value: 42 }], (r) => { result = r; });
         t.assert(result.ok, 'should be ok');
         t.assert(mockOpcuaClient.closed, 'client should be closed');
+    },
+
+    'resolves server profile before write': (t) => {
+        const H = makeHandler();
+        mockCGI._opcuaServers['opc-main'] = { endpoint: 'opc.tcp://profile:4840' };
+        mockOpcuaClient.writeResult = { written: true };
+        let result;
+        H.opcuaWrite({ server: 'opc-main' }, [{ node: 'ns=1;s=T1', value: 42 }], (r) => { result = r; });
+        t.assert(result.ok, 'should be ok');
+        t.assertEqual(mockOpcuaClient.endpoint, 'opc.tcp://profile:4840');
     },
 
     'returns error when connect fails': (t) => {
@@ -967,6 +1420,18 @@ runner.run('Handler: nodeDescendants', {
         t.assert(result.ok, 'should be ok');
         t.assertEqual(result.data.length, 2);
         t.assert(mockOpcuaClient.closed, 'client should be closed');
+    },
+
+    'resolves server profile before browsing': (t) => {
+        const H = makeHandler();
+        mockCGI._opcuaServers['opc-main'] = { endpoint: 'opc.tcp://profile:4840' };
+        mockOpcuaClient.browseResult = {
+            'ns=0;i=85': [{ NodeId: 'ns=1;s=C1', NodeClass: 1 }],
+        };
+        let result;
+        H.nodeDescendants({ server: 'opc-main', node: 'ns=0;i=85' }, (r) => { result = r; });
+        t.assert(result.ok, 'should be ok');
+        t.assertEqual(mockOpcuaClient.endpoint, 'opc.tcp://profile:4840');
     },
 
     'does not revisit already-visited nodes': (t) => {

@@ -1,7 +1,7 @@
 /**
  * POST /cgi-bin/api/opcua/connect  -- OPC UA 서버 접속 확인
  *
- * body: { endpoint, readRetryInterval? }
+ * body: { endpoint?, server?, security?, readRetryInterval? }
  */
 
 const path = require('path');
@@ -16,11 +16,15 @@ const reply = (r) => CGI.reply(r);
 const handlers = {
   POST: () => {
     const body = CGI.readBody();
-    if (!body.endpoint) {
-      reply({ ok: false, reason: 'endpoint is required' });
+    if (!body.endpoint && !body.server) {
+      reply({ ok: false, reason: 'endpoint or server is required' });
       return;
     }
-    Handler.opcuaConnect(body.endpoint, body.readRetryInterval, reply);
+    Handler.opcuaConnect({
+      endpoint: body.endpoint,
+      server: body.server,
+      security: body.security,
+    }, body.readRetryInterval, reply);
   },
 };
 const method = (process.env.get('REQUEST_METHOD') || 'GET').toUpperCase();

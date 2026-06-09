@@ -392,11 +392,12 @@ export default function NodeBrowserPanel({ endpoint, existingNodes, onSync, onCl
                                             type="checkbox"
                                             checked={isChecked}
                                             disabled={isDisabled}
-                                            readOnly
                                             aria-label={`${getLabel(node)} select`}
                                             onClick={(e) => {
                                                 e.stopPropagation();
-                                                handleVariableToggle(row, rowIndex, !isChecked, e.shiftKey);
+                                            }}
+                                            onChange={(e) => {
+                                                handleVariableToggle(row, rowIndex, e.target.checked, e.nativeEvent?.shiftKey);
                                             }}
                                         />
                                     )}
