@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+    DATA_VIEWER_BACK_PATH,
     buildTagRows,
     buildTagChartSeries,
     buildDataViewerPath,
@@ -16,6 +17,10 @@ import {
 
 test("buildDataViewerPath encodes collector id for route navigation", () => {
     assert.equal(buildDataViewerPath("job/a b"), "/data-viewer/job%2Fa%20b");
+});
+
+test("DATA_VIEWER_BACK_PATH returns to the jobs dashboard", () => {
+    assert.equal(DATA_VIEWER_BACK_PATH, "/");
 });
 
 test("buildTagRows keeps ordinary tags as a flat list", () => {

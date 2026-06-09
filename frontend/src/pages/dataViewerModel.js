@@ -24,6 +24,7 @@ export const TIME_FORMATS = [
 ];
 
 export const DATA_VIEWER_ROUTE_BASE = "/data-viewer";
+export const DATA_VIEWER_BACK_PATH = "/";
 
 const supportedTimeZones =
     typeof Intl !== "undefined" && typeof Intl.supportedValuesOf === "function"

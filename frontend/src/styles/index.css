@@ -2519,6 +2519,10 @@ label.switch input:checked + .switch-slider::before {
     min-height: 0;
 }
 
+.page-body-full.data-viewer-body {
+    padding-top: var(--spacing-4);
+}
+
 /* ─── PAGE TITLE GROUP ─── */
 
 .page-title-group {

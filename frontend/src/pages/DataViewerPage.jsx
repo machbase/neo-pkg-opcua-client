@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate } from "react-router";
 import Highcharts from "highcharts/highstock";
 import HighchartsBoost from "highcharts/modules/boost";
 import HighchartsReact from "highcharts-react-official";
 import Icon from "../components/common/Icon";
 import { useApp } from "../context/AppContext";
-import { listTableTags, queryTagData } from "../api/dataViewer";
+import { listTableTags, queryTagData, queryTagDataTotal } from "../api/dataViewer";
 import {
+    DATA_VIEWER_BACK_PATH,
     DEFAULT_TIME_FORMAT,
     DEFAULT_TIME_ZONE,
     QUICK_TIME_RANGE_GROUPS,
@@ -136,6 +138,54 @@ function Pagination({ page, totalPages, onPage }) {
                 <Icon name="chevron_right" className="icon-sm" />
             </button>
             <button type="button" className="btn btn-sm btn-ghost" disabled={page >= totalPages} onClick={() => go(totalPages)}>
+                <Icon name="keyboard_double_arrow_right" className="icon-sm" />
+            </button>
+        </div>
+    );
+}
+
+function ResultPagination({ page, pageSize, rowCount, loading, endLoading, onPage, onEndPage }) {
+    const [value, setValue] = useState(String(page));
+    const hasNextPage = rowCount >= pageSize;
+
+    useEffect(() => {
+        setValue(String(page));
+    }, [page]);
+
+    const go = (next) => {
+        onPage(Math.max(1, next));
+    };
+
+    const commit = () => {
+        const n = Number(value);
+        if (Number.isFinite(n)) go(Math.floor(n));
+        else setValue(String(page));
+    };
+
+    return (
+        <div className="pagination">
+            <button type="button" className="btn btn-sm btn-ghost" disabled={page <= 1 || loading} onClick={() => go(1)}>
+                <Icon name="keyboard_double_arrow_left" className="icon-sm" />
+            </button>
+            <button type="button" className="btn btn-sm btn-ghost" disabled={page <= 1 || loading} onClick={() => go(page - 1)}>
+                <Icon name="chevron_left" className="icon-sm" />
+            </button>
+            <input
+                type="number"
+                min="1"
+                value={value}
+                onChange={(e) => setValue(e.target.value)}
+                onBlur={commit}
+                onKeyDown={(e) => {
+                    if (e.key === "Enter") commit();
+                }}
+                className="pagination-input"
+                aria-label="Current result page"
+            />
+            <button type="button" className="btn btn-sm btn-ghost" disabled={!hasNextPage || loading || endLoading} onClick={() => go(page + 1)}>
+                <Icon name="chevron_right" className="icon-sm" />
+            </button>
+            <button type="button" className="btn btn-sm btn-ghost" disabled={loading || endLoading} onClick={onEndPage} title="Move to end page">
                 <Icon name="keyboard_double_arrow_right" className="icon-sm" />
             </button>
         </div>
@@ -621,6 +671,7 @@ function TagLineChart({ rows }) {
 }
 
 export default function DataViewerPage({ collectors, detail, embedded = false }) {
+    const navigate = useNavigate();
     const { selectedCollectorId, notify } = useApp();
     const collector = collectors.find((c) => c.id === selectedCollectorId);
     const config = detail?.config || {};
@@ -650,6 +701,7 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
     const [timeZone, setTimeZone] = useState(DEFAULT_TIME_ZONE);
     const [formatOpen, setFormatOpen] = useState(false);
     const [loading, setLoading] = useState(false);
+    const [endLoading, setEndLoading] = useState(false);
     const [error, setError] = useState("");
     const [result, setResult] = useState({ rows: [], total: 0, page: 1, pageSize: RESULT_PAGE_SIZE });
 
@@ -704,7 +756,7 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
 
     useEffect(() => {
         setResultPage(1);
-    }, [selectedTagName, range.from, range.to, latestFirst, selectedCollectorId]);
+    }, [selectedTagName, range.from, range.to, selectedCollectorId]);
 
     const filteredTagRows = useMemo(() => {
         const q = tagFilter.trim().toLowerCase();
@@ -721,7 +773,6 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
 
     const tagTotalPages = Math.max(1, Math.ceil(filteredTagRows.length / TAG_PAGE_SIZE));
     const visibleTagRows = filteredTagRows.slice((tagPage - 1) * TAG_PAGE_SIZE, tagPage * TAG_PAGE_SIZE);
-    const resultTotalPages = Math.max(1, Math.ceil((result.total || 0) / RESULT_PAGE_SIZE));
     const canQuery = Boolean(dbServer && dbTable && selectedTagName);
 
     const fetchRows = useCallback(async () => {
@@ -779,13 +830,59 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
 
     const timeRangeButtonText = formatTimeRangeLabel(range.from, range.to);
     const timeFormatButtonText = `${getTimeFormatLabel(timeFormat)} / ${getTimeZoneLabel(timeZone)}`;
+    const handleLatestFirstChange = (event) => {
+        setLatestFirst(event.target.checked);
+        setResultPage(1);
+    };
+    const handleEndPage = async () => {
+        if (!canQuery || endLoading) return;
+        setEndLoading(true);
+        setError("");
+        try {
+            const baseDate = new Date();
+            const queryFrom = resolveTimeRangeInput(range.from, baseDate);
+            const queryTo = resolveTimeRangeInput(range.to, baseDate);
+            if (queryFrom === null || queryTo === null) {
+                setError("Please check the entered time.");
+                return;
+            }
+            const data = await queryTagDataTotal({
+                server: dbServer,
+                table: dbTable,
+                name: selectedTagName,
+                valueColumn,
+                stringValueColumn,
+                direction: latestFirst ? "latest" : "oldest",
+                from: queryFrom,
+                to: queryTo,
+                pageSize: RESULT_PAGE_SIZE,
+            });
+            const lastPage = Number(data?.lastPage || 1);
+            setResultPage(Number.isFinite(lastPage) ? Math.max(1, Math.floor(lastPage)) : 1);
+        } catch (e) {
+            const message = e.reason || e.message || "Failed to calculate end page";
+            setError(message);
+            notify(message, "error");
+        } finally {
+            setEndLoading(false);
+        }
+    };
 
     return (
         <div className={embedded ? "data-viewer-embedded" : "page"}>
             {!embedded && (
             <header className="page-header">
                 <div className="page-header-inner">
-                    <div className="flex items-center gap-12 min-w-0">
+                    <div className="flex items-center gap-8 min-w-0">
+                        <button
+                            type="button"
+                            onClick={() => navigate(DATA_VIEWER_BACK_PATH)}
+                            className="p-4 hover:bg-surface-hover rounded-base transition-colors shrink-0 tooltip"
+                            data-tooltip="Back"
+                            aria-label="Back"
+                        >
+                            <Icon name="arrow_back" />
+                        </button>
                         <Icon name="query_stats" className="text-primary" />
                         <h2 className="page-title truncate">Data Viewer</h2>
                         <span className="badge badge-muted truncate">{collector.id}</span>
@@ -794,7 +891,7 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
             </header>
             )}
 
-            <div className={embedded ? "data-viewer-embedded-body" : "page-body-full"}>
+            <div className={embedded ? "data-viewer-embedded-body" : "page-body-full data-viewer-body"}>
                 <div className={embedded ? "data-viewer-embedded-inner" : "page-body-inner"}>
                     <div className="data-viewer-layout">
                         <aside className="form-card data-viewer-tags">
@@ -862,7 +959,7 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
                                     <div className="data-viewer-title-actions">
                                         {mode === "raw" && (
                                             <label className="checkbox-label data-viewer-scan-toggle">
-                                                <input type="checkbox" checked={latestFirst} onChange={(e) => setLatestFirst(e.target.checked)} />
+                                                <input type="checkbox" checked={latestFirst} onChange={handleLatestFirstChange} />
                                                 <span>Latest first</span>
                                             </label>
                                         )}
@@ -923,7 +1020,7 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
                                         {loading && <div className="empty-state">Loading...</div>}
                                         {!loading && result.rows.length === 0 && <div className="empty-state">No data</div>}
                                     </div>
-                                    <Pagination page={Math.min(resultPage, resultTotalPages)} totalPages={resultTotalPages} onPage={setResultPage} />
+                                    <ResultPagination page={resultPage} pageSize={RESULT_PAGE_SIZE} rowCount={result.rows.length} loading={loading} endLoading={endLoading} onPage={setResultPage} onEndPage={handleEndPage} />
                                 </div>
                             )}
                             {canQuery && mode === "chart" && (
@@ -931,7 +1028,7 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
                                     <div className="table-card-body">
                                         {loading ? <div className="empty-state">Loading...</div> : <TagLineChart rows={result.rows} />}
                                     </div>
-                                    <Pagination page={Math.min(resultPage, resultTotalPages)} totalPages={resultTotalPages} onPage={setResultPage} />
+                                    <ResultPagination page={resultPage} pageSize={RESULT_PAGE_SIZE} rowCount={result.rows.length} loading={loading} endLoading={endLoading} onPage={setResultPage} onEndPage={handleEndPage} />
                                 </div>
                             )}
                         </section>

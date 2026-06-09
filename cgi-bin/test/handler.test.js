@@ -1223,12 +1223,11 @@ runner.run('Handler: dbTableTags', {
 // ── dbTableData ──────────────────────────────────────────────────────────────
 
 runner.run('Handler: dbTableData', {
-    'returns latest raw rows with backward scan and pagination metadata': (t) => {
+    'returns latest raw rows with backward scan and current page metadata': (t) => {
         const H = makeHandler();
         mockMachbaseClient.users = [{ USER_ID: 1, NAME: 'SYS' }];
         mockMachbaseClient.tableMeta = { ID: 10, TYPE: 6, NAME: 'TAG' };
         mockMachbaseClient.queryResults = [
-            [{ ROW_COUNT: 3 }],
             [
                 { TIME: new Date('2026-06-01T00:02:00Z'), NAME: 'sensor.a', VALUE: 12.5 },
                 { TIME: new Date('2026-06-01T00:01:00Z'), NAME: 'sensor.a', VALUE: 11.5 },
@@ -1252,16 +1251,17 @@ runner.run('Handler: dbTableData', {
         }, (r) => { result = r; });
 
         t.assert(result.ok, 'should be ok');
-        t.assertEqual(result.data.total, 3);
+        t.assert(!Object.prototype.hasOwnProperty.call(result.data, 'total'), 'total should not be calculated');
         t.assertEqual(result.data.page, 1);
         t.assertEqual(result.data.pageSize, 2);
         t.assertEqual(result.data.rows.length, 2, 'should return current page rows only');
         t.assertEqual(result.data.rows[0].name, 'sensor.a');
         t.assertEqual(result.data.rows[0].value, 12.5);
-        t.assert(mockMachbaseClient.queries[1].sql.includes('SCAN_BACKWARD(TAG)'), 'latest should scan backward');
-        t.assert(mockMachbaseClient.queries[1].sql.includes('ORDER BY TIME DESC'), 'latest should sort newest first');
-        t.assertEqual(mockMachbaseClient.queries[1].values[0], 'sensor.a');
-        t.assertEqual(mockMachbaseClient.queries[1].values[1], 2, 'first page fetch limit should equal page size');
+        t.assertEqual(mockMachbaseClient.queries.length, 1, 'should not run count query');
+        t.assert(mockMachbaseClient.queries[0].sql.includes('SCAN_BACKWARD(TAG)'), 'latest should scan backward');
+        t.assert(mockMachbaseClient.queries[0].sql.includes('ORDER BY TIME DESC'), 'latest should sort newest first');
+        t.assertEqual(mockMachbaseClient.queries[0].values[0], 'sensor.a');
+        t.assertEqual(mockMachbaseClient.queries[0].values[1], 2, 'first page fetch limit should equal page size');
         t.assert(mockMachbaseClient.closed, 'client should be closed');
     },
 
@@ -1270,7 +1270,6 @@ runner.run('Handler: dbTableData', {
         mockMachbaseClient.users = [{ USER_ID: 1, NAME: 'SYS' }];
         mockMachbaseClient.tableMeta = { ID: 10, TYPE: 6, NAME: 'TAG' };
         mockMachbaseClient.queryResults = [
-            [{ ROW_COUNT: 1 }],
             [{ TIME: new Date('2026-06-01T00:00:00Z'), NAME: 'sensor.a', VALUE: 10.5 }],
         ];
 
@@ -1292,13 +1291,14 @@ runner.run('Handler: dbTableData', {
         }, (r) => { result = r; });
 
         t.assert(result.ok, 'should be ok');
-        t.assert(mockMachbaseClient.queries[1].sql.includes('SCAN_FORWARD(TAG)'), 'oldest should scan forward');
-        t.assert(mockMachbaseClient.queries[1].sql.includes('TIME >= ?'), 'from time should be applied');
-        t.assert(mockMachbaseClient.queries[1].sql.includes('TIME <= ?'), 'to time should be applied');
-        t.assert(mockMachbaseClient.queries[1].sql.includes('ORDER BY TIME ASC'), 'oldest should sort oldest first');
-        t.assert(mockMachbaseClient.queries[1].values[1] instanceof Date, 'from should be bound as Date');
-        t.assert(mockMachbaseClient.queries[1].values[2] instanceof Date, 'to should be bound as Date');
-        t.assertEqual(mockMachbaseClient.queries[1].values[3], 200, 'second page fetches offset plus page size');
+        t.assertEqual(mockMachbaseClient.queries.length, 1, 'should not run count query');
+        t.assert(mockMachbaseClient.queries[0].sql.includes('SCAN_FORWARD(TAG)'), 'oldest should scan forward');
+        t.assert(mockMachbaseClient.queries[0].sql.includes('TIME >= ?'), 'from time should be applied');
+        t.assert(mockMachbaseClient.queries[0].sql.includes('TIME <= ?'), 'to time should be applied');
+        t.assert(mockMachbaseClient.queries[0].sql.includes('ORDER BY TIME ASC'), 'oldest should sort oldest first');
+        t.assert(mockMachbaseClient.queries[0].values[1] instanceof Date, 'from should be bound as Date');
+        t.assert(mockMachbaseClient.queries[0].values[2] instanceof Date, 'to should be bound as Date');
+        t.assertEqual(mockMachbaseClient.queries[0].values[3], 200, 'second page fetches offset plus page size');
     },
 
     'matches db user case-insensitively': (t) => {
@@ -1323,6 +1323,59 @@ runner.run('Handler: dbTableData', {
         }, (r) => { result = r; });
 
         t.assert(result.ok, 'should be ok');
+    },
+
+    'returns total from tag stat view for end-page navigation': (t) => {
+        const H = makeHandler();
+        mockMachbaseClient.users = [{ USER_ID: 1, NAME: 'SYS' }];
+        mockMachbaseClient.tableMeta = { ID: 10, TYPE: 6, NAME: 'TAG' };
+        mockMachbaseClient.queryResults = [[{ ROW_COUNT: 245 }]];
+
+        let result;
+        H.dbTableDataTotal({
+            host: 'h',
+            port: 5656,
+            user: 'SYS',
+            password: 'p',
+        }, {
+            table: 'TAG',
+            name: 'sensor.a',
+            pageSize: 100,
+        }, (r) => { result = r; });
+
+        t.assert(result.ok, 'should be ok');
+        t.assertEqual(result.data.total, 245);
+        t.assertEqual(result.data.lastPage, 3);
+        t.assert(mockMachbaseClient.queries[0].sql.includes('V$TAG_STAT'), 'should use tag stat view');
+        t.assertEqual(mockMachbaseClient.queries[0].values[0], 'sensor.a');
+    },
+
+    'returns filtered total with count when time range is set': (t) => {
+        const H = makeHandler();
+        mockMachbaseClient.users = [{ USER_ID: 1, NAME: 'SYS' }];
+        mockMachbaseClient.tableMeta = { ID: 10, TYPE: 6, NAME: 'TAG' };
+        mockMachbaseClient.queryResults = [[{ ROW_COUNT: 45 }]];
+
+        let result;
+        H.dbTableDataTotal({
+            host: 'h',
+            port: 5656,
+            user: 'SYS',
+            password: 'p',
+        }, {
+            table: 'TAG',
+            name: 'sensor.a',
+            from: '2026-06-01T00:00:00.000Z',
+            to: '2026-06-01T00:30:00.000Z',
+            pageSize: 20,
+        }, (r) => { result = r; });
+
+        t.assert(result.ok, 'should be ok');
+        t.assertEqual(result.data.total, 45);
+        t.assertEqual(result.data.lastPage, 3);
+        t.assert(mockMachbaseClient.queries[0].sql.includes('COUNT(*)'), 'time range should use filtered count');
+        t.assert(mockMachbaseClient.queries[0].sql.includes('TIME >= ?'), 'from time should be applied');
+        t.assert(mockMachbaseClient.queries[0].sql.includes('TIME <= ?'), 'to time should be applied');
     },
 });
 

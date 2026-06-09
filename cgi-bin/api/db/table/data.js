@@ -31,7 +31,7 @@ const handlers = {
       reply({ ok: false, reason: `server '${query.server}' not found` });
       return;
     }
-    Handler.dbTableData(db, {
+    const params = {
       table: query.table,
       name: query.name,
       valueColumn: query.valueColumn,
@@ -43,7 +43,12 @@ const handlers = {
       to: query.to,
       page: query.page,
       pageSize: query.pageSize,
-    }, reply);
+    };
+    if (query.includeTotal === 'true') {
+      Handler.dbTableDataTotal(db, params, reply);
+      return;
+    }
+    Handler.dbTableData(db, params, reply);
   },
 };
 
