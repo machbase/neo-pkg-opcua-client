@@ -800,7 +800,7 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
                                         {mode === "raw" && (
                                             <label className="checkbox-label data-viewer-scan-toggle">
                                                 <input type="checkbox" checked={latestFirst} onChange={(e) => setLatestFirst(e.target.checked)} />
-                                                <span>{latestFirst ? "Latest first" : "Oldest first"}</span>
+                                                <span>Latest first</span>
                                             </label>
                                         )}
                                         <div className="log-level-group" role="tablist" aria-label="Result mode">
