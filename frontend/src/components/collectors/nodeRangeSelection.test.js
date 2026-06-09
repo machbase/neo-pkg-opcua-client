@@ -66,12 +66,26 @@ test("getNodeRangeRows uses row position when duplicate node ids appear", () => 
     );
 });
 
-test("getNodeRangeRows includes non-numeric variables when selection mode allows all nodes", () => {
+test("getNodeRangeRows includes string variables when selection mode allows supported value types", () => {
     const rows = [variable("A"), variable("B", "String"), variable("C")];
 
     assert.deepEqual(
         getNodeRangeRows(rows, 0, 2, "all").map((row) => row.node.nodeId),
         ["A", "B", "C"]
+    );
+});
+
+test("getNodeRangeRows excludes unsupported data types even when selection mode allows all nodes", () => {
+    const rows = [
+        variable("A", "Double"),
+        variable("B", "String"),
+        variable("C", "Structure"),
+        variable("D", ""),
+    ];
+
+    assert.deepEqual(
+        getNodeRangeRows(rows, 0, 3, "all").map((row) => row.node.nodeId),
+        ["A", "B"]
     );
 });
 
@@ -137,6 +151,8 @@ test("applyNodeSelectionState composes sequential updates from the latest state"
 test("isNumericDataType treats OPC UA numeric and boolean types as selectable", () => {
     assert.equal(isNumericDataType("Boolean"), true);
     assert.equal(isNumericDataType("Double"), true);
+    assert.equal(isNumericDataType("Integer"), true);
+    assert.equal(isNumericDataType("Number"), true);
     assert.equal(isNumericDataType("String"), false);
     assert.equal(isNumericDataType(""), false);
 });

@@ -3851,6 +3851,21 @@ label.switch input:checked + .switch-slider::before {
     color: var(--color-on-surface-secondary);
 }
 
+.data-viewer-tag-list .node-tree-row-folder .node-tree-toggle {
+    border: 0;
+    background: transparent;
+    padding: 0;
+    cursor: pointer;
+}
+
+.data-viewer-tag-list .node-tree-row-folder {
+    cursor: default;
+}
+
+.data-viewer-tag-list .node-tree-row-folder .node-tree-toggle:hover {
+    color: var(--color-on-surface);
+}
+
 .node-tree-row-disabled {
     opacity: 0.5;
 }

@@ -7,6 +7,7 @@ import {
     createNodeSelectionState,
     getNodeRangeRows,
     isNumericDataType,
+    isSelectableNodeRow,
 } from "./nodeRangeSelection";
 import { buildNodeTree } from "./nodeTree";
 
@@ -350,7 +351,7 @@ export default function NodeBrowserPanel({ endpoint, existingNodes, onSync, onCl
                         const isSelected = selectedIds.has(node.nodeId);
                         const isRemoved = removedIds.has(node.nodeId);
                         const isNumeric = isObject || isNumericDataType(getDataType(node));
-                        const isDisabled = !isObject && !isNumeric && selectionMode === "numeric-only";
+                        const isDisabled = !isObject && !isSelectableNodeRow(row, selectionMode);
                         const isChecked = alreadyAdded ? !isRemoved : isSelected;
 
                         const handleRowClick = (e) => {
@@ -377,7 +378,9 @@ export default function NodeBrowserPanel({ endpoint, existingNodes, onSync, onCl
                                     isCycle
                                         ? `${getLabel(node)}  —  ${node.nodeId} (circular reference)`
                                         : isDisabled
-                                        ? `${getLabel(node)}  —  ${node.nodeId} (non-numeric — set String Value Column or use a JSON column to enable)`
+                                        ? selectionMode === "numeric-only"
+                                            ? `${getLabel(node)}  —  ${node.nodeId} (non-numeric — set String Value Column or use a JSON column to enable)`
+                                            : `${getLabel(node)}  —  ${node.nodeId} (unsupported data type)`
                                         : `${getLabel(node)}  —  ${node.nodeId}`
                                 }
                             >
@@ -396,6 +399,8 @@ export default function NodeBrowserPanel({ endpoint, existingNodes, onSync, onCl
                                             aria-label={`${getLabel(node)} select`}
                                             onClick={(e) => {
                                                 e.stopPropagation();
+                                                if (isDisabled) return;
+                                                handleVariableToggle(row, rowIndex, !isChecked, e.shiftKey);
                                             }}
                                             onChange={(e) => {
                                                 handleVariableToggle(row, rowIndex, e.target.checked, e.nativeEvent?.shiftKey);

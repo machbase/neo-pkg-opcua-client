@@ -84,7 +84,48 @@ function cleanPathParts(parts) {
         .filter(Boolean);
 }
 
+function isNodeTreeObject(value) {
+    return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function findNodeTreePath(value, targetNodeId, path = []) {
+    if (!isNodeTreeObject(value)) return null;
+
+    const currentNodeId = typeof value.nodeId === "string" ? value.nodeId : "";
+    if (currentNodeId && (!targetNodeId || currentNodeId === targetNodeId)) {
+        const leafPath = [...path];
+        if (value.label && leafPath.length > 0) {
+            leafPath[leafPath.length - 1] = value.label;
+        }
+        return cleanPathParts(leafPath);
+    }
+
+    for (const [key, child] of Object.entries(value)) {
+        if (key === "label" || key === "nodeId" || key === "dataType") continue;
+        if (!isNodeTreeObject(child)) continue;
+
+        const found = findNodeTreePath(child, targetNodeId, [...path, key]);
+        if (found) return found;
+    }
+
+    return null;
+}
+
+function getNodeTreePath(node) {
+    if (!isNodeTreeObject(node?.nodeTree)) return null;
+
+    for (const root of Object.values(node.nodeTree)) {
+        const path = findNodeTreePath(root, node?.nodeId || "");
+        if (path && path.length > 1) return path;
+    }
+
+    return null;
+}
+
 export function getTagTreePath(node) {
+    const nodeTreePath = getNodeTreePath(node);
+    if (nodeTreePath) return nodeTreePath;
+
     if (Array.isArray(node?.treePath)) {
         const parts = cleanPathParts(node.treePath);
         return parts.length > 1 ? parts : null;
@@ -116,19 +157,23 @@ export function buildTagRows(nodes = []) {
         const tagLabel = path[path.length - 1];
         for (let i = 0; i < path.length - 1; i++) {
             const folderKey = path.slice(0, i + 1).join("/");
+            const ancestorKeys = path.slice(0, i).map((_, index) => `folder:${path.slice(0, index + 1).join("/")}`);
             if (!folders.has(folderKey)) {
                 folders.add(folderKey);
                 rows.push({
                     type: "folder",
                     key: `folder:${folderKey}`,
+                    ancestorKeys,
                     depth: i,
                     label: path[i],
                 });
             }
         }
+        const tagAncestorKeys = path.slice(0, -1).map((_, index) => `folder:${path.slice(0, index + 1).join("/")}`);
         rows.push({
             type: "tag",
             key: `tag:${node.name || path.join("/")}`,
+            ancestorKeys: tagAncestorKeys,
             depth: path.length - 1,
             label: tagLabel,
             tag: node,
@@ -136,6 +181,11 @@ export function buildTagRows(nodes = []) {
     }
 
     return rows;
+}
+
+export function getVisibleTagRows(rows = [], collapsedKeys = new Set()) {
+    const collapsed = collapsedKeys instanceof Set ? collapsedKeys : new Set(collapsedKeys || []);
+    return rows.filter((row) => !(row.ancestorKeys || []).some((key) => collapsed.has(key)));
 }
 
 export function resolveTagNodes(configuredNodes = [], tableTags = []) {

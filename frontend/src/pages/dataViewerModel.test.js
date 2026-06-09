@@ -10,6 +10,7 @@ import {
     formatDataViewerTime,
     formatTimeRangeInput,
     formatTimeRangeLabel,
+    getVisibleTagRows,
     QUICK_TIME_RANGE_GROUPS,
     resolveTimeRangeInput,
     resolveTagNodes,
@@ -35,7 +36,101 @@ test("buildTagRows keeps ordinary tags as a flat list", () => {
     ]);
 });
 
-test("buildTagRows uses treePath only when it exists", () => {
+test("buildTagRows uses nodeTree when browse selection stores tree structure", () => {
+    const rows = buildTagRows([
+        {
+            name: "Area1_PumpA_Temperature",
+            nodeId: "ns=1;s=area1.pumpA.temperature",
+            dataType: "Double",
+            treePath: ["legacy", "wrong"],
+            nodeTree: {
+                Objects: {
+                    Area1: {
+                        PumpA: {
+                            Temperature: {
+                                label: "Temperature",
+                                nodeId: "ns=1;s=area1.pumpA.temperature",
+                                dataType: "Double",
+                            },
+                        },
+                    },
+                },
+            },
+        },
+        {
+            name: "Area1_PumpA_Pressure",
+            nodeId: "ns=1;s=area1.pumpA.pressure",
+            dataType: "Double",
+            nodeTree: {
+                Objects: {
+                    Area1: {
+                        PumpA: {
+                            Pressure: {
+                                label: "Pressure",
+                                nodeId: "ns=1;s=area1.pumpA.pressure",
+                                dataType: "Double",
+                            },
+                        },
+                    },
+                },
+            },
+        },
+    ]);
+
+    assert.deepEqual(rows.map((row) => [row.type, row.depth, row.label]), [
+        ["folder", 0, "Area1"],
+        ["folder", 1, "PumpA"],
+        ["tag", 2, "Temperature"],
+        ["tag", 2, "Pressure"],
+    ]);
+});
+
+test("getVisibleTagRows hides descendants of collapsed folders", () => {
+    const rows = buildTagRows([
+        {
+            name: "Area1_PumpA_Temperature",
+            nodeId: "ns=1;s=area1.pumpA.temperature",
+            nodeTree: {
+                Objects: {
+                    Area1: {
+                        PumpA: {
+                            Temperature: {
+                                label: "Temperature",
+                                nodeId: "ns=1;s=area1.pumpA.temperature",
+                            },
+                        },
+                    },
+                },
+            },
+        },
+        {
+            name: "Area1_PumpA_Pressure",
+            nodeId: "ns=1;s=area1.pumpA.pressure",
+            nodeTree: {
+                Objects: {
+                    Area1: {
+                        PumpA: {
+                            Pressure: {
+                                label: "Pressure",
+                                nodeId: "ns=1;s=area1.pumpA.pressure",
+                            },
+                        },
+                    },
+                },
+            },
+        },
+    ]);
+
+    assert.deepEqual(
+        getVisibleTagRows(rows, new Set(["folder:Area1/PumpA"])).map((row) => [row.type, row.depth, row.label]),
+        [
+            ["folder", 0, "Area1"],
+            ["folder", 1, "PumpA"],
+        ]
+    );
+});
+
+test("buildTagRows uses treePath only when nodeTree is missing", () => {
     const rows = buildTagRows([
         {
             name: "Line1_Temperature",

@@ -21,6 +21,7 @@ import {
     formatTimeRangeLabel,
     getTimeFormatLabel,
     getTimeZoneLabel,
+    getVisibleTagRows,
     resolveTimeRangeInput,
     resolveTagNodes,
 } from "./dataViewerModel";
@@ -29,7 +30,6 @@ if (typeof HighchartsBoost === "function") {
     HighchartsBoost(Highcharts);
 }
 
-const TAG_PAGE_SIZE = 100;
 const RESULT_PAGE_SIZE = 100;
 const MIN_CHART_HEIGHT = 260;
 const WEEKDAY_LABELS = ["S", "M", "T", "W", "T", "F", "S"];
@@ -92,56 +92,6 @@ function buildCalendarDays(year, month) {
     }
 
     return cells;
-}
-
-function Pagination({ page, totalPages, onPage }) {
-    const [value, setValue] = useState(String(page));
-
-    useEffect(() => {
-        setValue(String(page));
-    }, [page]);
-
-    const go = (next) => {
-        const n = Math.min(Math.max(1, next), totalPages);
-        onPage(n);
-    };
-
-    const commit = () => {
-        const n = Number(value);
-        if (Number.isFinite(n)) go(Math.floor(n));
-        else setValue(String(page));
-    };
-
-    return (
-        <div className="pagination">
-            <button type="button" className="btn btn-sm btn-ghost" disabled={page <= 1} onClick={() => go(1)}>
-                <Icon name="keyboard_double_arrow_left" className="icon-sm" />
-            </button>
-            <button type="button" className="btn btn-sm btn-ghost" disabled={page <= 1} onClick={() => go(page - 1)}>
-                <Icon name="chevron_left" className="icon-sm" />
-            </button>
-            <input
-                type="number"
-                min="1"
-                max={totalPages}
-                value={value}
-                onChange={(e) => setValue(e.target.value)}
-                onBlur={commit}
-                onKeyDown={(e) => {
-                    if (e.key === "Enter") commit();
-                }}
-                className="pagination-input"
-                aria-label="Current page"
-            />
-            <span className="pagination-current">/ {totalPages}</span>
-            <button type="button" className="btn btn-sm btn-ghost" disabled={page >= totalPages} onClick={() => go(page + 1)}>
-                <Icon name="chevron_right" className="icon-sm" />
-            </button>
-            <button type="button" className="btn btn-sm btn-ghost" disabled={page >= totalPages} onClick={() => go(totalPages)}>
-                <Icon name="keyboard_double_arrow_right" className="icon-sm" />
-            </button>
-        </div>
-    );
 }
 
 function ResultPagination({ page, pageSize, rowCount, loading, endLoading, onPage, onEndPage }) {
@@ -690,7 +640,7 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
     const nodes = useMemo(() => resolveTagNodes(configuredNodes, tableTags), [configuredNodes, tableTags]);
     const tagRows = useMemo(() => buildTagRows(nodes), [nodes]);
     const [tagFilter, setTagFilter] = useState("");
-    const [tagPage, setTagPage] = useState(1);
+    const [collapsedTagFolders, setCollapsedTagFolders] = useState(() => new Set());
     const [selectedTagName, setSelectedTagName] = useState("");
     const [mode, setMode] = useState("raw");
     const [resultPage, setResultPage] = useState(1);
@@ -751,8 +701,8 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
     }, [nodes, selectedTagName, tagRows]);
 
     useEffect(() => {
-        setTagPage(1);
-    }, [tagFilter, selectedCollectorId]);
+        setCollapsedTagFolders(new Set());
+    }, [selectedCollectorId, tagRows]);
 
     useEffect(() => {
         setResultPage(1);
@@ -771,9 +721,19 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
         });
     }, [tagFilter, tagRows]);
 
-    const tagTotalPages = Math.max(1, Math.ceil(filteredTagRows.length / TAG_PAGE_SIZE));
-    const visibleTagRows = filteredTagRows.slice((tagPage - 1) * TAG_PAGE_SIZE, tagPage * TAG_PAGE_SIZE);
+    const visibleTagRows = useMemo(
+        () => getVisibleTagRows(filteredTagRows, collapsedTagFolders),
+        [collapsedTagFolders, filteredTagRows]
+    );
     const canQuery = Boolean(dbServer && dbTable && selectedTagName);
+    const toggleTagFolder = useCallback((key) => {
+        setCollapsedTagFolders((prev) => {
+            const next = new Set(prev);
+            if (next.has(key)) next.delete(key);
+            else next.add(key);
+            return next;
+        });
+    }, []);
 
     const fetchRows = useCallback(async () => {
         if (!canQuery) {
@@ -912,13 +872,18 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
                             <div className="data-viewer-tag-list">
                                 {visibleTagRows.map((row) => {
                                     if (row.type === "folder") {
+                                        const collapsed = collapsedTagFolders.has(row.key);
                                         return (
                                             <div key={row.key} className="node-tree-row node-tree-row-folder" style={{ paddingLeft: row.depth * 16 }}>
-                                                <span className="node-tree-toggle">
-                                                    <Icon name="expand_more" className="icon-sm" />
-                                                </span>
+                                                <button
+                                                    type="button"
+                                                    className="node-tree-toggle"
+                                                    onClick={() => toggleTagFolder(row.key)}
+                                                    aria-label={`${row.label} ${collapsed ? "expand" : "collapse"}`}
+                                                >
+                                                    <Icon name={collapsed ? "chevron_right" : "expand_more"} className="icon-sm" />
+                                                </button>
                                                 <span className="node-tree-label truncate">{row.label}</span>
-                                                <span className="badge badge-muted">OBJ</span>
                                             </div>
                                         );
                                     }
@@ -946,7 +911,6 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
                                 {tagsLoading && <div className="empty-state">Loading tags...</div>}
                                 {!tagsLoading && visibleTagRows.length === 0 && <div className="empty-state">No tags</div>}
                             </div>
-                            <Pagination page={Math.min(tagPage, tagTotalPages)} totalPages={tagTotalPages} onPage={setTagPage} />
                         </aside>
 
                         <section className="form-card data-viewer-results">

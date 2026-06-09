@@ -1,16 +1,23 @@
 const NUMERIC_TYPES = new Set([
     "Boolean", "SByte", "Byte", "Int16", "UInt16",
     "Int32", "UInt32", "Int64", "UInt64", "Float", "Double",
+    "Integer", "UInteger", "Number",
 ]);
+const STRING_TYPES = new Set(["String"]);
 
 export function isNumericDataType(dataType) {
     return dataType ? NUMERIC_TYPES.has(dataType) : false;
 }
 
+export function isStringDataType(dataType) {
+    return dataType ? STRING_TYPES.has(dataType) : false;
+}
+
 export function isSelectableNodeRow(row, selectionMode = "numeric-only") {
     if (!row || row.isObject || row.isCycle) return false;
-    if (selectionMode !== "numeric-only") return true;
-    return isNumericDataType(row.node?.dataType);
+    const dataType = row.node?.dataType;
+    if (selectionMode !== "numeric-only") return isNumericDataType(dataType) || isStringDataType(dataType);
+    return isNumericDataType(dataType);
 }
 
 export function getNodeRangeRows(allRows, anchorIndex, targetIndex, selectionMode = "numeric-only") {
