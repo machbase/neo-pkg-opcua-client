@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Icon from "../common/Icon";
 import NodeBrowserPanel from "./NodeBrowserPanel";
+import { normalizeCollectorNode } from "./nodeTree";
 
 const NODE_ID_PATTERN = /^ns=\d+;[isgb]=.+$/;
 
@@ -156,7 +157,7 @@ export default function NodeListEditor({ nodes, onChange, endpoint, selectionMod
             return;
         }
 
-        onChange([...nodes, { nodeId: trimmedId, name: trimmedName, calcOrder: "bm" }]);
+        onChange([...nodes, { nodeId: trimmedId, name: trimmedName, calcOrder: "bm", nodeTree: null }]);
         setNodeId("");
         setName("");
         setNodeIdError(null);
@@ -275,7 +276,7 @@ export default function NodeListEditor({ nodes, onChange, endpoint, selectionMod
         const kept = removeSet.size > 0 ? nodes.filter((n) => !removeSet.has(n.nodeId)) : nodes;
         const unique = add
             .filter((n) => !isDuplicate(n.nodeId))
-            .map((n) => ({ ...n, calcOrder: n.calcOrder || "bm" }));
+            .map((n) => ({ ...normalizeCollectorNode(n), calcOrder: n.calcOrder || "bm" }));
         if (unique.length > 0 || removeSet.size > 0) onChange([...kept, ...unique]);
     };
 
