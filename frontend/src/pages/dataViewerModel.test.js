@@ -95,6 +95,12 @@ test("formatDataViewerTime supports default millisecond format", () => {
     assert.match(text, /^2026-06-01 \d\d:34:56\.789$/);
 });
 
+test("formatDataViewerTime supports Neo time format and timezone", () => {
+    const text = formatDataViewerTime("2026-06-01T12:34:56.789Z", "2006-01-02 15:04:05.000", "UTC");
+
+    assert.equal(text, "2026-06-01 12:34:56.789");
+});
+
 test("formatTimeRangeInput renders stored ISO values as editable text", () => {
     const text = formatTimeRangeInput("2026-06-01T12:34:56.000Z");
 

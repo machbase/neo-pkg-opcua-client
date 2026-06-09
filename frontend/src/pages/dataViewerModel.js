@@ -1,13 +1,50 @@
+export const DEFAULT_TIME_FORMAT = "2006-01-02 15:04:05.000";
+export const DEFAULT_TIME_ZONE = "LOCAL";
+
 export const TIME_FORMATS = [
-    { value: "YYYY-MM-DD HH24:MI:SS.mmm", label: "YYYY-MM-DD HH24:MI:SS.mmm" },
-    { value: "YYYY-MM-DD HH24:MI:SS", label: "YYYY-MM-DD HH24:MI:SS" },
-    { value: "HH24:MI:SS.mmm", label: "HH24:MI:SS.mmm" },
-    { value: "ISO", label: "ISO" },
-    { value: "EPOCH_MS", label: "Epoch ms" },
-    { value: "EPOCH_NS", label: "Epoch ns" },
+    { label: "TIMESTAMP(ns)", value: "ns" },
+    { label: "TIMESTAMP(us)", value: "us" },
+    { label: "TIMESTAMP(ms)", value: "ms" },
+    { label: "TIMESTAMP(s)", value: "s" },
+    { label: "YYYY-MM-DD", value: "2006-01-02" },
+    { label: "YYYY-DD-MM", value: "2006-02-01" },
+    { label: "DD-MM-YYYY", value: "02-01-2006" },
+    { label: "MM-DD-YYYY", value: "01-02-2006" },
+    { label: "YY-DD-MM", value: "06-02-01" },
+    { label: "YY-MM-DD", value: "06-01-02" },
+    { label: "MM-DD-YY", value: "01-02-06" },
+    { label: "DD-MM-YY", value: "02-01-06" },
+    { label: "YYYY-MM-DD HH:MI:SS", value: "2006-01-02 15:04:05" },
+    { label: "YYYY-MM-DD HH:MI:SS.SSS", value: "2006-01-02 15:04:05.000" },
+    { label: "YYYY-MM-DD HH:MI:SS.SSSSSS", value: "2006-01-02 15:04:05.000000" },
+    { label: "YYYY-MM-DD HH:MI:SS.SSSSSSSSS", value: "2006-01-02 15:04:05.000000000" },
+    { label: "YYYY-MM-DD HH", value: "2006-01-02 15" },
+    { label: "YYYY-MM-DD HH:MI", value: "2006-01-02 15:04" },
+    { label: "HH:MI:SS", value: "03:04:05" },
 ];
 
 export const DATA_VIEWER_ROUTE_BASE = "/data-viewer";
+
+const supportedTimeZones =
+    typeof Intl !== "undefined" && typeof Intl.supportedValuesOf === "function"
+        ? Intl.supportedValuesOf("timeZone")
+        : [];
+
+export const TIME_ZONE_OPTIONS = [
+    { value: "UTC", label: "UTC" },
+    { value: "LOCAL", label: "LOCAL" },
+    ...supportedTimeZones
+        .filter((zone) => zone !== "UTC")
+        .map((zone) => ({ value: zone, label: zone.replaceAll("_", " ") })),
+];
+
+export function getTimeFormatLabel(value) {
+    return TIME_FORMATS.find((option) => option.value === value)?.label || value;
+}
+
+export function getTimeZoneLabel(value) {
+    return TIME_ZONE_OPTIONS.find((option) => option.value === value)?.label || value;
+}
 
 export function buildDataViewerPath(collectorId) {
     return `${DATA_VIEWER_ROUTE_BASE}/${encodeURIComponent(String(collectorId || ""))}`;
@@ -215,26 +252,87 @@ export function resolveTimeRangeInput(value, baseDate = new Date()) {
 
 function toDate(value) {
     if (value instanceof Date) return value;
-    const date = new Date(value);
+    const epochMs = toEpochMs(value);
+    if (!Number.isFinite(epochMs)) return null;
+    const date = new Date(epochMs);
     return Number.isNaN(date.getTime()) ? null : date;
 }
 
-export function formatDataViewerTime(value, format = "YYYY-MM-DD HH24:MI:SS.mmm") {
+function getDateParts(date, timeZone = DEFAULT_TIME_ZONE) {
+    if (!timeZone || timeZone === "LOCAL") {
+        return {
+            yyyy: String(date.getFullYear()),
+            yy: pad(date.getFullYear() % 100),
+            mm: pad(date.getMonth() + 1),
+            dd: pad(date.getDate()),
+            hh: pad(date.getHours()),
+            mi: pad(date.getMinutes()),
+            ss: pad(date.getSeconds()),
+            ms: pad(date.getMilliseconds(), 3),
+        };
+    }
+
+    try {
+        const parts = new Intl.DateTimeFormat("en-US", {
+            timeZone,
+            hourCycle: "h23",
+            year: "numeric",
+            month: "2-digit",
+            day: "2-digit",
+            hour: "2-digit",
+            minute: "2-digit",
+            second: "2-digit",
+        }).formatToParts(date);
+        const partValue = (type) => parts.find((part) => part.type === type)?.value || "00";
+        const yyyy = partValue("year");
+        return {
+            yyyy,
+            yy: yyyy.slice(-2),
+            mm: partValue("month"),
+            dd: partValue("day"),
+            hh: partValue("hour"),
+            mi: partValue("minute"),
+            ss: partValue("second"),
+            ms: pad(date.getMilliseconds(), 3),
+        };
+    } catch {
+        return getDateParts(date, DEFAULT_TIME_ZONE);
+    }
+}
+
+export function formatDataViewerTime(value, format = DEFAULT_TIME_FORMAT, timeZone = DEFAULT_TIME_ZONE) {
+    const epochMs = toEpochMs(value);
+    if (!Number.isFinite(epochMs)) return value == null ? "" : String(value);
+
+    if (format === "ns" || format === "EPOCH_NS") return String(BigInt(Math.trunc(epochMs)) * 1000000n);
+    if (format === "us") return String(Math.trunc(epochMs * 1000));
+    if (format === "ms" || format === "EPOCH_MS") return String(Math.trunc(epochMs));
+    if (format === "s") return String(Math.trunc(epochMs / 1000));
+
     const date = toDate(value);
     if (!date) return value == null ? "" : String(value);
 
     if (format === "ISO") return date.toISOString();
-    if (format === "EPOCH_MS") return String(date.getTime());
-    if (format === "EPOCH_NS") return String(BigInt(date.getTime()) * 1000000n);
 
-    const yyyy = date.getFullYear();
-    const mm = pad(date.getMonth() + 1);
-    const dd = pad(date.getDate());
-    const hh = pad(date.getHours());
-    const mi = pad(date.getMinutes());
-    const ss = pad(date.getSeconds());
-    const ms = pad(date.getMilliseconds(), 3);
+    const { yyyy, yy, mm, dd, hh, mi, ss, ms } = getDateParts(date, timeZone);
 
+    if (format === "2006-01-02") return `${yyyy}-${mm}-${dd}`;
+    if (format === "2006-02-01") return `${yyyy}-${dd}-${mm}`;
+    if (format === "02-01-2006") return `${dd}-${mm}-${yyyy}`;
+    if (format === "01-02-2006") return `${mm}-${dd}-${yyyy}`;
+    if (format === "06-02-01") return `${yy}-${dd}-${mm}`;
+    if (format === "06-01-02") return `${yy}-${mm}-${dd}`;
+    if (format === "01-02-06") return `${mm}-${dd}-${yy}`;
+    if (format === "02-01-06") return `${dd}-${mm}-${yy}`;
+    if (format === "2006-01-02 15:04:05") return `${yyyy}-${mm}-${dd} ${hh}:${mi}:${ss}`;
+    if (format === "2006-01-02 15:04:05.000") return `${yyyy}-${mm}-${dd} ${hh}:${mi}:${ss}.${ms}`;
+    if (format === "2006-01-02 15:04:05.000000") return `${yyyy}-${mm}-${dd} ${hh}:${mi}:${ss}.${ms}000`;
+    if (format === "2006-01-02 15:04:05.000000000") return `${yyyy}-${mm}-${dd} ${hh}:${mi}:${ss}.${ms}000000`;
+    if (format === "2006-01-02 15") return `${yyyy}-${mm}-${dd} ${hh}`;
+    if (format === "2006-01-02 15:04") return `${yyyy}-${mm}-${dd} ${hh}:${mi}`;
+    if (format === "03:04:05") return `${hh}:${mi}:${ss}`;
+
+    // Keep old Data Viewer formats readable for old saved state/tests.
     if (format === "YYYY-MM-DD HH24:MI:SS") return `${yyyy}-${mm}-${dd} ${hh}:${mi}:${ss}`;
     if (format === "HH24:MI:SS.mmm") return `${hh}:${mi}:${ss}.${ms}`;
     return `${yyyy}-${mm}-${dd} ${hh}:${mi}:${ss}.${ms}`;

@@ -6,14 +6,19 @@ import Icon from "../components/common/Icon";
 import { useApp } from "../context/AppContext";
 import { listTableTags, queryTagData } from "../api/dataViewer";
 import {
+    DEFAULT_TIME_FORMAT,
+    DEFAULT_TIME_ZONE,
     QUICK_TIME_RANGE_GROUPS,
     TIME_FORMATS,
+    TIME_ZONE_OPTIONS,
     buildTagChartSeries,
     buildTagRows,
     defaultSelectedTag,
     formatDataViewerTime,
     formatTimeRangeInput,
     formatTimeRangeLabel,
+    getTimeFormatLabel,
+    getTimeZoneLabel,
     resolveTimeRangeInput,
     resolveTagNodes,
 } from "./dataViewerModel";
@@ -367,6 +372,61 @@ function TimeRangeModal({ range, onApply, onClose }) {
     );
 }
 
+function FormatTimezoneModal({ timeFormat, timeZone, onApply, onClose }) {
+    const [nextFormat, setNextFormat] = useState(timeFormat || DEFAULT_TIME_FORMAT);
+    const [nextZone, setNextZone] = useState(timeZone || DEFAULT_TIME_ZONE);
+
+    return (
+        <div className="modal-overlay data-viewer-time-overlay">
+            <div className="modal modal-md data-viewer-time-modal data-viewer-format-modal animate-fade-in">
+                <div className="modal-header">
+                    <div className="modal-header-title">
+                        <Icon name="public" className="icon-sm text-primary" />
+                        <span>Format &amp; Timezone</span>
+                    </div>
+                    <button type="button" className="btn-icon-sm" onClick={onClose}>
+                        <Icon name="close" className="icon-sm" />
+                    </button>
+                </div>
+
+                <div className="modal-body data-viewer-format-body">
+                    <div className="data-viewer-format-fields">
+                        <label className="data-viewer-select-field">
+                            <span>Time format</span>
+                            <select value={nextFormat} onChange={(event) => setNextFormat(event.target.value)}>
+                                {TIME_FORMATS.map((format) => (
+                                    <option key={format.value} value={format.value}>
+                                        {format.label}
+                                    </option>
+                                ))}
+                            </select>
+                        </label>
+                        <label className="data-viewer-select-field">
+                            <span>Time zone</span>
+                            <select value={nextZone} onChange={(event) => setNextZone(event.target.value)}>
+                                {TIME_ZONE_OPTIONS.map((zone) => (
+                                    <option key={zone.value} value={zone.value}>
+                                        {zone.label}
+                                    </option>
+                                ))}
+                            </select>
+                        </label>
+                    </div>
+                </div>
+
+                <div className="modal-footer">
+                    <button type="button" className="btn btn-primary" onClick={() => onApply({ timeFormat: nextFormat, timeZone: nextZone })}>
+                        Apply
+                    </button>
+                    <button type="button" className="btn btn-secondary" onClick={onClose}>
+                        Cancel
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+}
+
 function TagLineChart({ rows }) {
     const chartRef = useRef(null);
     const containerRef = useRef(null);
@@ -586,7 +646,9 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
     const [range, setRange] = useState({ from: "", to: "" });
     const [rangeOpen, setRangeOpen] = useState(false);
     const [latestFirst, setLatestFirst] = useState(true);
-    const [timeFormat, setTimeFormat] = useState("YYYY-MM-DD HH24:MI:SS.mmm");
+    const [timeFormat, setTimeFormat] = useState(DEFAULT_TIME_FORMAT);
+    const [timeZone, setTimeZone] = useState(DEFAULT_TIME_ZONE);
+    const [formatOpen, setFormatOpen] = useState(false);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState("");
     const [result, setResult] = useState({ rows: [], total: 0, page: 1, pageSize: RESULT_PAGE_SIZE });
@@ -716,6 +778,7 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
     }
 
     const timeRangeButtonText = formatTimeRangeLabel(range.from, range.to);
+    const timeFormatButtonText = `${getTimeFormatLabel(timeFormat)} / ${getTimeZoneLabel(timeZone)}`;
 
     return (
         <div className={embedded ? "data-viewer-embedded" : "page"}>
@@ -816,15 +879,19 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
                                 {mode === "raw" && (
                                     <div className="data-viewer-query-row">
                                         <div className="data-viewer-query-controls">
+                                            <button
+                                                type="button"
+                                                aria-label="Set time format and timezone"
+                                                title={timeFormatButtonText}
+                                                className="btn btn-sm btn-ghost data-viewer-format-button"
+                                                onClick={() => setFormatOpen(true)}
+                                            >
+                                                <Icon name="public" className="icon-sm" />
+                                            </button>
                                             <button type="button" aria-label="Set time range" title={timeRangeButtonText} className="btn btn-sm btn-ghost data-viewer-time-range-button" onClick={() => setRangeOpen(true)}>
                                                 <Icon name="calendar_month" className="icon-sm" />
                                                 <span>{timeRangeButtonText}</span>
                                             </button>
-                                            <select value={timeFormat} onChange={(e) => setTimeFormat(e.target.value)}>
-                                                {TIME_FORMATS.map((format) => (
-                                                    <option key={format.value} value={format.value}>{format.label}</option>
-                                                ))}
-                                            </select>
                                         </div>
                                     </div>
                                 )}
@@ -846,7 +913,7 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
                                             <tbody>
                                                 {result.rows.map((row, i) => (
                                                     <tr key={`${row.name}-${row.time}-${i}`}>
-                                                        <td className="mono">{formatDataViewerTime(row.time, timeFormat)}</td>
+                                                        <td className="mono">{formatDataViewerTime(row.time, timeFormat, timeZone)}</td>
                                                         <td className="mono">{row.name}</td>
                                                         <td className="mono">{String(row.value ?? "")}</td>
                                                     </tr>
@@ -878,6 +945,18 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
                     onApply={(next) => {
                         setRange(next);
                         setRangeOpen(false);
+                    }}
+                />
+            )}
+            {formatOpen && (
+                <FormatTimezoneModal
+                    timeFormat={timeFormat}
+                    timeZone={timeZone}
+                    onClose={() => setFormatOpen(false)}
+                    onApply={(next) => {
+                        setTimeFormat(next.timeFormat);
+                        setTimeZone(next.timeZone);
+                        setFormatOpen(false);
                     }}
                 />
             )}
