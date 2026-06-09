@@ -334,6 +334,26 @@ runner.run('Collector.collect — stringValueColumn', {
         clearTimeout(c.timer);
     },
 
+    'runtime string values stay in auxiliary column even when numeric-looking': (t) => {
+        const config = {
+            ...baseConfig,
+            stringValueColumn: 'TEXT_VALUE',
+            opcua: {
+                ...baseConfig.opcua,
+                nodes: [{ nodeId: 'ns=1;s=Code', name: 'sensor.code' }],
+            },
+        };
+        const { c, dbStream } = makeCollector(config);
+        c.start();
+        c.opcua.readResult = [{ value: '12001', sourceTimestamp: Date.now() }];
+        dbStream.appended = [];
+        c.collect();
+        t.assertEqual(dbStream.appended.length, 1, 'string row should be appended');
+        t.assertEqual(dbStream.appended[0].value, 0, 'numeric column should use placeholder 0');
+        t.assertEqual(dbStream.appended[0].stringValue, '12001');
+        clearInterval(c.timer);
+    },
+
     'unsupported string values are skipped without auxiliary column': (t) => {
         const config = {
             ...baseConfig,
@@ -371,6 +391,66 @@ runner.run('Collector.collect — stringValueColumn', {
         t.assertEqual(dbStream.appended[0].value, 1, 'boolean should stay numeric');
         t.assertNull(dbStream.appended[0].stringValue, 'string column should remain empty');
         clearTimeout(c.timer);
+    },
+
+    'explicit String dataType stores values in auxiliary column': (t) => {
+        const config = {
+            ...baseConfig,
+            stringValueColumn: 'TEXT_VALUE',
+            opcua: {
+                ...baseConfig.opcua,
+                nodes: [{ nodeId: 'ns=1;s=Code', name: 'sensor.code', dataType: 'String' }],
+            },
+        };
+        const { c, dbStream } = makeCollector(config);
+        c.start();
+        c.opcua.readResult = [{ value: 12001, sourceTimestamp: Date.now() }];
+        dbStream.appended = [];
+        c.collect();
+        t.assertEqual(dbStream.appended.length, 1, 'string-typed row should be appended');
+        t.assertEqual(dbStream.appended[0].value, 0, 'numeric column should use placeholder 0');
+        t.assertEqual(dbStream.appended[0].stringValue, '12001');
+        clearInterval(c.timer);
+    },
+
+    'explicit numeric dataType coerces numeric strings to numeric column': (t) => {
+        const config = {
+            ...baseConfig,
+            stringValueColumn: 'TEXT_VALUE',
+            opcua: {
+                ...baseConfig.opcua,
+                nodes: [{ nodeId: 'ns=1;s=Temp', name: 'sensor.temp', dataType: 'Double' }],
+            },
+        };
+        const { c, dbStream } = makeCollector(config);
+        c.start();
+        c.opcua.readResult = [{ value: '12.5', sourceTimestamp: Date.now() }];
+        dbStream.appended = [];
+        c.collect();
+        t.assertEqual(dbStream.appended.length, 1, 'numeric-typed row should be appended');
+        t.assertEqual(dbStream.appended[0].value, 12.5);
+        t.assertNull(dbStream.appended[0].stringValue, 'string column should remain empty');
+        clearInterval(c.timer);
+    },
+
+    'VariableNode dataType falls back to runtime value type': (t) => {
+        const config = {
+            ...baseConfig,
+            stringValueColumn: 'TEXT_VALUE',
+            opcua: {
+                ...baseConfig.opcua,
+                nodes: [{ nodeId: 'ns=1;s=Temp', name: 'sensor.temp', dataType: 'VariableNode' }],
+            },
+        };
+        const { c, dbStream } = makeCollector(config);
+        c.start();
+        c.opcua.readResult = [{ value: 8.25, sourceTimestamp: Date.now() }];
+        dbStream.appended = [];
+        c.collect();
+        t.assertEqual(dbStream.appended.length, 1, 'unknown dataType should fall back to runtime type');
+        t.assertEqual(dbStream.appended[0].value, 8.25);
+        t.assertNull(dbStream.appended[0].stringValue, 'string column should remain empty');
+        clearInterval(c.timer);
     },
 });
 

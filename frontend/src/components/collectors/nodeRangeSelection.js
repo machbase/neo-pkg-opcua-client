@@ -39,7 +39,11 @@ export function applyNodeCheckedState({ selected, removedIds, existingIds, rows,
             if (checked) nextRemovedIds.delete(nodeId);
             else nextRemovedIds.add(nodeId);
         } else if (checked) {
-            nextSelected.set(nodeId, { path: row.parentPath, node: row.node });
+            nextSelected.set(nodeId, {
+                path: row.parentPath,
+                pathLabels: Array.isArray(row.pathLabels) ? row.pathLabels.slice() : [],
+                node: row.node,
+            });
         } else {
             nextSelected.delete(nodeId);
         }

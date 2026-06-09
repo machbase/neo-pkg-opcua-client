@@ -258,7 +258,7 @@ const DEFAULT_INTERVAL_MS = 1000;
 const AUTO_TABLE_VALUE_COLUMN = 'VALUE';
 const AUTO_TABLE_STRING_COLUMN = 'STR_VALUE';
 const AUTO_TABLE_NAME_MIN_LENGTH = 80;
-const AUTO_TABLE_STRING_LENGTH = 120;
+const AUTO_TABLE_STRING_LENGTH = 1024;
 
 function normalizeIdentifier(value, label) {
   const normalized = String(value || '').trim().toUpperCase();
@@ -814,7 +814,7 @@ function createAutoCollectorTable(config) {
     }
 
     const schema = buildAutoCreateTableSchema(request.tableName, request.nameLength);
-    client.createTagTable(request.tableName, schema, { rollup: true });
+    client.createTagTable(request.tableName, schema);
     return { db, tableName: request.tableName };
   } catch (err) {
     if (err && err.userFacing) {

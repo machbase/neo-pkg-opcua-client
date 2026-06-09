@@ -342,12 +342,13 @@ runner.run('Handler: collectorPost', {
         t.assertEqual(mockMachbaseClient.createdTables.length, 1, 'table should be created');
         const created = mockMachbaseClient.createdTables[0];
         t.assertEqual(created.table, 'AUTO_TAG');
-        t.assertEqual(created.options.rollup, true, 'rollup should be enabled');
+        t.assertEqual(created.options.rollup, undefined, 'rollup should not be enabled');
         t.assertEqual(created.schema.columns[0].name, 'NAME');
         t.assertEqual(created.schema.columns[0].length, longName.length);
         t.assertEqual(created.schema.columns[2].name, 'VALUE');
+        t.assertEqual(created.schema.columns[2].flag, 0x2000000);
         t.assertEqual(created.schema.columns[3].name, 'STR_VALUE');
-        t.assertEqual(created.schema.columns[3].length, 120);
+        t.assertEqual(created.schema.columns[3].length, 1024);
         t.assertEqual(mockCGI._configs['col-a'].dbTable, 'AUTO_TAG');
         t.assertEqual(mockCGI._configs['col-a'].valueColumn, 'VALUE');
         t.assertEqual(mockCGI._configs['col-a'].stringValueColumn, 'STR_VALUE');

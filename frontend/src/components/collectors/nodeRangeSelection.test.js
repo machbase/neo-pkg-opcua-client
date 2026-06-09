@@ -12,6 +12,7 @@ import {
 const variable = (nodeId, dataType = "Double") => ({
     node: { nodeId, dataType },
     parentPath: `Area_${nodeId}`,
+    pathLabels: ["Area", nodeId],
     isObject: false,
     isCycle: false,
 });
@@ -88,6 +89,7 @@ test("applyNodeCheckedState selects new nodes and restores existing nodes", () =
     });
 
     assert.deepEqual([...result.selected.keys()].sort(), ["new", "old"]);
+    assert.deepEqual(result.selected.get("new").pathLabels, ["Area", "new"]);
     assert.deepEqual([...result.removedIds], []);
     assert.deepEqual([...selected.keys()], ["old"]);
     assert.deepEqual([...removedIds], ["existing"]);
