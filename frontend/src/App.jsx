@@ -1,11 +1,12 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { Routes, Route, useNavigate } from 'react-router'
+import { Routes, Route, Navigate, useNavigate } from 'react-router'
 import useCollectors from './hooks/useCollectors'
 import useServers from './hooks/useServers'
 import { useApp } from './context/AppContext'
 import * as api from './api/collectors'
 import DashboardPage from './pages/DashboardPage'
 import CollectorFormPage from './pages/CollectorFormPage'
+import CollectorDataViewerRoute from './pages/CollectorDataViewerRoute'
 import ServerSettingsModal from './components/servers/ServerSettingsModal'
 import Toast from './components/common/Toast'
 
@@ -104,6 +105,10 @@ export default function App() {
           <Routes>
             <Route path="/" element={
               <DashboardPage collectors={collectors} detail={detail} onDelete={removeCollector} />
+            } />
+            <Route path="/data-viewer" element={<Navigate to="/" replace />} />
+            <Route path="/data-viewer/:collectorId" element={
+              <CollectorDataViewerRoute collectors={collectors} detail={detail} />
             } />
             <Route path="/collectors/new" element={
               <CollectorFormPage

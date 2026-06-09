@@ -11,6 +11,8 @@
     },
     "dependencies": {
         "@tanstack/react-virtual": "^3.13.23",
+        "highcharts": "^12.6.0",
+        "highcharts-react-official": "^3.2.3",
         "react": "^19.0.0",
         "react-dom": "^19.0.0",
         "react-router": "^7.0.0"

@@ -153,6 +153,8 @@ class MockMachbaseClient {
         this.rowCount = 0;
         this.createdTables = [];
         this.droppedTables = [];
+        this.queries = [];
+        this.queryResults = [];
     }
     connect() {
         if (this.connectError) throw new Error(this.connectError);
@@ -165,12 +167,17 @@ class MockMachbaseClient {
     selectTableMeta(_table, _userId) { return this.tableMeta; }
     selectColumnsByTableId(_tableId) { return this.columns; }
     selectColumnsByTableName(_table) { return this.columns; }
+    selectTagNames(_table) { return this.queryResults.shift() || []; }
     createTagTable(table, schema, options) {
         if (this.createError) throw new Error(this.createError);
         this.createdTables.push({ table, schema, options: options || {} });
     }
     selectRowCount(_table) {
         return this.rowCount;
+    }
+    query(sql, values) {
+        this.queries.push({ sql, values: values || [] });
+        return this.queryResults.shift() || [];
     }
     dropTableCascade(table) {
         this.droppedTables.push(table);
@@ -1177,6 +1184,211 @@ runner.run('Handler: dbTableColumns', {
         H.dbTableColumns({ host: 'h', port: 5656, user: 'SYS', password: 'p' }, 'LOG1', (r) => { result = r; });
         t.assert(!result.ok, 'should not be ok');
         t.assert(result.reason.includes('is not a TAG table'));
+    },
+});
+
+// ── dbTableTags ──────────────────────────────────────────────────────────────
+
+runner.run('Handler: dbTableTags', {
+    'returns tag names from TAG metadata when collector nodes are empty': (t) => {
+        const H = makeHandler();
+        mockMachbaseClient.users = [{ USER_ID: 1, NAME: 'SYS' }];
+        mockMachbaseClient.tableMeta = { ID: 10, TYPE: 6, NAME: 'TAG' };
+        mockMachbaseClient.queryResults = [
+            [
+                { _ID: 1, NAME: 'sensor.a' },
+                { _ID: 2, name: 'sensor.b' },
+            ],
+        ];
+
+        let result;
+        H.dbTableTags({
+            host: 'h',
+            port: 5656,
+            user: 'sys',
+            password: 'p',
+        }, {
+            table: 'TAG',
+        }, (r) => { result = r; });
+
+        t.assert(result.ok, 'should be ok');
+        t.assertEqual(result.data.table, 'TAG');
+        t.assertEqual(result.data.tags.length, 2);
+        t.assertEqual(result.data.tags[0].name, 'sensor.a');
+        t.assertEqual(result.data.tags[1].name, 'sensor.b');
+        t.assert(mockMachbaseClient.closed, 'client should be closed');
+    },
+});
+
+// ── dbTableData ──────────────────────────────────────────────────────────────
+
+runner.run('Handler: dbTableData', {
+    'returns latest raw rows with backward scan and current page metadata': (t) => {
+        const H = makeHandler();
+        mockMachbaseClient.users = [{ USER_ID: 1, NAME: 'SYS' }];
+        mockMachbaseClient.tableMeta = { ID: 10, TYPE: 6, NAME: 'TAG' };
+        mockMachbaseClient.queryResults = [
+            [
+                {
+                    TIME: new Date('2026-06-01T00:02:00Z'),
+                    NAME: 'sensor.a',
+                    VALUE: 12.5,
+                    STR_VALUE: 'running',
+                    QUALITY: 'GOOD',
+                    buffer: ['internal'],
+                    names: ['TIME', 'NAME', 'VALUE'],
+                },
+                { TIME: new Date('2026-06-01T00:01:00Z'), NAME: 'sensor.a', VALUE: 11.5 },
+                { TIME: new Date('2026-06-01T00:00:00Z'), NAME: 'sensor.a', VALUE: 10.5 },
+            ],
+        ];
+
+        let result;
+        H.dbTableData({
+            host: 'h',
+            port: 5656,
+            user: 'SYS',
+            password: 'p',
+        }, {
+            table: 'TAG',
+            name: 'sensor.a',
+            valueColumn: 'VALUE',
+            direction: 'latest',
+            page: 1,
+            pageSize: 2,
+        }, (r) => { result = r; });
+
+        t.assert(result.ok, 'should be ok');
+        t.assert(!Object.prototype.hasOwnProperty.call(result.data, 'total'), 'total should not be calculated');
+        t.assertEqual(result.data.page, 1);
+        t.assertEqual(result.data.pageSize, 2);
+        t.assertEqual(result.data.rows.length, 2, 'should return current page rows only');
+        t.assertEqual(result.data.rows[0].name, 'sensor.a');
+        t.assertEqual(result.data.rows[0].value, 12.5);
+        t.assertEqual(result.data.rows[0].str_value, 'running');
+        t.assertEqual(result.data.rows[0].quality, 'GOOD');
+        t.assert(!Object.prototype.hasOwnProperty.call(result.data.rows[0], 'buffer'), 'internal row buffer should not be returned');
+        t.assert(!Object.prototype.hasOwnProperty.call(result.data.rows[0], 'names'), 'internal row names should not be returned');
+        t.assertEqual(mockMachbaseClient.queries.length, 1, 'should not run count query');
+        t.assert(mockMachbaseClient.queries[0].sql.includes('SELECT /*+ SCAN_BACKWARD(TAG) */ *'), 'raw query should select every table field');
+        t.assert(mockMachbaseClient.queries[0].sql.includes('SCAN_BACKWARD(TAG)'), 'latest should scan backward');
+        t.assert(mockMachbaseClient.queries[0].sql.includes('ORDER BY TIME DESC'), 'latest should sort newest first');
+        t.assertEqual(mockMachbaseClient.queries[0].values[0], 'sensor.a');
+        t.assertEqual(mockMachbaseClient.queries[0].values[1], 2, 'first page fetch limit should equal page size');
+        t.assert(mockMachbaseClient.closed, 'client should be closed');
+    },
+
+    'returns oldest raw rows with forward scan and time range': (t) => {
+        const H = makeHandler();
+        mockMachbaseClient.users = [{ USER_ID: 1, NAME: 'SYS' }];
+        mockMachbaseClient.tableMeta = { ID: 10, TYPE: 6, NAME: 'TAG' };
+        mockMachbaseClient.queryResults = [
+            [{ TIME: new Date('2026-06-01T00:00:00Z'), NAME: 'sensor.a', VALUE: 10.5 }],
+        ];
+
+        let result;
+        H.dbTableData({
+            host: 'h',
+            port: 5656,
+            user: 'SYS',
+            password: 'p',
+        }, {
+            table: 'TAG',
+            name: 'sensor.a',
+            valueColumn: 'VALUE',
+            direction: 'oldest',
+            from: '2026-06-01T00:00:00.000Z',
+            to: '2026-06-01T00:30:00.000Z',
+            page: 2,
+            pageSize: 100,
+        }, (r) => { result = r; });
+
+        t.assert(result.ok, 'should be ok');
+        t.assertEqual(mockMachbaseClient.queries.length, 1, 'should not run count query');
+        t.assert(mockMachbaseClient.queries[0].sql.includes('SCAN_FORWARD(TAG)'), 'oldest should scan forward');
+        t.assert(mockMachbaseClient.queries[0].sql.includes('TIME >= ?'), 'from time should be applied');
+        t.assert(mockMachbaseClient.queries[0].sql.includes('TIME <= ?'), 'to time should be applied');
+        t.assert(mockMachbaseClient.queries[0].sql.includes('ORDER BY TIME ASC'), 'oldest should sort oldest first');
+        t.assert(mockMachbaseClient.queries[0].values[1] instanceof Date, 'from should be bound as Date');
+        t.assert(mockMachbaseClient.queries[0].values[2] instanceof Date, 'to should be bound as Date');
+        t.assertEqual(mockMachbaseClient.queries[0].values[3], 200, 'second page fetches offset plus page size');
+    },
+
+    'matches db user case-insensitively': (t) => {
+        const H = makeHandler();
+        mockMachbaseClient.users = [{ USER_ID: 1, NAME: 'SYS' }];
+        mockMachbaseClient.tableMeta = { ID: 10, TYPE: 6, NAME: 'TAG' };
+        mockMachbaseClient.queryResults = [
+            [{ ROW_COUNT: 0 }],
+            [],
+        ];
+
+        let result;
+        H.dbTableData({
+            host: 'h',
+            port: 5656,
+            user: 'sys',
+            password: 'p',
+        }, {
+            table: 'TAG',
+            name: 'sensor.a',
+            valueColumn: 'VALUE',
+        }, (r) => { result = r; });
+
+        t.assert(result.ok, 'should be ok');
+    },
+
+    'returns total from tag stat view for end-page navigation': (t) => {
+        const H = makeHandler();
+        mockMachbaseClient.users = [{ USER_ID: 1, NAME: 'SYS' }];
+        mockMachbaseClient.tableMeta = { ID: 10, TYPE: 6, NAME: 'TAG' };
+        mockMachbaseClient.queryResults = [[{ ROW_COUNT: 245 }]];
+
+        let result;
+        H.dbTableDataTotal({
+            host: 'h',
+            port: 5656,
+            user: 'SYS',
+            password: 'p',
+        }, {
+            table: 'TAG',
+            name: 'sensor.a',
+            pageSize: 100,
+        }, (r) => { result = r; });
+
+        t.assert(result.ok, 'should be ok');
+        t.assertEqual(result.data.total, 245);
+        t.assertEqual(result.data.lastPage, 3);
+        t.assert(mockMachbaseClient.queries[0].sql.includes('V$TAG_STAT'), 'should use tag stat view');
+        t.assertEqual(mockMachbaseClient.queries[0].values[0], 'sensor.a');
+    },
+
+    'returns filtered total with count when time range is set': (t) => {
+        const H = makeHandler();
+        mockMachbaseClient.users = [{ USER_ID: 1, NAME: 'SYS' }];
+        mockMachbaseClient.tableMeta = { ID: 10, TYPE: 6, NAME: 'TAG' };
+        mockMachbaseClient.queryResults = [[{ ROW_COUNT: 45 }]];
+
+        let result;
+        H.dbTableDataTotal({
+            host: 'h',
+            port: 5656,
+            user: 'SYS',
+            password: 'p',
+        }, {
+            table: 'TAG',
+            name: 'sensor.a',
+            from: '2026-06-01T00:00:00.000Z',
+            to: '2026-06-01T00:30:00.000Z',
+            pageSize: 20,
+        }, (r) => { result = r; });
+
+        t.assert(result.ok, 'should be ok');
+        t.assertEqual(result.data.total, 45);
+        t.assertEqual(result.data.lastPage, 3);
+        t.assert(mockMachbaseClient.queries[0].sql.includes('COUNT(*)'), 'time range should use filtered count');
+        t.assert(mockMachbaseClient.queries[0].sql.includes('TIME >= ?'), 'from time should be applied');
+        t.assert(mockMachbaseClient.queries[0].sql.includes('TIME <= ?'), 'to time should be applied');
     },
 });
 

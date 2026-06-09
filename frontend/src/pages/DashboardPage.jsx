@@ -7,6 +7,7 @@ import ConfirmDialog from "../components/common/ConfirmDialog";
 import LogViewerModal from "../components/logs/LogViewerModal";
 import LiveLogs from "../components/logs/LiveLogs";
 import Icon from "../components/common/Icon";
+import { buildDataViewerPath } from "./dataViewerModel";
 
 function timeAgo(ts) {
     if (!ts) return "-";
@@ -204,6 +205,14 @@ export default function DashboardPage({ collectors, detail, onDelete }) {
                         <StatusBadge status={collector.status} />
                     </div>
                     <div className="flex gap-8 shrink-0">
+                        <button
+                            type="button"
+                            onClick={() => navigate(buildDataViewerPath(collector.id))}
+                            className="btn btn-primary-outline"
+                        >
+                            <Icon name="query_stats" className="icon-sm" />
+                            <span>Data Viewer</span>
+                        </button>
                         <button
                             disabled={collector.status === "running"}
                             onClick={() => navigate(`/collectors/${encodeURIComponent(collector.id)}/edit`)}

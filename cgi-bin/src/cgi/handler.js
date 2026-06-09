@@ -1832,6 +1832,322 @@ function dbTableColumns(db, table, reply) {
   }
 }
 
+function parseQualifiedTagTable(table) {
+  const raw = String(table || '').trim();
+  if (!raw) {
+    throw new Error('table is required');
+  }
+  const parts = raw.split('.');
+  if (parts.length > 2) {
+    throw new Error('table must be TABLE or USER.TABLE');
+  }
+  const tableName = normalizeIdentifier(parts.length === 2 ? parts[1] : parts[0], 'table');
+  const tableUser = parts.length === 2 ? normalizeIdentifier(parts[0], 'table user') : null;
+  return {
+    tableName,
+    tableUser,
+    tableRef: tableUser ? `${tableUser}.${tableName}` : tableName,
+  };
+}
+
+function parsePositiveInt(value, defaultValue, minValue, maxValue) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return defaultValue;
+  const int = Math.floor(n);
+  if (int < minValue) return minValue;
+  if (int > maxValue) return maxValue;
+  return int;
+}
+
+function parseOptionalDate(value, label) {
+  if (value === undefined || value === null || value === '') return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    throw new Error(`${label} must be a valid date`);
+  }
+  return date;
+}
+
+function pickRowValue(row, names) {
+  for (const name of names) {
+    if (name && Object.prototype.hasOwnProperty.call(row, name)) {
+      return row[name];
+    }
+  }
+  return undefined;
+}
+
+function rowCountValue(row) {
+  const raw = pickRowValue(row || {}, ['ROW_COUNT', 'row_count', 'COUNT(*)', 'count']);
+  const n = Number(raw || 0);
+  return Number.isFinite(n) ? n : 0;
+}
+
+const INTERNAL_QUERY_ROW_FIELDS = new Set(['buffer', 'names']);
+
+function normalizeTagDataRow(row, req) {
+  const normalized = {};
+  for (const [key, value] of Object.entries(row || {})) {
+    const normalizedKey = String(key).toLowerCase();
+    if (INTERNAL_QUERY_ROW_FIELDS.has(normalizedKey)) continue;
+    normalized[normalizedKey] = value;
+  }
+
+  const primaryKey = String(req.primaryColumn || 'NAME').toLowerCase();
+  const timeKey = String(req.timeColumn || 'TIME').toLowerCase();
+  const valueKey = String(req.valueColumn || 'VALUE').toLowerCase();
+
+  if (primaryKey !== 'name' && Object.prototype.hasOwnProperty.call(normalized, primaryKey)) {
+    normalized.name = normalized[primaryKey];
+    delete normalized[primaryKey];
+  }
+  if (timeKey !== 'time' && Object.prototype.hasOwnProperty.call(normalized, timeKey)) {
+    normalized.time = normalized[timeKey];
+    delete normalized[timeKey];
+  }
+  if (valueKey !== 'value' && Object.prototype.hasOwnProperty.call(normalized, valueKey)) {
+    normalized.value = normalized[valueKey];
+    delete normalized[valueKey];
+  }
+
+  return normalized;
+}
+
+function buildTagMetaTableRef(table) {
+  return table.tableUser ? `${table.tableUser}._${table.tableName}_META` : `_${table.tableName}_META`;
+}
+
+function buildTagStatViewRef(table) {
+  return table.tableUser ? `${table.tableUser}.V$${table.tableName}_STAT` : `V$${table.tableName}_STAT`;
+}
+
+function mapTagMetaRows(rows) {
+  return (rows || [])
+    .map((row) => {
+      const name = pickRowValue(row, ['NAME', 'name']);
+      if (name === undefined || name === null || name === '') return null;
+      const id = pickRowValue(row, ['_ID', '_id', 'ID', 'id']);
+      return {
+        id: id === undefined || id === null ? null : String(id),
+        name: String(name),
+      };
+    })
+    .filter(Boolean);
+}
+
+function buildTagDataWhere(params, primaryColumn, timeColumn) {
+  const clauses = [`${primaryColumn} = ?`];
+  const values = [params.name];
+  if (params.from) {
+    clauses.push(`${timeColumn} >= ?`);
+    values.push(params.from);
+  }
+  if (params.to) {
+    clauses.push(`${timeColumn} <= ?`);
+    values.push(params.to);
+  }
+  return {
+    sql: clauses.join(' AND '),
+    values,
+  };
+}
+
+function parseTagDataRequest(params) {
+  const table = parseQualifiedTagTable(params && params.table);
+  const req = {
+    ...table,
+    name: String((params && params.name) || '').trim(),
+    primaryColumn: normalizeIdentifier((params && params.primaryColumn) || 'NAME', 'primaryColumn'),
+    timeColumn: normalizeIdentifier((params && params.timeColumn) || 'TIME', 'timeColumn'),
+    valueColumn: normalizeIdentifier((params && params.valueColumn) || 'VALUE', 'valueColumn'),
+    stringValueColumn: params && params.stringValueColumn
+      ? normalizeIdentifier(params.stringValueColumn, 'stringValueColumn')
+      : null,
+    direction: params && params.direction === 'oldest' ? 'oldest' : 'latest',
+    from: parseOptionalDate(params && params.from, 'from'),
+    to: parseOptionalDate(params && params.to, 'to'),
+    page: parsePositiveInt(params && params.page, 1, 1, 1000000),
+    pageSize: parsePositiveInt(params && params.pageSize, 100, 1, 1000),
+  };
+  if (!req.name) {
+    throw new Error('name is required');
+  }
+  return req;
+}
+
+function validateTagDataTable(client, req, db) {
+  const lookupUser = req.tableUser || db.user;
+  const userId = lookupUser ? findUserId(client, lookupUser) : null;
+  const meta = client.selectTableMeta(req.tableName, userId);
+  if (!meta) {
+    throw new Error(`table '${req.tableRef}' not found`);
+  }
+  if (meta.TYPE !== 6) {
+    throw new Error(`table '${req.tableRef}' is not a TAG table`);
+  }
+}
+
+/**
+ * GET /cgi-bin/api/db/table/tags?server=xxx&table=xxx
+ * @param {{ host: string, port: number, user: string, password: string }} db
+ * @param {{ table: string }} params
+ * @param {function} reply
+ */
+function dbTableTags(db, params, reply) {
+  let req;
+  try {
+    req = parseQualifiedTagTable(params && params.table);
+  } catch (err) {
+    reply({ ok: false, reason: errorMessage(err) });
+    return;
+  }
+
+  const client = new MachbaseClient(db);
+  try {
+    client.connect();
+    const lookupUser = req.tableUser || db.user;
+    const userId = lookupUser ? findUserId(client, lookupUser) : null;
+    const meta = client.selectTableMeta(req.tableName, userId);
+    if (!meta) {
+      reply({ ok: false, reason: `table '${req.tableRef}' not found` });
+      return;
+    }
+    if (meta.TYPE !== 6) {
+      reply({ ok: false, reason: `table '${req.tableRef}' is not a TAG table` });
+      return;
+    }
+
+    const tagMetaTable = buildTagMetaTableRef(req);
+    const rows = client.query(`SELECT _ID, NAME FROM ${tagMetaTable} ORDER BY NAME`);
+    reply({
+      ok: true,
+      data: {
+        table: req.tableRef,
+        tags: mapTagMetaRows(rows),
+      },
+    });
+  } catch (err) {
+    reply({ ok: false, reason: errorMessage(err) });
+  } finally {
+    client.close();
+  }
+}
+
+/**
+ * GET /cgi-bin/api/db/table/data?server=xxx&table=xxx&name=xxx
+ * @param {{ host: string, port: number, user: string, password: string }} db
+ * @param {{
+ *   table: string,
+ *   name: string,
+ *   valueColumn?: string,
+ *   stringValueColumn?: string,
+ *   primaryColumn?: string,
+ *   timeColumn?: string,
+ *   direction?: 'latest'|'oldest',
+ *   from?: string,
+ *   to?: string,
+ *   page?: number,
+ *   pageSize?: number,
+ * }} params
+ * @param {function} reply
+ */
+function dbTableData(db, params, reply) {
+  let req;
+  try {
+    req = parseTagDataRequest(params);
+  } catch (err) {
+    reply({ ok: false, reason: errorMessage(err) });
+    return;
+  }
+
+  const client = new MachbaseClient(db);
+  try {
+    client.connect();
+    validateTagDataTable(client, req, db);
+
+    const where = buildTagDataWhere(req, req.primaryColumn, req.timeColumn);
+    const offset = (req.page - 1) * req.pageSize;
+    const fetchLimit = offset + req.pageSize;
+    const scan = req.direction === 'oldest' ? 'SCAN_FORWARD' : 'SCAN_BACKWARD';
+    const orderDir = req.direction === 'oldest' ? 'ASC' : 'DESC';
+    const dataRows = client.query(
+      `SELECT /*+ ${scan}(${req.tableRef}) */ * ` +
+      `FROM ${req.tableRef} WHERE ${where.sql} ORDER BY ${req.timeColumn} ${orderDir} LIMIT ?`,
+      [...where.values, fetchLimit]
+    );
+    const rows = (dataRows || []).slice(offset, offset + req.pageSize).map((row) => normalizeTagDataRow(row, req));
+
+    reply({
+      ok: true,
+      data: {
+        table: req.tableRef,
+        name: req.name,
+        direction: req.direction,
+        page: req.page,
+        pageSize: req.pageSize,
+        rows,
+      },
+    });
+  } catch (err) {
+    reply({ ok: false, reason: errorMessage(err) });
+  } finally {
+    client.close();
+  }
+}
+
+function dbTableDataTotal(db, params, reply) {
+  let req;
+  try {
+    req = parseTagDataRequest(params);
+  } catch (err) {
+    reply({ ok: false, reason: errorMessage(err) });
+    return;
+  }
+
+  const client = new MachbaseClient(db);
+  try {
+    client.connect();
+    validateTagDataTable(client, req, db);
+
+    const where = buildTagDataWhere(req, req.primaryColumn, req.timeColumn);
+    let total = null;
+    if (!req.from && !req.to) {
+      try {
+        const rows = client.query(
+          `SELECT ROW_COUNT FROM ${buildTagStatViewRef(req)} WHERE NAME = ?`,
+          [req.name]
+        );
+        total = rowCountValue(rows && rows[0]);
+      } catch (_) {
+        total = null;
+      }
+    }
+
+    if (total === null) {
+      const rows = client.query(
+        `SELECT COUNT(*) AS ROW_COUNT FROM ${req.tableRef} WHERE ${where.sql}`,
+        where.values
+      );
+      total = rowCountValue(rows && rows[0]);
+    }
+
+    reply({
+      ok: true,
+      data: {
+        table: req.tableRef,
+        name: req.name,
+        total,
+        pageSize: req.pageSize,
+        lastPage: Math.max(1, Math.ceil(total / req.pageSize)),
+      },
+    });
+  } catch (err) {
+    reply({ ok: false, reason: errorMessage(err) });
+  } finally {
+    client.close();
+  }
+}
+
 // ── OPC UA one-shot endpoints ───────────────────────────────────────────────
 
 /**
@@ -2082,6 +2398,9 @@ module.exports = {
   dbTableCreate,
   dbTableList,
   dbTableColumns,
+  dbTableTags,
+  dbTableData,
+  dbTableDataTotal,
   nodeDescendants,
   opcuaConnect,
   opcuaRead,
