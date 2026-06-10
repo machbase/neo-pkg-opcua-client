@@ -21,11 +21,14 @@ import {
     formatDataViewerTime,
     formatTimeRangeInput,
     formatTimeRangeLabel,
+    getResultHeading,
+    getScanDirectionLabel,
     getTimeFormatLabel,
     getTimeZoneLabel,
     getVisibleTagRows,
     resolveTimeRangeInput,
     resolveTagNodes,
+    showsDataViewerTimeControls,
 } from "./dataViewerModel";
 
 if (typeof HighchartsBoost === "function") {
@@ -429,7 +432,7 @@ function FormatTimezoneModal({ timeFormat, timeZone, onApply, onClose }) {
     );
 }
 
-function TagLineChart({ rows }) {
+function TagLineChart({ rows, timeFormat, timeZone }) {
     const chartRef = useRef(null);
     const containerRef = useRef(null);
     const [chartSize, setChartSize] = useState({ width: 0, height: MIN_CHART_HEIGHT });
@@ -545,6 +548,9 @@ function TagLineChart({ rows }) {
                 },
                 labels: {
                     align: "center",
+                    formatter: function () {
+                        return formatDataViewerTime(this.value, timeFormat, timeZone);
+                    },
                     style: {
                         color: "#f8f8f8",
                         fontSize: "10px",
@@ -582,7 +588,13 @@ function TagLineChart({ rows }) {
                 backgroundColor: "#1f1d1d",
                 borderColor: "#292929",
                 borderWidth: 1,
-                xDateFormat: "%Y-%m-%d %H:%M:%S",
+                formatter: function () {
+                    const points = this.points || (this.point ? [this.point] : []);
+                    const header = `<span style="font-size:10px">${formatDataViewerTime(this.x, timeFormat, timeZone)}</span><br/>`;
+                    return header + points.map((point) => (
+                        `<span style="color:${point.color}">\u25cf</span> ${point.series.name}: <b>${point.y}</b><br/>`
+                    )).join("");
+                },
             },
             legend: {
                 enabled: true,
@@ -609,7 +621,7 @@ function TagLineChart({ rows }) {
                 enabled: false,
             },
         };
-    }, [allPoints, chartSize.height, chartSize.width, series]);
+    }, [allPoints, chartSize.height, chartSize.width, series, timeFormat, timeZone]);
 
     if (!options) {
         return <div className="empty-state">No numeric data on this page</div>;
@@ -648,7 +660,7 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
     const [resultPage, setResultPage] = useState(1);
     const [range, setRange] = useState({ from: "", to: "" });
     const [rangeOpen, setRangeOpen] = useState(false);
-    const [latestFirst, setLatestFirst] = useState(true);
+    const [backwardScan, setBackwardScan] = useState(true);
     const [timeFormat, setTimeFormat] = useState(DEFAULT_TIME_FORMAT);
     const [timeZone, setTimeZone] = useState(DEFAULT_TIME_ZONE);
     const [formatOpen, setFormatOpen] = useState(false);
@@ -760,7 +772,7 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
                 name: selectedTagName,
                 valueColumn,
                 stringValueColumn,
-                direction: latestFirst ? "latest" : "oldest",
+                direction: backwardScan ? "latest" : "oldest",
                 from: queryFrom,
                 to: queryTo,
                 page: resultPage,
@@ -775,7 +787,7 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
         } finally {
             setLoading(false);
         }
-    }, [canQuery, dbServer, dbTable, latestFirst, notify, range.from, range.to, resultPage, selectedTagName, stringValueColumn, valueColumn]);
+    }, [backwardScan, canQuery, dbServer, dbTable, notify, range.from, range.to, resultPage, selectedTagName, stringValueColumn, valueColumn]);
 
     useEffect(() => {
         fetchRows();
@@ -793,9 +805,10 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
     const timeRangeButtonText = formatTimeRangeLabel(range.from, range.to);
     const timeFormatButtonText = `${getTimeFormatLabel(timeFormat)} / ${getTimeZoneLabel(timeZone)}`;
     const headerLabels = buildDataViewerHeaderLabels(collector.id, dbTable);
+    const resultHeading = getResultHeading(mode);
     const rawColumns = buildRawResultColumns(result.rows);
-    const handleLatestFirstChange = (event) => {
-        setLatestFirst(event.target.checked);
+    const handleScanDirectionChange = (nextBackwardScan) => {
+        setBackwardScan(nextBackwardScan);
         setResultPage(1);
     };
     const handleEndPage = async () => {
@@ -816,7 +829,7 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
                 name: selectedTagName,
                 valueColumn,
                 stringValueColumn,
-                direction: latestFirst ? "latest" : "oldest",
+                direction: backwardScan ? "latest" : "oldest",
                 from: queryFrom,
                 to: queryTo,
                 pageSize: RESULT_PAGE_SIZE,
@@ -920,18 +933,29 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
                         <section className="form-card data-viewer-results">
                             <div className="data-viewer-toolbar">
                                 <div className="data-viewer-title-row">
-                                    <div className="form-card-header !mb-0">
-                                        <span className="section-dot" />
-                                        {mode === "raw" ? "Raw Result" : "Chart Result"}
-                                    </div>
+                                    {resultHeading && (
+                                        <div className="form-card-header !mb-0">
+                                            <span className="section-dot" />
+                                            {resultHeading}
+                                        </div>
+                                    )}
                                     <div className="data-viewer-title-actions">
                                         {mode === "raw" && (
-                                            <label className="checkbox-label data-viewer-scan-toggle">
-                                                <input type="checkbox" checked={latestFirst} onChange={handleLatestFirstChange} />
-                                                <span>Latest first</span>
-                                            </label>
+                                            <div className="data-viewer-scan-control" role="group" aria-label={`Scan direction: ${getScanDirectionLabel(backwardScan)}`}>
+                                                <span className={`data-viewer-scan-label ${backwardScan ? "is-active" : ""}`}>Backward</span>
+                                                <button
+                                                    type="button"
+                                                    className={`switch data-viewer-scan-switch ${!backwardScan ? "active" : ""}`}
+                                                    onClick={() => handleScanDirectionChange(!backwardScan)}
+                                                    aria-label={`Scan direction: ${getScanDirectionLabel(backwardScan)}`}
+                                                    aria-pressed={!backwardScan}
+                                                >
+                                                    <div className="switch-thumb" />
+                                                </button>
+                                                <span className={`data-viewer-scan-label ${!backwardScan ? "is-active" : ""}`}>Forward</span>
+                                            </div>
                                         )}
-                                        {mode === "raw" && (
+                                        {showsDataViewerTimeControls(mode) && (
                                             <div className="data-viewer-query-controls">
                                                 <button
                                                     type="button"
@@ -996,7 +1020,7 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
                             {canQuery && mode === "chart" && (
                                 <div className="table-card data-viewer-chart-card">
                                     <div className="table-card-body">
-                                        {loading ? <div className="empty-state">Loading...</div> : <TagLineChart rows={result.rows} />}
+                                        {loading ? <div className="empty-state">Loading...</div> : <TagLineChart rows={result.rows} timeFormat={timeFormat} timeZone={timeZone} />}
                                     </div>
                                     <ResultPagination page={resultPage} pageSize={RESULT_PAGE_SIZE} rowCount={result.rows.length} loading={loading} endLoading={endLoading} onPage={setResultPage} onEndPage={handleEndPage} />
                                 </div>

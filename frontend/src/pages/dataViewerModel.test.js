@@ -12,10 +12,13 @@ import {
     formatDataViewerTime,
     formatTimeRangeInput,
     formatTimeRangeLabel,
+    getResultHeading,
+    getScanDirectionLabel,
     getVisibleTagRows,
     QUICK_TIME_RANGE_GROUPS,
     resolveTimeRangeInput,
     resolveTagNodes,
+    showsDataViewerTimeControls,
 } from "./dataViewerModel.js";
 
 test("buildDataViewerPath encodes collector id for route navigation", () => {
@@ -71,6 +74,21 @@ test("buildRawResultColumns keeps time name value first and appends extra fields
 
 test("buildRawResultColumns returns default columns when rows are empty", () => {
     assert.deepEqual(buildRawResultColumns([]).map((column) => column.key), ["time", "name", "value"]);
+});
+
+test("getResultHeading hides raw and chart result titles", () => {
+    assert.equal(getResultHeading("raw"), "");
+    assert.equal(getResultHeading("chart"), "");
+});
+
+test("getScanDirectionLabel uses scan direction wording", () => {
+    assert.equal(getScanDirectionLabel(true), "Backward");
+    assert.equal(getScanDirectionLabel(false), "Forward");
+});
+
+test("showsDataViewerTimeControls keeps time controls available for raw and chart", () => {
+    assert.equal(showsDataViewerTimeControls("raw"), true);
+    assert.equal(showsDataViewerTimeControls("chart"), true);
 });
 
 test("buildTagRows keeps ordinary tags as a flat list", () => {
