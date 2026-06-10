@@ -1,4 +1,5 @@
 import { request } from './client'
+import { buildOpcuaConnectionTarget } from './opcuaServerModel.js'
 
 const BASE = '/cgi-bin/api/collector'
 
@@ -45,8 +46,15 @@ export const getLastCollectedTime = async (name) => {
   return data.lastCollectedAt
 }
 
-export const browseNodeChildren = (endpoint, nodeId, nodeClassMask = 0) =>
-  request('POST', '/cgi-bin/api/opcua/node/descendants', { endpoint, node: nodeId, nodeClassMask })
+export const browseNodeChildren = (target, nodeId, nodeClassMask = 0) =>
+  request('POST', '/cgi-bin/api/opcua/node/descendants', {
+    ...buildOpcuaConnectionTarget(target),
+    node: nodeId,
+    nodeClassMask,
+  })
 
-export const testOpcuaConnection = (endpoint, readRetryInterval) =>
-  request('POST', '/cgi-bin/api/opcua/connect', { endpoint, readRetryInterval })
+export const testOpcuaConnection = (target, readRetryInterval) =>
+  request('POST', '/cgi-bin/api/opcua/connect', {
+    ...buildOpcuaConnectionTarget(target),
+    readRetryInterval,
+  })

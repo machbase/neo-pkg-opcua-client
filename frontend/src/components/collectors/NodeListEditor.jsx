@@ -115,7 +115,7 @@ function CalcSteps({ node, onFieldChange, onOrderChange }) {
     );
 }
 
-export default function NodeListEditor({ nodes, onChange, endpoint, selectionMode = "numeric-only", storageMode = "default" }) {
+export default function NodeListEditor({ nodes, onChange, endpoint, endpointTarget, selectionMode = "numeric-only", storageMode = "default" }) {
     const [name, setName] = useState("");
     const [nodeId, setNodeId] = useState("");
     const [nodeIdError, setNodeIdError] = useState(null);
@@ -131,7 +131,7 @@ export default function NodeListEditor({ nodes, onChange, endpoint, selectionMod
     const [browserOpen, setBrowserOpen] = useState(false);
     const editingNameInputRef = useRef(null);
 
-    const hasEndpoint = Boolean(endpoint?.trim());
+    const hasEndpoint = Boolean(endpointTarget?.server || endpointTarget?.endpoint || endpoint?.trim());
 
     useEffect(() => {
         if (editingNameIdx === null) return;
@@ -553,6 +553,7 @@ export default function NodeListEditor({ nodes, onChange, endpoint, selectionMod
             {browserOpen && hasEndpoint && (
                 <NodeBrowserPanel
                     endpoint={endpoint}
+                    endpointTarget={endpointTarget}
                     existingNodes={nodes}
                     onSync={handleBrowseSync}
                     onClose={() => setBrowserOpen(false)}

@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { Routes, Route, Navigate, useNavigate, useLocation } from 'react-router'
 import useCollectors from './hooks/useCollectors'
 import useServers from './hooks/useServers'
+import useOpcuaServers from './hooks/useOpcuaServers'
 import { useApp } from './context/AppContext'
 import * as api from './api/collectors'
 import Sidebar from './components/layout/Sidebar'
@@ -9,6 +10,7 @@ import DashboardPage from './pages/DashboardPage'
 import CollectorFormPage from './pages/CollectorFormPage'
 import CollectorDataViewerRoute from './pages/CollectorDataViewerRoute'
 import ServerSettingsModal from './components/servers/ServerSettingsModal'
+import OpcuaServerSettingsModal from './components/opcuaServers/OpcuaServerSettingsModal'
 import Toast from './components/common/Toast'
 
 export default function IndexApp() {
@@ -16,10 +18,22 @@ export default function IndexApp() {
   const location = useLocation()
   const { collectors, toggleCollector, installCollector, removeCollector, refreshCollectors } = useCollectors()
   const { servers, loading: serversLoading, addServer, editServer, removeServer, healthCheck, refreshServers } = useServers()
+  const {
+    opcuaServers,
+    loading: opcuaServersLoading,
+    addOpcuaServer,
+    editOpcuaServer,
+    removeOpcuaServer,
+    healthCheck: opcuaHealthCheck,
+    formHealthCheck: opcuaFormHealthCheck,
+    refreshOpcuaServers,
+  } = useOpcuaServers()
   const { selectedCollectorId, setSelectedCollectorId, notify } = useApp()
   const [detail, setDetail] = useState(null)
   const [showServerSettings, setShowServerSettings] = useState(false)
   const [autoOpenForm, setAutoOpenForm] = useState(false)
+  const [showOpcuaServerSettings, setShowOpcuaServerSettings] = useState(false)
+  const [autoOpenOpcuaForm, setAutoOpenOpcuaForm] = useState(false)
 
   const openServerSettings = useCallback((openForm = false) => {
     setAutoOpenForm(Boolean(openForm))
@@ -29,6 +43,16 @@ export default function IndexApp() {
   const closeServerSettings = useCallback(() => {
     setShowServerSettings(false)
     setAutoOpenForm(false)
+  }, [])
+
+  const openOpcuaServerSettings = useCallback((openForm = false) => {
+    setAutoOpenOpcuaForm(Boolean(openForm))
+    setShowOpcuaServerSettings(true)
+  }, [])
+
+  const closeOpcuaServerSettings = useCallback(() => {
+    setShowOpcuaServerSettings(false)
+    setAutoOpenOpcuaForm(false)
   }, [])
 
   const fetchDetail = useCallback((id) => {
@@ -80,6 +104,9 @@ export default function IndexApp() {
                 servers={servers}
                 onOpenServerSettings={openServerSettings}
                 onRefreshServers={refreshServers}
+                opcuaServers={opcuaServers}
+                onOpenOpcuaServerSettings={openOpcuaServerSettings}
+                onRefreshOpcuaServers={refreshOpcuaServers}
               />
             } />
             <Route path="/collectors/:id/edit" element={
@@ -90,6 +117,9 @@ export default function IndexApp() {
                 servers={servers}
                 onOpenServerSettings={openServerSettings}
                 onRefreshServers={refreshServers}
+                opcuaServers={opcuaServers}
+                onOpenOpcuaServerSettings={openOpcuaServerSettings}
+                onRefreshOpcuaServers={refreshOpcuaServers}
               />
             } />
           </Routes>
@@ -107,6 +137,20 @@ export default function IndexApp() {
           onRefresh={refreshServers}
           onClose={closeServerSettings}
           autoOpenForm={autoOpenForm}
+        />
+      )}
+      {showOpcuaServerSettings && (
+        <OpcuaServerSettingsModal
+          opcuaServers={opcuaServers}
+          loading={opcuaServersLoading}
+          onAdd={addOpcuaServer}
+          onEdit={editOpcuaServer}
+          onDelete={removeOpcuaServer}
+          onHealthCheck={opcuaHealthCheck}
+          onFormHealthCheck={opcuaFormHealthCheck}
+          onRefresh={refreshOpcuaServers}
+          onClose={closeOpcuaServerSettings}
+          autoOpenForm={autoOpenOpcuaForm}
         />
       )}
     </>

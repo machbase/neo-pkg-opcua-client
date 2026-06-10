@@ -55,7 +55,7 @@ function collectDescendants(parentId, cm, result) {
     }
 }
 
-export default function NodeBrowserPanel({ endpoint, existingNodes, onSync, onClose, selectionMode = "numeric-only" }) {
+export default function NodeBrowserPanel({ endpoint, endpointTarget, existingNodes, onSync, onClose, selectionMode = "numeric-only" }) {
     const [rootNodeId, setRootNodeId] = useState(DEFAULT_ROOT);
     const [rootInput, setRootInput] = useState(DEFAULT_ROOT);
     const [loading, setLoading] = useState(false);
@@ -79,7 +79,7 @@ export default function NodeBrowserPanel({ endpoint, existingNodes, onSync, onCl
         async (parentId) => {
             setLoadingIds((prev) => new Set([...prev, parentId]));
             try {
-                const data = await browseNodeChildren(endpoint, parentId);
+                const data = await browseNodeChildren(endpointTarget || endpoint, parentId);
                 setChildrenMap((prev) => {
                     const next = new Map(prev);
                     next.set(parentId, data || []);
@@ -99,7 +99,7 @@ export default function NodeBrowserPanel({ endpoint, existingNodes, onSync, onCl
                 });
             }
         },
-        [endpoint]
+        [endpoint, endpointTarget]
     );
 
     const browse = useCallback(
@@ -108,7 +108,7 @@ export default function NodeBrowserPanel({ endpoint, existingNodes, onSync, onCl
             setError(null);
             setChildrenMap(new Map());
             setExpandedIds(new Set());
-            browseNodeChildren(endpoint, nodeId)
+            browseNodeChildren(endpointTarget || endpoint, nodeId)
                 .then((data) => {
                     const map = new Map();
                     map.set(nodeId, data || []);
@@ -119,7 +119,7 @@ export default function NodeBrowserPanel({ endpoint, existingNodes, onSync, onCl
                 .catch((e) => setError(e.reason || e.message || "Failed to connect"))
                 .finally(() => setLoading(false));
         },
-        [endpoint]
+        [endpoint, endpointTarget]
     );
 
     useEffect(() => {
