@@ -94,7 +94,7 @@ export default function DashboardPage({ collectors, detail, onDelete }) {
             setLastCollectedAt(null);
             return;
         }
-        const { interval, endpoint, readRetryInterval, running } = params;
+        const { interval, target, readRetryInterval, running } = params;
         const abnormal =
             running && interval > 0 && (ts == null || Date.now() - ts > 3 * interval);
 
@@ -105,11 +105,11 @@ export default function DashboardPage({ collectors, detail, onDelete }) {
             return;
         }
 
-        if (abnormalCheckedRef.current || !endpoint) return;
+        if (abnormalCheckedRef.current || (!target?.server && !target?.endpoint)) return;
         abnormalCheckedRef.current = true;
 
         try {
-            await api.testOpcuaConnection(endpoint, readRetryInterval);
+            await api.testOpcuaConnection(target, readRetryInterval);
             setOpcuaReachable(true);
             setOpcuaError(null);
         } catch (e) {
@@ -127,16 +127,19 @@ export default function DashboardPage({ collectors, detail, onDelete }) {
         if (!collector) return;
         const params = {
             interval: Number(opcua?.interval) || 0,
-            endpoint: opcua?.endpoint,
+            target: opcua?.server ? { server: opcua.server } : { endpoint: opcua?.endpoint },
             readRetryInterval: opcua?.readRetryInterval != null ? Number(opcua.readRetryInterval) : undefined,
             running: collector.status === "running",
         };
         fetchLastTime(collector.id, params);
         intervalRef.current = setInterval(() => fetchLastTime(collector.id, params), 5000);
         return () => clearInterval(intervalRef.current);
-    }, [collector?.id, collector?.status, opcua?.interval, opcua?.endpoint, opcua?.readRetryInterval, fetchLastTime]);
+    }, [collector?.id, collector?.status, opcua?.interval, opcua?.server, opcua?.endpoint, opcua?.readRetryInterval, fetchLastTime]);
 
     const dbServer = typeof config?.db === "string" ? config.db : "";
+    const opcuaServer = opcua?.server || "";
+    const opcuaEndpoint = opcua?.endpoint || "";
+    const opcuaDisplay = opcuaServer || opcuaEndpoint || "";
     const dbTable = config?.dbTable || "";
     const valueColumn = config?.valueColumn || "";
     const stringValueColumn = config?.stringValueColumn || "";
@@ -261,8 +264,8 @@ export default function DashboardPage({ collectors, detail, onDelete }) {
                                 <Icon name="sensors" className="text-primary" />
                             </div>
                             <div className="form-label">Server</div>
-                            <div className="text-lg font-bold truncate mb-20" title={opcua?.endpoint}>
-                                {opcua?.endpoint || "-"}
+                            <div className="text-lg font-bold truncate mb-20" title={opcuaDisplay}>
+                                {opcuaDisplay || "-"}
                             </div>
                             <div className="flex gap-24 mt-auto">
                                 <div>

@@ -194,6 +194,7 @@ class MockOpcuaClient {
         this.openResult = true;
         this.readResult = null;
         this.readError = null;
+        this.lastError = null;
         this.readCalls = [];
         this.writeResult = null;
         this.writeError = null;
@@ -1506,6 +1507,28 @@ runner.run('Handler: opcuaConnect', {
         t.assertEqual(mockOpcuaClient.options.security.password, 'secret');
     },
 
+    'ignores direct PEM values for None security mode': (t) => {
+        const H = makeHandler();
+        let result;
+        H.opcuaConnect({
+            endpoint: 'opc.tcp://secure:4840',
+            security: {
+                enabled: true,
+                securityPolicy: 'None',
+                messageSecurityMode: 'None',
+                authMode: 'UserName',
+                username: 'opcuser',
+                password: 'secret',
+                certificatePem: '-----BEGIN CERTIFICATE-----\nCERT\n-----END CERTIFICATE-----\n',
+                keyPem: '-----BEGIN PRIVATE KEY-----\nKEY\n-----END PRIVATE KEY-----\n',
+            },
+        }, undefined, (r) => { result = r; });
+        t.assert(result.ok, 'should be ok');
+        t.assertEqual(mockOpcuaClient.options.security.certificateFile, undefined);
+        t.assertEqual(mockOpcuaClient.options.security.keyFile, undefined);
+        t.assertEqual(Object.keys(mockCGI._opcuaCredentialWrites).length, 0);
+    },
+
     'uses temporary certificate files for direct secure connection test and cleans them up': (t) => {
         const H = makeHandler();
         let result;
@@ -1550,6 +1573,24 @@ runner.run('Handler: opcuaConnect', {
         t.assertEqual(Object.keys(mockCGI._opcuaCredentialWrites).length, 0);
     },
 
+    'rejects direct secure connection test when only one PEM value is provided': (t) => {
+        const H = makeHandler();
+        let result;
+        H.opcuaConnect({
+            endpoint: 'opc.tcp://secure:4840',
+            security: {
+                enabled: true,
+                securityPolicy: 'Basic256Sha256',
+                messageSecurityMode: 'SignAndEncrypt',
+                authMode: 'Anonymous',
+                certificatePem: '-----BEGIN CERTIFICATE-----\nCERT\n-----END CERTIFICATE-----\n',
+            },
+        }, undefined, (r) => { result = r; });
+        t.assert(!result.ok, 'should not be ok');
+        t.assert(result.reason.includes('security.certificatePem and security.keyPem must be provided together'));
+        t.assertEqual(Object.keys(mockCGI._opcuaCredentialWrites).length, 0);
+    },
+
     'returns error when connect fails': (t) => {
         const H = makeHandler();
         mockOpcuaClient.openResult = false;
@@ -1557,6 +1598,17 @@ runner.run('Handler: opcuaConnect', {
         H.opcuaConnect('opc.tcp://bad:1', undefined, (r) => { result = r; });
         t.assert(!result.ok, 'should not be ok');
         t.assert(result.reason.includes('connect failed'));
+    },
+
+    'returns native error detail when connect open fails': (t) => {
+        const H = makeHandler();
+        mockOpcuaClient.openResult = false;
+        mockOpcuaClient.lastError = new Error('BadIdentityTokenRejected');
+        let result;
+        H.opcuaConnect('opc.tcp://bad:1', undefined, (r) => { result = r; });
+        t.assert(!result.ok, 'should not be ok');
+        t.assert(result.reason.includes('connect failed'));
+        t.assert(result.reason.includes('BadIdentityTokenRejected'));
     },
 });
 

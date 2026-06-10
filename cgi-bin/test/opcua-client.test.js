@@ -130,6 +130,50 @@ runner.run('OpcuaClient read batching', {
             ['n3'],
         ]);
     },
+
+    'passes username credentials without forcing UserName authMode': (t) => {
+        resetNativeMock();
+        const client = makeClient({
+            security: {
+                enabled: true,
+                securityPolicy: 'None',
+                messageSecurityMode: 'None',
+                authMode: 'UserName',
+                username: 'test',
+                password: 'machbasemachbase',
+            },
+        });
+        const nativeClient = MockNativeClient.instances[0];
+        t.assertEqual(nativeClient.options.authMode, undefined);
+        t.assertEqual(nativeClient.options.username, 'test');
+        t.assertEqual(nativeClient.options.password, 'machbasemachbase');
+        client.close();
+    },
+
+    'passes username credentials when native AuthMode enum is unavailable': (t) => {
+        resetNativeMock();
+        const originalAuthMode = require.cache['opcua'].exports.AuthMode;
+        delete require.cache['opcua'].exports.AuthMode;
+        try {
+            const client = makeClient({
+                security: {
+                    enabled: true,
+                    securityPolicy: 'None',
+                    messageSecurityMode: 'None',
+                    authMode: 'UserName',
+                    username: 'test',
+                    password: 'machbasemachbase',
+                },
+            });
+            const nativeClient = MockNativeClient.instances[0];
+            t.assertEqual(nativeClient.options.authMode, undefined);
+            t.assertEqual(nativeClient.options.username, 'test');
+            t.assertEqual(nativeClient.options.password, 'machbasemachbase');
+            client.close();
+        } finally {
+            require.cache['opcua'].exports.AuthMode = originalAuthMode;
+        }
+    },
 });
 
 delete require.cache[opcuaClientPath];

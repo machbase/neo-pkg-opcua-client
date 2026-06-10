@@ -546,6 +546,12 @@ function normalizeOpcuaServerSecurity(security, options = {}) {
   }
 
   const certificateRequired = normalized.authMode === 'Certificate' || normalized.messageSecurityMode !== 'None';
+  if (!certificateRequired) {
+    if (forStorage && serverName && (previous.certificateFile || previous.keyFile)) {
+      normalized.__removeCertificate = true;
+    }
+    return normalized;
+  }
   const existingCertificateFiles = normalizeText(input.certificateFile)
     || (!input.clearCertificate && normalizeText(previous.certificateFile));
   const existingKeyFiles = normalizeText(input.keyFile)
@@ -763,6 +769,11 @@ function opcuaClientConfig(resolved, readRetryInterval) {
     config.readRetryInterval = readRetryInterval;
   }
   return config;
+}
+
+function opcuaConnectFailedReason(endpoint, client) {
+  const detail = client && client.lastError ? errorMessage(client.lastError) : '';
+  return detail ? `connect failed: ${endpoint}: ${detail}` : `connect failed: ${endpoint}`;
 }
 
 function temporaryOpcuaConnectSecurityName() {
@@ -2187,7 +2198,7 @@ function opcuaConnect(endpointOrRequest, readRetryInterval, reply) {
     cleanupTemporaryOpcuaConnectSecurity(temporarySecurityName);
     reply({
       ok: false,
-      reason: 'connect failed: ' + endpoint,
+      reason: opcuaConnectFailedReason(endpoint, client),
     });
     return;
   }
@@ -2228,7 +2239,7 @@ function opcuaRead(endpointOrRequest, nodeIds, reply) {
   if (!client.open()) {
     reply({
       ok: false,
-      reason: 'connect failed: ' + endpoint,
+      reason: opcuaConnectFailedReason(endpoint, client),
     });
     return;
   }
@@ -2272,7 +2283,7 @@ function opcuaWrite(endpointOrRequest, writes, reply) {
   if (!client.open()) {
     reply({
       ok: false,
-      reason: 'connect failed: ' + endpoint,
+      reason: opcuaConnectFailedReason(endpoint, client),
     });
     return;
   }
@@ -2357,7 +2368,7 @@ function nodeDescendants(body, reply) {
   if (!client.open()) {
     reply({
       ok: false,
-      reason: 'connect failed: ' + resolved.endpoint,
+      reason: opcuaConnectFailedReason(resolved.endpoint, client),
     });
     return;
   }

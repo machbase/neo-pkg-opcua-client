@@ -23,6 +23,7 @@ export default function NodeTreeItem({
   node,
   depth,
   endpoint,
+  endpointTarget,
   selectedIds,
   onToggle,
   existingIds,
@@ -58,7 +59,7 @@ export default function NodeTreeItem({
     setLoading(true)
     setError(null)
     try {
-      const data = await browseNodeChildren(endpoint, node.nodeId)
+      const data = await browseNodeChildren(endpointTarget || endpoint, node.nodeId)
       setChildren(data || [])
       setExpanded(true)
     } catch (e) {
@@ -66,7 +67,7 @@ export default function NodeTreeItem({
     } finally {
       setLoading(false)
     }
-  }, [isObject, isCycle, expanded, children, endpoint, node.nodeId])
+  }, [isObject, isCycle, expanded, children, endpoint, endpointTarget, node.nodeId])
 
   const handleCheck = () => {
     if (alreadyAdded) return
@@ -156,6 +157,7 @@ export default function NodeTreeItem({
               node={child}
               depth={depth + 1}
               endpoint={endpoint}
+              endpointTarget={endpointTarget}
               selectedIds={selectedIds}
               onToggle={onToggle}
               existingIds={existingIds}
