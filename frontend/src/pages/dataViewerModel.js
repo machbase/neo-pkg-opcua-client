@@ -98,6 +98,18 @@ export function buildRawResultColumns(rows = []) {
     }));
 }
 
+export function getResultHeading(mode) {
+    return "";
+}
+
+export function getScanDirectionLabel(backwardScan) {
+    return backwardScan ? "Backward" : "Forward";
+}
+
+export function showsDataViewerTimeControls(mode) {
+    return mode === "raw" || mode === "chart";
+}
+
 export const QUICK_TIME_RANGE_GROUPS = [
     [
         { key: "now-5s", name: "Last 5 seconds", value: ["now-5s", "now"] },

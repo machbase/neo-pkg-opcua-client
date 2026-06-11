@@ -3202,8 +3202,55 @@ label.switch input:checked + .switch-slider::before {
     min-width: 0;
 }
 
-.data-viewer-scan-toggle {
-    min-width: 104px;
+.data-viewer-scan-control {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-6);
+    flex-shrink: 0;
+    height: var(--size-control-height);
+    color: var(--color-on-surface-secondary);
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-medium);
+    line-height: 1;
+    user-select: none;
+}
+
+.data-viewer-scan-label {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 56px;
+    height: 20px;
+    color: var(--color-on-surface-tertiary);
+    line-height: 20px;
+    text-align: center;
+}
+
+.data-viewer-scan-label.is-active {
+    color: var(--color-on-surface);
+}
+
+.data-viewer-scan-switch {
+    display: block;
+    align-self: center;
+    width: 36px;
+    height: 20px;
+    padding: 0;
+    margin: 0 var(--spacing-2);
+    line-height: 0;
+    appearance: none;
+}
+
+.data-viewer-scan-switch .switch-thumb {
+    top: 2px;
+    left: 3px;
+    width: 14px;
+    height: 14px;
+}
+
+.data-viewer-scan-switch.active .switch-thumb {
+    left: auto;
+    right: 3px;
 }
 
 .data-viewer-format-button {
