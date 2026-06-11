@@ -1,9 +1,11 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import Icon from "../common/Icon";
 import * as serversApi from "../../api/servers";
 import { useApp } from "../../context/AppContext";
 
 const NUMERIC_TYPES = new Set(["SHORT", "INTEGER", "LONG", "FLOAT", "DOUBLE"]);
+const AUTO_TABLE_VALUE_COLUMN = "VALUE";
+const AUTO_TABLE_STRING_COLUMN = "STR_VALUE";
 
 function classifyColumn(col) {
     const t = (col?.type || "").toUpperCase();
@@ -31,12 +33,31 @@ function groupTablesByUser(tables) {
     });
 }
 
+function normalizeTableInput(value) {
+    return String(value || "").trim().toUpperCase();
+}
+
+function isTableNotFoundError(e) {
+    const msg = String(e?.reason || e?.message || "").toLowerCase();
+    return msg.includes("table") && msg.includes("not found");
+}
+
+function isStringValueCandidate(col) {
+    return (
+        classifyColumn(col) === "string" &&
+        !col?.primaryKey &&
+        !col?.basetime &&
+        !col?.metadata
+    );
+}
+
 export default function DbSection({
     form,
     update,
     servers = [],
     onOpenServerSettings,
     onRefreshServers,
+    isEdit = false,
 }) {
     const { notify } = useApp();
     const db = form.db;
@@ -45,6 +66,8 @@ export default function DbSection({
     const [columns, setColumns] = useState([]);
     const [loadingTables, setLoadingTables] = useState(false);
     const [loadingColumns, setLoadingColumns] = useState(false);
+    const [tableDropdownOpen, setTableDropdownOpen] = useState(false);
+    const tableComboRef = useRef(null);
 
     useEffect(() => {
         if (!db.server && servers.length > 0) {
@@ -69,30 +92,61 @@ export default function DbSection({
         }
     }, [db.server, notify]);
 
-    const fetchColumns = useCallback(async () => {
-        if (!db.server || !db.table) {
+    const verifyTable = useCallback(async (options = {}) => {
+        const { allowAutoCreate = true, notifyOnError = true, table = db.table } = options;
+        const tableName = normalizeTableInput(table);
+        if (!db.server || !tableName) {
             setColumns([]);
-            return;
+            if (db.autoCreateTable) update("db.autoCreateTable", false);
+            if (db.tableStatus !== "unknown") update("db.tableStatus", "unknown");
+            return "unknown";
+        }
+        if (tableName !== db.table) {
+            update("db.table", tableName);
         }
         setLoadingColumns(true);
         try {
-            const data = await serversApi.listColumns(db.server, db.table);
+            const data = await serversApi.listColumns(db.server, tableName);
             setColumns(data?.columns || []);
+            if (db.autoCreateTable) update("db.autoCreateTable", false);
+            if (db.tableStatus !== "existing") update("db.tableStatus", "existing");
+            return "existing";
         } catch (e) {
-            notify(e.reason || e.message, "error");
             setColumns([]);
+            if (!isEdit && allowAutoCreate && isTableNotFoundError(e) && !tableName.includes(".")) {
+                if (!db.autoCreateTable) update("db.autoCreateTable", true);
+                if (db.tableStatus !== "autoCreate") update("db.tableStatus", "autoCreate");
+                return "autoCreate";
+            }
+            if (db.autoCreateTable) update("db.autoCreateTable", false);
+            if (isTableNotFoundError(e)) {
+                if (db.tableStatus !== "missing") update("db.tableStatus", "missing");
+            } else if (db.tableStatus !== "unknown") {
+                update("db.tableStatus", "unknown");
+            }
+            if (notifyOnError) {
+                notify(e.reason || e.message, "error");
+            }
+            return "unknown";
         } finally {
             setLoadingColumns(false);
         }
-    }, [db.server, db.table, notify]);
+    }, [db.server, db.table, db.autoCreateTable, db.tableStatus, isEdit, notify, update]);
 
     useEffect(() => {
         fetchTables();
     }, [fetchTables]);
 
     useEffect(() => {
-        fetchColumns();
-    }, [fetchColumns]);
+        if (!tableDropdownOpen) return;
+        const handleOutsideClick = (event) => {
+            if (!tableComboRef.current?.contains(event.target)) {
+                setTableDropdownOpen(false);
+            }
+        };
+        document.addEventListener("mousedown", handleOutsideClick);
+        return () => document.removeEventListener("mousedown", handleOutsideClick);
+    }, [tableDropdownOpen]);
 
     const { numericCols, jsonCols, stringCols } = useMemo(() => {
         const nc = [];
@@ -102,7 +156,7 @@ export default function DbSection({
             const kind = classifyColumn(col);
             if (kind === "numeric") nc.push(col);
             else if (kind === "json") jc.push(col);
-            else if (kind === "string") sc.push(col);
+            else if (isStringValueCandidate(col)) sc.push(col);
         }
         return { numericCols: nc, jsonCols: jc, stringCols: sc };
     }, [columns]);
@@ -138,6 +192,10 @@ export default function DbSection({
         update("db.stringColumn", "");
         update("db.stringOnly", false);
         update("db.columnKind", "");
+        update("db.autoCreateTable", false);
+        update("db.tableStatus", "unknown");
+        setColumns([]);
+        setTableDropdownOpen(false);
     };
 
     const handleTableChange = (e) => {
@@ -146,6 +204,57 @@ export default function DbSection({
         update("db.stringColumn", "");
         update("db.stringOnly", false);
         update("db.columnKind", "");
+        update("db.autoCreateTable", false);
+        update("db.tableStatus", "unknown");
+        setColumns([]);
+        setTableDropdownOpen(true);
+    };
+
+    const handleTableBlur = () => {
+        if (hasServer && hasTable) {
+            verifyTable();
+        }
+    };
+
+    const handleTableKeyDown = (e) => {
+        if (e.key === "Enter") {
+            e.preventDefault();
+            setTableDropdownOpen(false);
+            verifyTable();
+        } else if (e.key === "ArrowDown") {
+            if (hasServer) {
+                fetchTables();
+                setTableDropdownOpen(true);
+            }
+        } else if (e.key === "Escape") {
+            setTableDropdownOpen(false);
+        }
+    };
+
+    const handleTableFocus = () => {
+        if (!hasServer) return;
+        fetchTables();
+        setTableDropdownOpen(true);
+    };
+
+    const handleTableTriggerClick = () => {
+        if (!hasServer) return;
+        fetchTables();
+        setTableDropdownOpen((open) => !open);
+    };
+
+    const handleTableOptionSelect = (label) => {
+        const tableName = normalizeTableInput(label);
+        update("db.table", tableName);
+        update("db.column", "");
+        update("db.stringColumn", "");
+        update("db.stringOnly", false);
+        update("db.columnKind", "");
+        update("db.autoCreateTable", false);
+        update("db.tableStatus", "unknown");
+        setColumns([]);
+        setTableDropdownOpen(false);
+        verifyTable({ table: tableName });
     };
 
     const handleValueColumnChange = (e) => {
@@ -161,23 +270,38 @@ export default function DbSection({
     };
 
     const hasServer = Boolean(db.server);
-    const hasTable = Boolean(db.table);
+    const hasTable = Boolean(normalizeTableInput(db.table));
     const groupedTables = useMemo(() => groupTablesByUser(tables), [tables]);
+    const tableOptions = useMemo(
+        () =>
+            groupedTables.flatMap(([user, list]) =>
+                list.map((t) => displayTableName(user, t.name))
+            ),
+        [groupedTables]
+    );
     const tableInList = useMemo(
         () =>
             tables.some(
-                (t) => displayTableName(t.user || "SYS", t.name) === db.table
+                (t) =>
+                    normalizeTableInput(displayTableName(t.user || "SYS", t.name)) ===
+                    normalizeTableInput(db.table)
             ),
         [tables, db.table]
     );
+    const canAutoCreateTypedTable = !isEdit && hasTable && !normalizeTableInput(db.table).includes(".");
 
+    const autoCreateMode = !isEdit && db.autoCreateTable === true && db.tableStatus === "autoCreate";
+    const tableMissing = db.tableStatus === "missing";
+    const tableReady = db.tableStatus === "existing";
     const isJsonMode = selectedColumnKind === "json";
     const stringOnly = !!db.stringOnly;
     const showValueColumn = !stringOnly;
     const stringColumnRequired = stringOnly;
-    const stringColumnDisabled = !hasTable || isJsonMode;
+    const stringColumnDisabled = autoCreateMode || !tableReady || isJsonMode;
 
-    const footerHint = stringOnly
+    const footerHint = autoCreateMode
+        ? "This table will be created automatically with VALUE and STR_VALUE columns."
+        : stringOnly
         ? "All values will be stored as strings in the selected column."
         : isJsonMode
         ? "All node values will be written as a single JSON payload per cycle."
@@ -230,40 +354,101 @@ export default function DbSection({
 
                 <div>
                     <label className="form-label">Table</label>
-                    <select
-                        required
-                        value={db.table || ""}
-                        onChange={handleTableChange}
-                        onMouseDown={() => hasServer && fetchTables()}
-                        disabled={!hasServer}
-                        className="w-full"
-                    >
-                        <option value="" disabled>
-                            {!hasServer
-                                ? "Select a database server first"
-                                : loadingTables
-                                ? "Loading..."
-                                : "Select a table..."}
-                        </option>
-                        {db.table && !tableInList && (
-                            <option value={db.table}>{db.table}</option>
+                    <div ref={tableComboRef} className="table-combo">
+                        <div className="table-combo-control">
+                            <input
+                                required
+                                value={db.table || ""}
+                                onChange={handleTableChange}
+                                onBlur={handleTableBlur}
+                                onKeyDown={handleTableKeyDown}
+                                onFocus={handleTableFocus}
+                                disabled={!hasServer}
+                                className="table-combo-input"
+                                role="combobox"
+                                aria-expanded={tableDropdownOpen}
+                                aria-haspopup="listbox"
+                                placeholder={
+                                    !hasServer
+                                        ? "Select a database server first"
+                                        : loadingTables
+                                        ? "Loading..."
+                                        : "Select or enter a table..."
+                                }
+                            />
+                            <button
+                                type="button"
+                                className="table-combo-trigger"
+                                onClick={handleTableTriggerClick}
+                                disabled={!hasServer}
+                                aria-label="Toggle table list"
+                            >
+                                <Icon
+                                    name="keyboard_arrow_down"
+                                    className={`icon-sm table-combo-chevron ${
+                                        tableDropdownOpen ? "table-combo-chevron--open" : ""
+                                    }`}
+                                />
+                            </button>
+                        </div>
+                        {tableDropdownOpen && hasServer && (
+                            <div className="table-combo-menu" role="listbox">
+                                {loadingTables ? (
+                                    <div className="table-combo-empty">Loading...</div>
+                                ) : tableOptions.length > 0 ? (
+                                    <>
+                                        {tableOptions.map((label) => (
+                                            <button
+                                                type="button"
+                                                key={label}
+                                                className={`table-combo-option ${
+                                                    normalizeTableInput(label) === normalizeTableInput(db.table)
+                                                        ? "table-combo-option--selected"
+                                                        : ""
+                                                }`}
+                                                onMouseDown={(e) => e.preventDefault()}
+                                                onClick={() => handleTableOptionSelect(label)}
+                                                title={label}
+                                            >
+                                                <span className="table-combo-option-label">{label}</span>
+                                                {normalizeTableInput(label) === normalizeTableInput(db.table) && (
+                                                    <Icon name="check" className="icon-sm" />
+                                                )}
+                                            </button>
+                                        ))}
+                                    </>
+                                ) : (
+                                    <div className="table-combo-empty">
+                                        {canAutoCreateTypedTable && !tableInList
+                                            ? "No matching table. The name can be used for auto-create."
+                                            : "No tables found."}
+                                    </div>
+                                )}
+                            </div>
                         )}
-                        {groupedTables.map(([user, list]) => (
-                            <optgroup key={user} label={user}>
-                                {list.map((t) => {
-                                    const label = displayTableName(user, t.name);
-                                    return (
-                                        <option key={label} value={label}>
-                                            {label}
-                                        </option>
-                                    );
-                                })}
-                            </optgroup>
-                        ))}
-                    </select>
+                    </div>
                 </div>
 
-                {hasTable && stringOnly && !hasValueColCandidates && (
+                {hasTable && autoCreateMode && (
+                    <div className="text-xs text-on-surface-tertiary flex items-start gap-6">
+                        <Icon name="info" className="icon-sm shrink-0 mt-1" />
+                        <span>
+                            Table not found. It will be created automatically when
+                            the job is saved.
+                        </span>
+                    </div>
+                )}
+
+                {hasTable && tableMissing && (
+                    <div className="text-xs flex items-start gap-6" style={{ color: "var(--color-error)" }}>
+                        <Icon name="info" className="icon-sm shrink-0 mt-1" />
+                        <span>
+                            Table not found. Select an existing table before saving.
+                        </span>
+                    </div>
+                )}
+
+                {hasTable && !autoCreateMode && stringOnly && !hasValueColCandidates && (
                     <div className="text-xs text-on-surface-tertiary flex items-start gap-6">
                         <Icon name="info" className="icon-sm shrink-0 mt-1" />
                         <span>
@@ -274,20 +459,45 @@ export default function DbSection({
                 )}
 
                 <div className="grid grid-cols-2 gap-12">
-                    {showValueColumn && (
+                    {autoCreateMode ? (
+                        <>
+                            <div>
+                                <label className="form-label">Value Column</label>
+                                <input
+                                    value={AUTO_TABLE_VALUE_COLUMN}
+                                    disabled
+                                    className="w-full"
+                                    readOnly
+                                />
+                            </div>
+                            <div>
+                                <label className="form-label">String Value Column</label>
+                                <input
+                                    value={AUTO_TABLE_STRING_COLUMN}
+                                    disabled
+                                    className="w-full"
+                                    readOnly
+                                />
+                            </div>
+                        </>
+                    ) : showValueColumn && (
                         <div>
                             <label className="form-label">Value Column</label>
                             <select
                                 required
                                 value={db.column || ""}
                                 onChange={handleValueColumnChange}
-                                onMouseDown={() => hasTable && fetchColumns()}
-                                disabled={!hasTable}
+                                onMouseDown={() => hasTable && verifyTable()}
+                                disabled={!tableReady}
                                 className="w-full"
                             >
                                 <option value="" disabled>
-                                    {!hasTable
+                                    {tableMissing
+                                        ? "Table not found"
+                                        : !hasTable
                                         ? "Select a table first"
+                                        : !tableReady
+                                        ? "Verify table first"
                                         : loadingColumns
                                         ? "Loading..."
                                         : "Select a column..."}
@@ -327,48 +537,54 @@ export default function DbSection({
                         </div>
                     )}
 
-                    <div>
-                        <label className="form-label">
-                            String Value Column
-                            {stringColumnRequired ? null : (
-                                <span className="text-on-surface-tertiary font-normal ml-4">
-                                    (optional)
-                                </span>
-                            )}
-                        </label>
-                        <select
-                            required={stringColumnRequired}
-                            value={isJsonMode ? "" : db.stringColumn || ""}
-                            onChange={handleStringColumnChange}
-                            onMouseDown={() => hasTable && !isJsonMode && fetchColumns()}
-                            disabled={stringColumnDisabled}
-                            className="w-full"
-                            title={isJsonMode ? "Not used in JSON mode" : undefined}
-                        >
-                            <option value="">
-                                {!hasTable
-                                    ? "Select a table first"
-                                    : isJsonMode
-                                    ? "Not used in JSON mode"
-                                    : loadingColumns
-                                    ? "Loading..."
-                                    : stringColumnRequired
-                                    ? "Select a VARCHAR column..."
-                                    : "None"}
-                            </option>
-                            {db.stringColumn &&
-                                !stringCols.find((c) => c.name === db.stringColumn) && (
-                                    <option value={db.stringColumn}>
-                                        {db.stringColumn}
-                                    </option>
+                    {!autoCreateMode && (
+                        <div>
+                            <label className="form-label">
+                                String Value Column
+                                {stringColumnRequired ? null : (
+                                    <span className="text-on-surface-tertiary font-normal ml-4">
+                                        (optional)
+                                    </span>
                                 )}
-                            {stringCols.map((c) => (
-                                <option key={c.name} value={c.name}>
-                                    {c.name} ({c.type})
+                            </label>
+                            <select
+                                required={stringColumnRequired}
+                                value={isJsonMode ? "" : db.stringColumn || ""}
+                                onChange={handleStringColumnChange}
+                                onMouseDown={() => hasTable && !isJsonMode && verifyTable()}
+                                disabled={stringColumnDisabled}
+                                className="w-full"
+                                title={isJsonMode ? "Not used in JSON mode" : undefined}
+                            >
+                                <option value="">
+                                    {tableMissing
+                                        ? "Table not found"
+                                        : !hasTable
+                                        ? "Select a table first"
+                                        : !tableReady
+                                        ? "Verify table first"
+                                        : isJsonMode
+                                        ? "Not used in JSON mode"
+                                        : loadingColumns
+                                        ? "Loading..."
+                                        : stringColumnRequired
+                                        ? "Select a VARCHAR column..."
+                                        : "None"}
                                 </option>
-                            ))}
-                        </select>
-                    </div>
+                                {db.stringColumn &&
+                                    !stringCols.find((c) => c.name === db.stringColumn) && (
+                                        <option value={db.stringColumn}>
+                                            {db.stringColumn}
+                                        </option>
+                                    )}
+                                {stringCols.map((c) => (
+                                    <option key={c.name} value={c.name}>
+                                        {c.name} ({c.type})
+                                    </option>
+                                ))}
+                            </select>
+                        </div>
+                    )}
                 </div>
                 <p className="text-xs text-on-surface-tertiary mt-4 text-right">
                     {footerHint}

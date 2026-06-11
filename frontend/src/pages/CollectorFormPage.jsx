@@ -8,6 +8,7 @@ import DbSection from '../components/collectors/DbSection'
 import LogSection from '../components/collectors/LogSection'
 import NodeListEditor from '../components/collectors/NodeListEditor'
 import { normalizeCollectorNodes } from '../components/collectors/nodeTree'
+import { isStringDataType } from '../components/collectors/nodeRangeSelection'
 import { koToEn } from '../utils/korean'
 
 const DEFAULTS = {
@@ -25,6 +26,8 @@ const DEFAULTS = {
     stringColumn: '',
     stringOnly: false,
     columnKind: '',
+    autoCreateTable: false,
+    tableStatus: 'unknown',
   },
   log: {
     level: 'INFO',
@@ -65,6 +68,8 @@ export default function CollectorFormPage({ detail, onRefresh, onRefreshDetail, 
           stringColumn: c.stringValueColumn || '',
           stringOnly: Boolean(c.stringOnly),
           columnKind: '',
+          autoCreateTable: false,
+          tableStatus: 'existing',
         },
         log: {
           ...DEFAULTS.log,
@@ -92,19 +97,41 @@ export default function CollectorFormPage({ detail, onRefresh, onRefreshDetail, 
   }
 
   const nodeSelectionMode =
-    form.db.stringOnly || form.db.columnKind === 'json' || !!form.db.stringColumn
+    form.db.autoCreateTable || form.db.stringOnly || form.db.columnKind === 'json' || !!form.db.stringColumn
       ? 'all'
       : 'numeric-only'
 
   const handleSubmit = async (e) => {
     e.preventDefault()
 
-    if (form.db.stringOnly) {
+    const autoCreateTable = !isEdit && form.db.autoCreateTable === true && form.db.tableStatus === 'autoCreate'
+    const hasStringNodes = form.opcua.nodes.some((node) => isStringDataType(node?.dataType))
+
+    if (form.db.tableStatus === 'missing') {
+      notify('Table not found. Select an existing table before saving.', 'error')
+      return
+    }
+
+    if (isEdit && detail?.config?.stringValueColumn && !form.db.stringColumn && hasStringNodes) {
+      notify('String Value Column was configured before. Select a String Value Column before saving.', 'error')
+      return
+    }
+
+    if (autoCreateTable) {
+      if (!form.db.table) {
+        notify('Table is required', 'error')
+        return
+      }
+    } else if (form.db.stringOnly) {
       if (!form.db.stringColumn) {
         notify('String Value Column is required for string-only mode', 'error')
         return
       }
     } else {
+      if (form.db.tableStatus === 'unknown' && !form.db.column) {
+        notify('Verify table before saving', 'error')
+        return
+      }
       if (!form.db.column) {
         notify('Value Column is required', 'error')
         return
@@ -132,7 +159,9 @@ export default function CollectorFormPage({ detail, onRefresh, onRefreshDetail, 
         },
       }
 
-      if (form.db.stringOnly) {
+      if (autoCreateTable) {
+        config.autoCreateTable = true
+      } else if (form.db.stringOnly) {
         config.stringOnly = true
         config.stringValueColumn = form.db.stringColumn
       } else {
@@ -229,6 +258,7 @@ export default function CollectorFormPage({ detail, onRefresh, onRefreshDetail, 
                   servers={servers}
                   onOpenServerSettings={onOpenServerSettings}
                   onRefreshServers={onRefreshServers}
+                  isEdit={isEdit}
                 />
               </div>
 
@@ -244,7 +274,7 @@ export default function CollectorFormPage({ detail, onRefresh, onRefreshDetail, 
                   onChange={nodes => update('opcua.nodes', nodes)}
                   endpoint={form.opcua.endpoint}
                   selectionMode={nodeSelectionMode}
-                  storageMode={form.db.stringOnly ? 'string' : form.db.columnKind === 'json' ? 'json' : 'default'}
+                  storageMode={form.db.autoCreateTable || form.db.stringOnly ? 'string' : form.db.columnKind === 'json' ? 'json' : 'default'}
                 />
               </div>
 
