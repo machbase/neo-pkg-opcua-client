@@ -96,6 +96,7 @@ export default function DbSection({
         if (!db.server || !tableName) {
             setColumns([]);
             if (db.autoCreateTable) update("db.autoCreateTable", false);
+            if (db.tableStatus !== "unknown") update("db.tableStatus", "unknown");
             return "unknown";
         }
         if (tableName !== db.table) {
@@ -106,14 +107,21 @@ export default function DbSection({
             const data = await serversApi.listColumns(db.server, tableName);
             setColumns(data?.columns || []);
             if (db.autoCreateTable) update("db.autoCreateTable", false);
+            if (db.tableStatus !== "existing") update("db.tableStatus", "existing");
             return "existing";
         } catch (e) {
             setColumns([]);
             if (!isEdit && allowAutoCreate && isTableNotFoundError(e) && !tableName.includes(".")) {
                 if (!db.autoCreateTable) update("db.autoCreateTable", true);
+                if (db.tableStatus !== "autoCreate") update("db.tableStatus", "autoCreate");
                 return "autoCreate";
             }
             if (db.autoCreateTable) update("db.autoCreateTable", false);
+            if (isTableNotFoundError(e)) {
+                if (db.tableStatus !== "missing") update("db.tableStatus", "missing");
+            } else if (db.tableStatus !== "unknown") {
+                update("db.tableStatus", "unknown");
+            }
             if (notifyOnError) {
                 notify(e.reason || e.message, "error");
             }
@@ -121,7 +129,7 @@ export default function DbSection({
         } finally {
             setLoadingColumns(false);
         }
-    }, [db.server, db.table, db.autoCreateTable, isEdit, notify, update]);
+    }, [db.server, db.table, db.autoCreateTable, db.tableStatus, isEdit, notify, update]);
 
     useEffect(() => {
         fetchTables();
@@ -172,6 +180,7 @@ export default function DbSection({
         update("db.stringOnly", false);
         update("db.columnKind", "");
         update("db.autoCreateTable", false);
+        update("db.tableStatus", "unknown");
         setColumns([]);
     };
 
@@ -182,6 +191,7 @@ export default function DbSection({
         update("db.stringOnly", false);
         update("db.columnKind", "");
         update("db.autoCreateTable", false);
+        update("db.tableStatus", "unknown");
         setColumns([]);
     };
 
@@ -228,12 +238,14 @@ export default function DbSection({
         [tables, db.table]
     );
 
-    const autoCreateMode = !isEdit && db.autoCreateTable === true;
+    const autoCreateMode = !isEdit && db.autoCreateTable === true && db.tableStatus === "autoCreate";
+    const tableMissing = db.tableStatus === "missing";
+    const tableReady = db.tableStatus === "existing";
     const isJsonMode = selectedColumnKind === "json";
     const stringOnly = !!db.stringOnly;
     const showValueColumn = !stringOnly;
     const stringColumnRequired = stringOnly;
-    const stringColumnDisabled = autoCreateMode || !hasTable || isJsonMode;
+    const stringColumnDisabled = autoCreateMode || !tableReady || isJsonMode;
 
     const footerHint = autoCreateMode
         ? "This table will be created automatically with VALUE and STR_VALUE columns."
@@ -329,6 +341,15 @@ export default function DbSection({
                     </div>
                 )}
 
+                {hasTable && tableMissing && (
+                    <div className="text-xs flex items-start gap-6" style={{ color: "var(--color-error)" }}>
+                        <Icon name="info" className="icon-sm shrink-0 mt-1" />
+                        <span>
+                            Table not found. Select an existing table before saving.
+                        </span>
+                    </div>
+                )}
+
                 {hasTable && !autoCreateMode && stringOnly && !hasValueColCandidates && (
                     <div className="text-xs text-on-surface-tertiary flex items-start gap-6">
                         <Icon name="info" className="icon-sm shrink-0 mt-1" />
@@ -369,12 +390,16 @@ export default function DbSection({
                                 value={db.column || ""}
                                 onChange={handleValueColumnChange}
                                 onMouseDown={() => hasTable && verifyTable()}
-                                disabled={!hasTable}
+                                disabled={!tableReady}
                                 className="w-full"
                             >
                                 <option value="" disabled>
-                                    {!hasTable
+                                    {tableMissing
+                                        ? "Table not found"
+                                        : !hasTable
                                         ? "Select a table first"
+                                        : !tableReady
+                                        ? "Verify table first"
                                         : loadingColumns
                                         ? "Loading..."
                                         : "Select a column..."}
@@ -434,8 +459,12 @@ export default function DbSection({
                                 title={isJsonMode ? "Not used in JSON mode" : undefined}
                             >
                                 <option value="">
-                                    {!hasTable
+                                    {tableMissing
+                                        ? "Table not found"
+                                        : !hasTable
                                         ? "Select a table first"
+                                        : !tableReady
+                                        ? "Verify table first"
                                         : isJsonMode
                                         ? "Not used in JSON mode"
                                         : loadingColumns

@@ -26,6 +26,7 @@ const DEFAULTS = {
     stringOnly: false,
     columnKind: '',
     autoCreateTable: false,
+    tableStatus: 'unknown',
   },
   log: {
     level: 'INFO',
@@ -67,6 +68,7 @@ export default function CollectorFormPage({ detail, onRefresh, onRefreshDetail, 
           stringOnly: Boolean(c.stringOnly),
           columnKind: '',
           autoCreateTable: false,
+          tableStatus: 'existing',
         },
         log: {
           ...DEFAULTS.log,
@@ -101,7 +103,17 @@ export default function CollectorFormPage({ detail, onRefresh, onRefreshDetail, 
   const handleSubmit = async (e) => {
     e.preventDefault()
 
-    const autoCreateTable = !isEdit && form.db.autoCreateTable === true
+    const autoCreateTable = !isEdit && form.db.autoCreateTable === true && form.db.tableStatus === 'autoCreate'
+
+    if (form.db.tableStatus === 'missing') {
+      notify('Table not found. Select an existing table before saving.', 'error')
+      return
+    }
+
+    if (isEdit && detail?.config?.stringValueColumn && !form.db.stringColumn) {
+      notify('String Value Column was configured before. Select a String Value Column before saving.', 'error')
+      return
+    }
 
     if (autoCreateTable) {
       if (!form.db.table) {
@@ -114,6 +126,10 @@ export default function CollectorFormPage({ detail, onRefresh, onRefreshDetail, 
         return
       }
     } else {
+      if (form.db.tableStatus === 'unknown' && !form.db.column) {
+        notify('Verify table before saving', 'error')
+        return
+      }
       if (!form.db.column) {
         notify('Value Column is required', 'error')
         return
