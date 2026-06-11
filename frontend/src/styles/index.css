@@ -3780,6 +3780,119 @@ label.switch input:checked + .switch-slider::before {
     background-color: var(--color-dropdown-option-hover);
 }
 
+/* ─── Editable select input ─── */
+
+.table-combo {
+    position: relative;
+}
+
+.table-combo-control {
+    display: flex;
+    align-items: stretch;
+    width: 100%;
+}
+
+.table-combo-input {
+    flex: 1;
+    min-width: 0;
+    border-top-right-radius: 0;
+    border-bottom-right-radius: 0;
+    font-variant-ligatures: none;
+    line-height: normal;
+}
+
+.table-combo-trigger {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: var(--size-control-height);
+    height: var(--size-control-height);
+    padding: 0;
+    background-color: var(--color-surface-input);
+    border: 1px solid var(--color-border);
+    border-left: 0;
+    border-radius: 0 var(--radius-base) var(--radius-base) 0;
+    color: var(--color-on-surface-tertiary);
+}
+
+.table-combo-control:focus-within .table-combo-input,
+.table-combo-control:focus-within .table-combo-trigger {
+    border-color: var(--color-border-focus);
+}
+
+.table-combo-trigger:hover:not(:disabled) {
+    color: var(--color-on-surface);
+    border-color: var(--color-on-surface-disabled);
+}
+
+.table-combo-trigger:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.table-combo-chevron {
+    transition: transform 0.2s ease;
+}
+
+.table-combo-chevron--open {
+    transform: rotate(180deg);
+}
+
+.table-combo-menu {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    z-index: var(--z-index-dropdown);
+    max-height: 220px;
+    margin-top: var(--spacing-4);
+    overflow-y: auto;
+    background-color: var(--color-dropdown);
+    border: 1px solid var(--color-dropdown-border);
+    border-radius: var(--radius-base);
+    box-shadow: var(--shadow-dropdown);
+}
+
+.table-combo-option {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    gap: var(--spacing-8);
+    padding: var(--spacing-8) var(--spacing-12);
+    background: none;
+    border: 0;
+    color: var(--color-on-surface);
+    font-size: var(--font-size-sm);
+    text-align: left;
+}
+
+.table-combo-option-label {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-variant-ligatures: none;
+    line-height: 1.4;
+    letter-spacing: 0;
+    text-transform: none;
+}
+
+.table-combo-option:hover {
+    background-color: var(--color-dropdown-option-hover);
+}
+
+.table-combo-option--selected {
+    color: var(--color-primary);
+}
+
+.table-combo-empty {
+    padding: var(--spacing-10) var(--spacing-12);
+    color: var(--color-on-surface-tertiary);
+    font-size: var(--font-size-xs);
+    text-align: center;
+}
+
 /* ─── NODE BROWSER MODAL ─── */
 
 .node-browser-modal {

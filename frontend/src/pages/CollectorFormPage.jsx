@@ -8,6 +8,7 @@ import DbSection from '../components/collectors/DbSection'
 import LogSection from '../components/collectors/LogSection'
 import NodeListEditor from '../components/collectors/NodeListEditor'
 import { normalizeCollectorNodes } from '../components/collectors/nodeTree'
+import { isStringDataType } from '../components/collectors/nodeRangeSelection'
 import { koToEn } from '../utils/korean'
 
 const DEFAULTS = {
@@ -104,13 +105,14 @@ export default function CollectorFormPage({ detail, onRefresh, onRefreshDetail, 
     e.preventDefault()
 
     const autoCreateTable = !isEdit && form.db.autoCreateTable === true && form.db.tableStatus === 'autoCreate'
+    const hasStringNodes = form.opcua.nodes.some((node) => isStringDataType(node?.dataType))
 
     if (form.db.tableStatus === 'missing') {
       notify('Table not found. Select an existing table before saving.', 'error')
       return
     }
 
-    if (isEdit && detail?.config?.stringValueColumn && !form.db.stringColumn) {
+    if (isEdit && detail?.config?.stringValueColumn && !form.db.stringColumn && hasStringNodes) {
       notify('String Value Column was configured before. Select a String Value Column before saving.', 'error')
       return
     }

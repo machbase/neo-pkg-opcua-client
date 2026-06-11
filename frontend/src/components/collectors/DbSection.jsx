@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import Icon from "../common/Icon";
 import * as serversApi from "../../api/servers";
 import { useApp } from "../../context/AppContext";
@@ -66,6 +66,8 @@ export default function DbSection({
     const [columns, setColumns] = useState([]);
     const [loadingTables, setLoadingTables] = useState(false);
     const [loadingColumns, setLoadingColumns] = useState(false);
+    const [tableDropdownOpen, setTableDropdownOpen] = useState(false);
+    const tableComboRef = useRef(null);
 
     useEffect(() => {
         if (!db.server && servers.length > 0) {
@@ -91,8 +93,8 @@ export default function DbSection({
     }, [db.server, notify]);
 
     const verifyTable = useCallback(async (options = {}) => {
-        const { allowAutoCreate = true, notifyOnError = true } = options;
-        const tableName = normalizeTableInput(db.table);
+        const { allowAutoCreate = true, notifyOnError = true, table = db.table } = options;
+        const tableName = normalizeTableInput(table);
         if (!db.server || !tableName) {
             setColumns([]);
             if (db.autoCreateTable) update("db.autoCreateTable", false);
@@ -134,6 +136,17 @@ export default function DbSection({
     useEffect(() => {
         fetchTables();
     }, [fetchTables]);
+
+    useEffect(() => {
+        if (!tableDropdownOpen) return;
+        const handleOutsideClick = (event) => {
+            if (!tableComboRef.current?.contains(event.target)) {
+                setTableDropdownOpen(false);
+            }
+        };
+        document.addEventListener("mousedown", handleOutsideClick);
+        return () => document.removeEventListener("mousedown", handleOutsideClick);
+    }, [tableDropdownOpen]);
 
     const { numericCols, jsonCols, stringCols } = useMemo(() => {
         const nc = [];
@@ -182,6 +195,7 @@ export default function DbSection({
         update("db.autoCreateTable", false);
         update("db.tableStatus", "unknown");
         setColumns([]);
+        setTableDropdownOpen(false);
     };
 
     const handleTableChange = (e) => {
@@ -193,6 +207,7 @@ export default function DbSection({
         update("db.autoCreateTable", false);
         update("db.tableStatus", "unknown");
         setColumns([]);
+        setTableDropdownOpen(true);
     };
 
     const handleTableBlur = () => {
@@ -204,8 +219,42 @@ export default function DbSection({
     const handleTableKeyDown = (e) => {
         if (e.key === "Enter") {
             e.preventDefault();
+            setTableDropdownOpen(false);
             verifyTable();
+        } else if (e.key === "ArrowDown") {
+            if (hasServer) {
+                fetchTables();
+                setTableDropdownOpen(true);
+            }
+        } else if (e.key === "Escape") {
+            setTableDropdownOpen(false);
         }
+    };
+
+    const handleTableFocus = () => {
+        if (!hasServer) return;
+        fetchTables();
+        setTableDropdownOpen(true);
+    };
+
+    const handleTableTriggerClick = () => {
+        if (!hasServer) return;
+        fetchTables();
+        setTableDropdownOpen((open) => !open);
+    };
+
+    const handleTableOptionSelect = (label) => {
+        const tableName = normalizeTableInput(label);
+        update("db.table", tableName);
+        update("db.column", "");
+        update("db.stringColumn", "");
+        update("db.stringOnly", false);
+        update("db.columnKind", "");
+        update("db.autoCreateTable", false);
+        update("db.tableStatus", "unknown");
+        setColumns([]);
+        setTableDropdownOpen(false);
+        verifyTable({ table: tableName });
     };
 
     const handleValueColumnChange = (e) => {
@@ -233,10 +282,13 @@ export default function DbSection({
     const tableInList = useMemo(
         () =>
             tables.some(
-                (t) => displayTableName(t.user || "SYS", t.name) === db.table
+                (t) =>
+                    normalizeTableInput(displayTableName(t.user || "SYS", t.name)) ===
+                    normalizeTableInput(db.table)
             ),
         [tables, db.table]
     );
+    const canAutoCreateTypedTable = !isEdit && hasTable && !normalizeTableInput(db.table).includes(".");
 
     const autoCreateMode = !isEdit && db.autoCreateTable === true && db.tableStatus === "autoCreate";
     const tableMissing = db.tableStatus === "missing";
@@ -302,33 +354,79 @@ export default function DbSection({
 
                 <div>
                     <label className="form-label">Table</label>
-                    <input
-                        required
-                        value={db.table || ""}
-                        onChange={handleTableChange}
-                        onBlur={handleTableBlur}
-                        onKeyDown={handleTableKeyDown}
-                        onFocus={() => hasServer && fetchTables()}
-                        onMouseDown={() => hasServer && fetchTables()}
-                        disabled={!hasServer}
-                        className="w-full"
-                        list="db-table-options"
-                        placeholder={
-                            !hasServer
-                                ? "Select a database server first"
-                                : loadingTables
-                                ? "Loading..."
-                                : "Select or enter a table..."
-                        }
-                    />
-                    <datalist id="db-table-options">
-                        {db.table && !tableInList && (
-                            <option value={db.table} />
+                    <div ref={tableComboRef} className="table-combo">
+                        <div className="table-combo-control">
+                            <input
+                                required
+                                value={db.table || ""}
+                                onChange={handleTableChange}
+                                onBlur={handleTableBlur}
+                                onKeyDown={handleTableKeyDown}
+                                onFocus={handleTableFocus}
+                                disabled={!hasServer}
+                                className="table-combo-input"
+                                role="combobox"
+                                aria-expanded={tableDropdownOpen}
+                                aria-haspopup="listbox"
+                                placeholder={
+                                    !hasServer
+                                        ? "Select a database server first"
+                                        : loadingTables
+                                        ? "Loading..."
+                                        : "Select or enter a table..."
+                                }
+                            />
+                            <button
+                                type="button"
+                                className="table-combo-trigger"
+                                onClick={handleTableTriggerClick}
+                                disabled={!hasServer}
+                                aria-label="Toggle table list"
+                            >
+                                <Icon
+                                    name="keyboard_arrow_down"
+                                    className={`icon-sm table-combo-chevron ${
+                                        tableDropdownOpen ? "table-combo-chevron--open" : ""
+                                    }`}
+                                />
+                            </button>
+                        </div>
+                        {tableDropdownOpen && hasServer && (
+                            <div className="table-combo-menu" role="listbox">
+                                {loadingTables ? (
+                                    <div className="table-combo-empty">Loading...</div>
+                                ) : tableOptions.length > 0 ? (
+                                    <>
+                                        {tableOptions.map((label) => (
+                                            <button
+                                                type="button"
+                                                key={label}
+                                                className={`table-combo-option ${
+                                                    normalizeTableInput(label) === normalizeTableInput(db.table)
+                                                        ? "table-combo-option--selected"
+                                                        : ""
+                                                }`}
+                                                onMouseDown={(e) => e.preventDefault()}
+                                                onClick={() => handleTableOptionSelect(label)}
+                                                title={label}
+                                            >
+                                                <span className="table-combo-option-label">{label}</span>
+                                                {normalizeTableInput(label) === normalizeTableInput(db.table) && (
+                                                    <Icon name="check" className="icon-sm" />
+                                                )}
+                                            </button>
+                                        ))}
+                                    </>
+                                ) : (
+                                    <div className="table-combo-empty">
+                                        {canAutoCreateTypedTable && !tableInList
+                                            ? "No matching table. The name can be used for auto-create."
+                                            : "No tables found."}
+                                    </div>
+                                )}
+                            </div>
                         )}
-                        {tableOptions.map((label) => (
-                            <option key={label} value={label} />
-                        ))}
-                    </datalist>
+                    </div>
                 </div>
 
                 {hasTable && autoCreateMode && (
