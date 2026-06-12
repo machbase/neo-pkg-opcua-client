@@ -701,10 +701,11 @@ function resolveOpcuaEndpoint(request) {
     : '';
   if (serverName) {
     const resolved = getOpcuaServerConfigOrThrow(serverName);
+    const endpoint = normalizeText(source.endpoint) || resolved.config.endpoint;
     return {
       server: resolved.name,
-      endpoint: resolved.config.endpoint,
-      config: resolved.config,
+      endpoint,
+      config: { ...resolved.config, endpoint },
     };
   }
   const endpoint = String(source.endpoint || '').trim();
@@ -787,12 +788,13 @@ function cleanupTemporaryOpcuaConnectSecurity(name) {
 }
 
 function applyDirectOpcuaConnectSecurity(resolved, request) {
-  if (!resolved || resolved.server) return null;
+  if (!resolved) return null;
   if (!request || typeof request !== 'object' || !hasOwn(request, 'security')) return null;
 
   const tempName = temporaryOpcuaConnectSecurityName();
   try {
     resolved.config.security = normalizeOpcuaServerSecurity(request.security, {
+      previous: resolved.config && resolved.config.security,
       serverName: tempName,
       forStorage: true,
     });

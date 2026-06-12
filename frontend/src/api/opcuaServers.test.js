@@ -361,3 +361,29 @@ test("buildOpcuaDirectConnectionRequest preserves None username security for bac
         }
     );
 });
+
+test("buildOpcuaDirectConnectionRequest keeps existing server context for edit secrets", () => {
+    assert.deepEqual(
+        buildOpcuaDirectConnectionRequest({
+            existingName: "opc-user",
+            name: "opc-user",
+            endpoint: "opc.tcp://user:4840",
+            securityMode: "None",
+            securityPolicy: "None",
+            authMode: "UserName",
+            username: "operator",
+            password: "",
+        }),
+        {
+            server: "opc-user",
+            endpoint: "opc.tcp://user:4840",
+            security: {
+                enabled: true,
+                messageSecurityMode: "None",
+                securityPolicy: "None",
+                authMode: "UserName",
+                username: "operator",
+            },
+        }
+    );
+});

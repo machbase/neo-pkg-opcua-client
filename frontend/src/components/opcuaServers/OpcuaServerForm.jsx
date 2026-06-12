@@ -130,7 +130,7 @@ export default function OpcuaServerForm({ server, onSave, onConnectionTest, onCl
         setTesting(true);
         setTestResult(null);
         try {
-            const result = await onConnectionTest(form);
+            const result = await onConnectionTest({ ...form, existingName: server?.name || "" });
             const capabilities = result?.capabilities || DEFAULT_CAPABILITIES;
             const readBatchSize = Number(result?.readBatchSize) > 0
                 ? Number(result.readBatchSize)

@@ -117,10 +117,13 @@ export function buildOpcuaServerPayload(form) {
 
 export function buildOpcuaDirectConnectionRequest(form) {
     const payload = buildOpcuaServerPayload(form);
-    return {
+    const request = {
         endpoint: payload.endpoint,
         security: payload.security,
     };
+    const existingName = cleanText(form.existingName);
+    if (existingName) request.server = existingName;
+    return request;
 }
 
 export function buildOpcuaConnectionTarget(source) {

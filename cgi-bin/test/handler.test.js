@@ -1503,6 +1503,60 @@ runner.run('Handler: opcuaConnect', {
         t.assertEqual(mockOpcuaClient.options.readRetryInterval, 250);
     },
 
+    'resolves username credentials from OPC UA server profile': (t) => {
+        const H = makeHandler();
+        mockCGI._opcuaServers['opc-main'] = {
+            endpoint: 'opc.tcp://profile:4840',
+            security: {
+                enabled: true,
+                securityPolicy: 'None',
+                messageSecurityMode: 'None',
+                authMode: 'UserName',
+                username: 'opcuser',
+                password: 'secret',
+            },
+        };
+        let result;
+        H.opcuaConnect({ server: 'opc-main' }, undefined, (r) => { result = r; });
+        t.assert(result.ok, 'should be ok');
+        t.assertEqual(mockOpcuaClient.endpoint, 'opc.tcp://profile:4840');
+        t.assertEqual(mockOpcuaClient.options.security.authMode, 'UserName');
+        t.assertEqual(mockOpcuaClient.options.security.username, 'opcuser');
+        t.assertEqual(mockOpcuaClient.options.security.password, 'secret');
+    },
+
+    'preserves saved username password during profile form connection test': (t) => {
+        const H = makeHandler();
+        mockCGI._opcuaServers['opc-main'] = {
+            endpoint: 'opc.tcp://old:4840',
+            security: {
+                enabled: true,
+                securityPolicy: 'None',
+                messageSecurityMode: 'None',
+                authMode: 'UserName',
+                username: 'opcuser',
+                password: 'secret',
+            },
+        };
+        let result;
+        H.opcuaConnect({
+            server: 'opc-main',
+            endpoint: 'opc.tcp://new:4840',
+            security: {
+                enabled: true,
+                securityPolicy: 'None',
+                messageSecurityMode: 'None',
+                authMode: 'UserName',
+                username: 'opcuser',
+            },
+        }, undefined, (r) => { result = r; });
+        t.assert(result.ok, 'should be ok');
+        t.assertEqual(mockOpcuaClient.endpoint, 'opc.tcp://new:4840');
+        t.assertEqual(mockOpcuaClient.options.security.authMode, 'UserName');
+        t.assertEqual(mockOpcuaClient.options.security.username, 'opcuser');
+        t.assertEqual(mockOpcuaClient.options.security.password, 'secret');
+    },
+
     'uses direct security config for unsaved endpoint connection test': (t) => {
         const H = makeHandler();
         let result;
