@@ -89,6 +89,24 @@ test("mapOpcuaServerListItem defaults read batch capability for old profiles", (
     );
 });
 
+test("mapOpcuaServerListItem normalizes unsupported Certificate auth mode", () => {
+    assert.equal(
+        mapOpcuaServerListItem({
+            name: "cert-auth",
+            config: {
+                endpoint: "opc.tcp://127.0.0.1:4840",
+                security: {
+                    enabled: true,
+                    messageSecurityMode: "SignAndEncrypt",
+                    securityPolicy: "Basic256Sha256",
+                    authMode: "Certificate",
+                },
+            },
+        }).security.authMode,
+        "Anonymous"
+    );
+});
+
 test("buildOpcuaServerPayload includes read batch size and capabilities after connection test", () => {
     assert.deepEqual(
         buildOpcuaServerPayload({
@@ -301,7 +319,7 @@ test("buildOpcuaDirectConnectionRequest sends current form endpoint and security
             endpoint: "opc.tcp://secure:4840",
             securityMode: "SignAndEncrypt",
             securityPolicy: "Basic256Sha256",
-            authMode: "Certificate",
+            authMode: "Anonymous",
             certificatePem: "-----BEGIN CERTIFICATE-----\nCERT\n-----END CERTIFICATE-----\n",
             keyPem: "-----BEGIN PRIVATE KEY-----\nKEY\n-----END PRIVATE KEY-----\n",
         }),
@@ -311,7 +329,7 @@ test("buildOpcuaDirectConnectionRequest sends current form endpoint and security
                 enabled: true,
                 messageSecurityMode: "SignAndEncrypt",
                 securityPolicy: "Basic256Sha256",
-                authMode: "Certificate",
+                authMode: "Anonymous",
                 certificatePem: "-----BEGIN CERTIFICATE-----\nCERT\n-----END CERTIFICATE-----\n",
                 keyPem: "-----BEGIN PRIVATE KEY-----\nKEY\n-----END PRIVATE KEY-----\n",
             },

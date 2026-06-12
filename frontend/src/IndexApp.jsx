@@ -87,6 +87,7 @@ export default function IndexApp() {
           onInstallCollector={installCollector}
           onRefresh={refreshCollectors}
           onServerSettings={() => openServerSettings()}
+          onOpcuaServerSettings={() => openOpcuaServerSettings()}
           className="side w-full shrink-0 lg:fixed lg:left-0 lg:top-0 lg:w-64 lg:h-screen z-dropdown border-b lg:border-b-0 lg:border-r border-border"
         />
         <main className="flex-1 h-screen overflow-y-auto bg-surface-alt lg:ml-64">

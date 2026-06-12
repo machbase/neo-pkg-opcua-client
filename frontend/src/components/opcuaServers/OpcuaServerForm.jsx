@@ -55,9 +55,9 @@ export default function OpcuaServerForm({ server, onSave, onConnectionTest, onCl
     const [form, setForm] = useState(() => initialForm(server));
 
     const isSecure = form.securityMode === "SignAndEncrypt";
-    const availableAuthModes = isSecure ? ["Anonymous", "UserName", "Certificate"] : ["Anonymous", "UserName"];
+    const availableAuthModes = ["Anonymous", "UserName"];
     const usesUserName = form.authMode === "UserName";
-    const usesCertificate = isSecure || form.authMode === "Certificate";
+    const usesCertificate = isSecure;
     const hasStoredCertificate = Boolean(server?.security?.hasCertificate);
     const readBatchLimit = Number(form.capabilities?.maxNodesPerRead) > 0 ? Number(form.capabilities.maxNodesPerRead) : 32;
 
@@ -109,7 +109,7 @@ export default function OpcuaServerForm({ server, onSave, onConnectionTest, onCl
         update({
             securityMode: "None",
             securityPolicy: "None",
-            authMode: form.authMode === "Certificate" ? "Anonymous" : form.authMode,
+            authMode: availableAuthModes.includes(form.authMode) ? form.authMode : "Anonymous",
             certificatePem: "",
             keyPem: "",
         }, { resetConnection: true });

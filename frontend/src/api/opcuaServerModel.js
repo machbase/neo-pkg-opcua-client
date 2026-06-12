@@ -2,6 +2,10 @@ function cleanText(value) {
     return value === undefined || value === null ? "" : String(value).trim();
 }
 
+function normalizeAuthMode(value) {
+    return cleanText(value) === "UserName" ? "UserName" : "Anonymous";
+}
+
 const DEFAULT_READ_BATCH_SIZE = 32;
 const DEFAULT_CAPABILITIES = {
     maxNodesPerRead: null,
@@ -47,7 +51,7 @@ export function mapOpcuaServerListItem(item) {
             enabled: security.enabled === true,
             messageSecurityMode: security.messageSecurityMode || "None",
             securityPolicy: security.securityPolicy || "None",
-            authMode: security.authMode || "Anonymous",
+            authMode: normalizeAuthMode(security.authMode),
             username: security.username || "",
             hasPassword: security.hasPassword === true,
             hasCertificateFile: security.hasCertificateFile === true,
@@ -58,7 +62,7 @@ export function mapOpcuaServerListItem(item) {
 }
 
 export function buildOpcuaServerPayload(form) {
-    const authMode = cleanText(form.authMode) || "Anonymous";
+    const authMode = normalizeAuthMode(form.authMode);
     const hasReadBatchInput = form.readBatchSize !== undefined || form.capabilities !== undefined;
     const capabilities = normalizeCapabilities(form.capabilities || DEFAULT_CAPABILITIES);
     const payload = {

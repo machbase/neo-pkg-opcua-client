@@ -2478,7 +2478,6 @@ label.switch input:checked + .switch-slider::before {
     color: var(--color-on-surface-secondary);
     cursor: pointer;
     flex-shrink: 0;
-    margin-left: auto;
     transition: background-color var(--transition-duration-fast) ease, color var(--transition-duration-fast) ease;
 }
 .side-header-action:hover {

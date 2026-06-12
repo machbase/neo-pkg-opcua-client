@@ -36,6 +36,7 @@ export default function SideApp() {
             onInstallCollector={installCollector}
             onRefresh={refreshCollectors}
             onServerSettings={() => send("openServerSettings", {})}
+            onOpcuaServerSettings={() => send("openOpcuaServerSettings", {})}
         />
     );
 }

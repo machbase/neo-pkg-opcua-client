@@ -90,6 +90,9 @@ export default function App() {
     openServerSettings: () => {
       openServerSettings()
     },
+    openOpcuaServerSettings: () => {
+      openOpcuaServerSettings()
+    },
     requestReady: () => {
       const ch = channelRef.current
       if (!ch) return

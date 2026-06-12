@@ -342,7 +342,6 @@ const OPCUA_MESSAGE_SECURITY_MODES = {
 const OPCUA_AUTH_MODES = {
   Anonymous: true,
   UserName: true,
-  Certificate: true,
 };
 const OPCUA_DEFAULT_READ_BATCH_SIZE = 100;
 const OPCUA_MAX_NODES_PER_READ_NODE_ID = 'ns=0;i=11705';
@@ -545,7 +544,7 @@ function normalizeOpcuaServerSecurity(security, options = {}) {
     }
   }
 
-  const certificateRequired = normalized.authMode === 'Certificate' || normalized.messageSecurityMode !== 'None';
+  const certificateRequired = normalized.messageSecurityMode !== 'None';
   if (!certificateRequired) {
     if (forStorage && serverName && (previous.certificateFile || previous.keyFile)) {
       normalized.__removeCertificate = true;
@@ -558,7 +557,7 @@ function normalizeOpcuaServerSecurity(security, options = {}) {
     || (!input.clearCertificate && normalizeText(previous.keyFile));
   const willHaveCertificate = (hasCertificatePem && hasKeyPem) || (existingCertificateFiles && existingKeyFiles);
   if (certificateRequired && !willHaveCertificate) {
-    throw userFacingError('security.certificatePem and security.keyPem are required for certificate authentication or secure mode');
+    throw userFacingError('security.certificatePem and security.keyPem are required for secure mode');
   }
 
   if (input.clearCertificate === true) {

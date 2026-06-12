@@ -38,15 +38,16 @@ test("OpcuaServerSettingsModal labels encrypted mode by message security mode", 
 test("OpcuaServerForm keeps credentials hidden until their auth mode needs them", () => {
     const source = readSource("OpcuaServerForm.jsx");
 
-    assert.match(source, /const availableAuthModes = isSecure/);
+    assert.match(source, /const availableAuthModes = \["Anonymous", "UserName"\]/);
     assert.match(source, /usesUserName && \(/);
     assert.doesNotMatch(source, /disabled=\{!usesUserName\}/);
+    assert.doesNotMatch(source, /"Certificate"/);
     assert.match(source, /type="text"[\s\S]*placeholder="e\.g\. opc-main"/);
     assert.match(source, /type="text"[\s\S]*placeholder="opc\.tcp:\/\/192\.168\.1\.100:4840"/);
     assert.match(source, /type="text"[\s\S]*value=\{form\.username\}/);
     assert.match(source, /type="password"[\s\S]*value=\{form\.password\}/);
     assert.match(source, /usesCertificate && \(/);
-    assert.match(source, /const usesCertificate = isSecure \|\| form\.authMode === "Certificate"/);
+    assert.match(source, /const usesCertificate = isSecure/);
 });
 
 test("OpcuaServerForm supports in-form connection test and PEM file drop", () => {
@@ -84,4 +85,23 @@ test("OpcuaSection leaves connection test to the OPC UA server modal", () => {
 
     assert.doesNotMatch(source, /Connection Test/);
     assert.doesNotMatch(source, /testOpcuaConnection/);
+});
+
+test("App opens OPC UA server management as a modal", () => {
+    const appSource = readFileSync(join(__dirname, "../../App.jsx"), "utf8");
+    const indexSource = readFileSync(join(__dirname, "../../IndexApp.jsx"), "utf8");
+    const sideSource = readFileSync(join(__dirname, "../../SideApp.jsx"), "utf8");
+    const sidebarSource = readFileSync(join(__dirname, "../layout/Sidebar.jsx"), "utf8");
+
+    assert.doesNotMatch(appSource, /path="\/opcua-servers"/);
+    assert.doesNotMatch(indexSource, /path="\/opcua-servers"/);
+    assert.doesNotMatch(appSource, /\/opcua-servers/);
+    assert.doesNotMatch(indexSource, /\/opcua-servers/);
+    assert.match(appSource, /showOpcuaServerSettings/);
+    assert.match(indexSource, /showOpcuaServerSettings/);
+    assert.match(appSource, /<OpcuaServerSettingsModal/);
+    assert.match(indexSource, /<OpcuaServerSettingsModal/);
+    assert.match(sideSource, /openOpcuaServerSettings/);
+    assert.match(sidebarSource, /onOpcuaServerSettings/);
+    assert.match(sidebarSource, /settings_input_antenna/);
 });

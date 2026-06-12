@@ -919,6 +919,24 @@ runner.run('Handler: OPC UA server CRUD', {
         t.assertEqual(result.data.config.security.keyUpdatedAt, '2026-06-05T06:00:01.000Z');
     },
 
+    'opcuaServerPost rejects certificate auth mode': (t) => {
+        const H = makeHandler();
+        let result;
+        H.opcuaServerPost('opc1', {
+            endpoint: 'opc.tcp://h:4840',
+            security: {
+                enabled: true,
+                securityPolicy: 'Basic256Sha256',
+                messageSecurityMode: 'SignAndEncrypt',
+                authMode: 'Certificate',
+                certificatePem: '-----BEGIN CERTIFICATE-----\nmock\n-----END CERTIFICATE-----\n',
+                keyPem: '-----BEGIN PRIVATE KEY-----\nmock\n-----END PRIVATE KEY-----\n',
+            },
+        }, (r) => { result = r; });
+        t.assert(!result.ok, 'should not be ok');
+        t.assert(result.reason.includes('security.authMode is invalid'));
+    },
+
     'opcuaServerPost returns error when profile already exists': (t) => {
         const H = makeHandler();
         mockCGI._opcuaServers['opc1'] = { endpoint: 'opc.tcp://h:4840', security: { enabled: false } };
@@ -1538,7 +1556,7 @@ runner.run('Handler: opcuaConnect', {
                 enabled: true,
                 securityPolicy: 'Basic256Sha256',
                 messageSecurityMode: 'SignAndEncrypt',
-                authMode: 'Certificate',
+                authMode: 'Anonymous',
                 certificatePem: '-----BEGIN CERTIFICATE-----\nCERT\n-----END CERTIFICATE-----\n',
                 keyPem: '-----BEGIN PRIVATE KEY-----\nKEY\n-----END PRIVATE KEY-----\n',
             },
