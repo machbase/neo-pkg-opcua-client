@@ -8,7 +8,32 @@ const { obfuscateSecret, revealSecret } = require('../src/cgi/secret.js');
 
 const runner = new TestRunner();
 
+function withQueryString(queryString, fn) {
+    const hadPrevious = Object.prototype.hasOwnProperty.call(process.env, 'QUERY_STRING');
+    const previous = process.env.QUERY_STRING;
+    process.env.QUERY_STRING = queryString;
+    try {
+        fn();
+    } finally {
+        if (hadPrevious) {
+            process.env.QUERY_STRING = previous;
+        } else {
+            delete process.env.QUERY_STRING;
+        }
+    }
+}
+
 runner.run('CGI util', {
+    'parseQuery decodes plus as space and preserves encoded plus': (t) => {
+        withQueryString('name=Simulation+Examples_Functions_Ramp4&literal=A%2BB&space=A%20B&tag+name=value+1', () => {
+            const query = CGI.parseQuery();
+            t.assertEqual(query.name, 'Simulation Examples_Functions_Ramp4');
+            t.assertEqual(query.literal, 'A+B');
+            t.assertEqual(query.space, 'A B');
+            t.assertEqual(query['tag name'], 'value 1');
+        });
+    },
+
     'resolveLogFilePath returns absolute log path': (t) => {
         const filePath = CGI.resolveLogFilePath('collector-a.log');
         t.assert(path.isAbsolute(filePath), 'path should be absolute');

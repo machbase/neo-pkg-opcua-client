@@ -38,6 +38,17 @@ function timeToJsonString(value) {
   return String(value);
 }
 
+function decodeQueryComponent(value) {
+  return decodeURIComponent(String(value || '').replace(/\+/g, ' '));
+}
+
+function getEnv(name) {
+  if (process.env && typeof process.env.get === 'function') {
+    return process.env.get(name);
+  }
+  return process.env ? process.env[name] : undefined;
+}
+
 class CGI {
   /**
    * 로그 디렉토리 경로를 반환한다.
@@ -376,11 +387,11 @@ class CGI {
    * @returns {Record<string, string>}
    */
   static parseQuery() {
-    const qs = process.env.get('QUERY_STRING') || '';
+    const qs = getEnv('QUERY_STRING') || '';
     const result = {};
     for (const part of qs.split('&')) {
       const [k, v] = part.split('=');
-      if (k) result[decodeURIComponent(k)] = decodeURIComponent(v || '');
+      if (k) result[decodeQueryComponent(k)] = decodeQueryComponent(v || '');
     }
     return result;
   }
