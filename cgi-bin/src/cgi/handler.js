@@ -344,7 +344,7 @@ const OPCUA_AUTH_MODES = {
   UserName: true,
   Certificate: true,
 };
-const OPCUA_DEFAULT_READ_BATCH_SIZE = 32;
+const OPCUA_DEFAULT_READ_BATCH_SIZE = 100;
 const OPCUA_MAX_NODES_PER_READ_NODE_ID = 'ns=0;i=11705';
 const OPCUA_CAPABILITY_SOURCES = {
   server: true,
@@ -375,6 +375,14 @@ function normalizePositiveInteger(value, label) {
   return num;
 }
 
+function normalizeNonNegativeInteger(value, label) {
+  const num = Number(value);
+  if (!Number.isFinite(num) || Math.floor(num) !== num || num < 0) {
+    throw userFacingError(`${label} must be a non-negative integer`);
+  }
+  return num;
+}
+
 function defaultOpcuaCapabilities(checkedAt) {
   return {
     maxNodesPerRead: null,
@@ -390,7 +398,7 @@ function normalizeOpcuaCapabilities(value, previous) {
       return {
         maxNodesPerRead: previous.maxNodesPerRead === undefined || previous.maxNodesPerRead === null
           ? null
-          : normalizePositiveInteger(previous.maxNodesPerRead, 'capabilities.maxNodesPerRead'),
+          : normalizeNonNegativeInteger(previous.maxNodesPerRead, 'capabilities.maxNodesPerRead'),
         maxNodesPerReadSource: OPCUA_CAPABILITY_SOURCES[previous.maxNodesPerReadSource] ? previous.maxNodesPerReadSource : 'default',
         checkedAt: normalizeText(previous.checkedAt) || new Date().toISOString(),
       };
@@ -407,7 +415,7 @@ function normalizeOpcuaCapabilities(value, previous) {
     checkedAt: normalizeText(input.checkedAt) || new Date().toISOString(),
   };
   if (input.maxNodesPerRead !== undefined && input.maxNodesPerRead !== null) {
-    capabilities.maxNodesPerRead = normalizePositiveInteger(input.maxNodesPerRead, 'capabilities.maxNodesPerRead');
+    capabilities.maxNodesPerRead = normalizeNonNegativeInteger(input.maxNodesPerRead, 'capabilities.maxNodesPerRead');
     capabilities.maxNodesPerReadSource = 'server';
   } else {
     capabilities.maxNodesPerReadSource = 'default';
@@ -418,14 +426,18 @@ function normalizeOpcuaCapabilities(value, previous) {
 function normalizeOpcuaReadBatchSize(config, previous, capabilities, preservePrevious) {
   const hasInput = config.readBatchSize !== undefined && config.readBatchSize !== null && config.readBatchSize !== '';
   const hasPrevious = previous && previous.readBatchSize !== undefined && previous.readBatchSize !== null;
-  const defaultValue = capabilities.maxNodesPerRead || OPCUA_DEFAULT_READ_BATCH_SIZE;
+  const serverLimit = capabilities.maxNodesPerRead > 0 ? capabilities.maxNodesPerRead : null;
+  const defaultValue = serverLimit || OPCUA_DEFAULT_READ_BATCH_SIZE;
   const value = hasInput
     ? config.readBatchSize
     : (preservePrevious && hasPrevious ? previous.readBatchSize : defaultValue);
   const readBatchSize = normalizePositiveInteger(value, 'readBatchSize');
-  const limit = capabilities.maxNodesPerRead || OPCUA_DEFAULT_READ_BATCH_SIZE;
+  const limit = serverLimit || OPCUA_DEFAULT_READ_BATCH_SIZE;
+  if (capabilities.maxNodesPerRead === 0) {
+    return readBatchSize;
+  }
   if (readBatchSize > limit) {
-    const suffix = capabilities.maxNodesPerRead ? ' (capabilities.maxNodesPerRead)' : '';
+    const suffix = serverLimit ? ' (capabilities.maxNodesPerRead)' : '';
     throw userFacingError(`readBatchSize must be <= ${limit}${suffix}`);
   }
   return readBatchSize;
@@ -437,14 +449,16 @@ function detectOpcuaCapabilities(client) {
   try {
     const results = client.read([OPCUA_MAX_NODES_PER_READ_NODE_ID]) || [];
     const value = results[0] && results[0].value;
-    const maxNodesPerRead = Number(value);
-    if (Number.isFinite(maxNodesPerRead) && Math.floor(maxNodesPerRead) === maxNodesPerRead && maxNodesPerRead > 0) {
-      capabilities.maxNodesPerRead = maxNodesPerRead;
-      capabilities.maxNodesPerReadSource = 'server';
-      return {
-        capabilities,
-        readBatchSize: maxNodesPerRead,
-      };
+    if (value !== undefined && value !== null && String(value).trim() !== '') {
+      const maxNodesPerRead = Number(value);
+      if (Number.isFinite(maxNodesPerRead) && Math.floor(maxNodesPerRead) === maxNodesPerRead && maxNodesPerRead >= 0) {
+        capabilities.maxNodesPerRead = maxNodesPerRead;
+        capabilities.maxNodesPerReadSource = 'server';
+        return {
+          capabilities,
+          readBatchSize: maxNodesPerRead === 0 ? OPCUA_DEFAULT_READ_BATCH_SIZE : maxNodesPerRead,
+        };
+      }
     }
   } catch (err) {
     capabilities.error = errorMessage(err);
