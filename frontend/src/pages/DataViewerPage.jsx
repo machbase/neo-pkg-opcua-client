@@ -126,8 +126,9 @@ function ResultPagination({ page, pageSize, rowCount, loading, endLoading, onPag
                 <Icon name="chevron_left" className="icon-sm" />
             </button>
             <input
-                type="number"
-                min="1"
+                type="text"
+                inputMode="numeric"
+                pattern="[0-9]*"
                 value={value}
                 onChange={(e) => setValue(e.target.value)}
                 onBlur={commit}

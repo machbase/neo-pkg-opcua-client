@@ -291,6 +291,11 @@ textarea {
     gap: var(--spacing-8);
 }
 
+.pem-field-title,
+.pem-file-btn {
+    white-space: nowrap;
+}
+
 .opcua-form-tabs {
     display: grid;
     grid-template-columns: repeat(2, 1fr);
@@ -3159,6 +3164,17 @@ label.switch input:checked + .switch-slider::before {
     text-align: center;
     font-family: var(--font-family-mono);
     font-size: var(--font-size-sm);
+}
+
+.pagination-input[type="number"]::-webkit-inner-spin-button,
+.pagination-input[type="number"]::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+}
+
+.pagination-input[type="number"] {
+    -moz-appearance: textfield;
+    appearance: textfield;
 }
 
 /* ─── DATA VIEWER ─── */

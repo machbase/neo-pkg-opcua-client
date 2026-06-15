@@ -44,6 +44,12 @@ function initialForm(server) {
     };
 }
 
+function getReadBatchLimit(capabilities) {
+    const maxNodesPerRead = Number(capabilities?.maxNodesPerRead);
+    if (Number.isFinite(maxNodesPerRead) && maxNodesPerRead > 0) return maxNodesPerRead;
+    return null;
+}
+
 export default function OpcuaServerForm({ server, onSave, onConnectionTest, onClose }) {
     const isEdit = Boolean(server);
     const [saving, setSaving] = useState(false);
@@ -59,7 +65,7 @@ export default function OpcuaServerForm({ server, onSave, onConnectionTest, onCl
     const usesUserName = form.authMode === "UserName";
     const usesCertificate = isSecure;
     const hasStoredCertificate = Boolean(server?.security?.hasCertificate);
-    const readBatchLimit = Number(form.capabilities?.maxNodesPerRead) > 0 ? Number(form.capabilities.maxNodesPerRead) : 32;
+    const readBatchLimit = getReadBatchLimit(form.capabilities);
 
     useEffect(() => {
         const handleKey = (e) => {
@@ -216,22 +222,24 @@ export default function OpcuaServerForm({ server, onSave, onConnectionTest, onCl
                                 </div>
 
                                 <div>
-                                    <label className="form-label">Read Batch Size ({readBatchLimit})</label>
+                                    <label className="form-label">
+                                        Read Batch Size{readBatchLimit ? ` (${readBatchLimit})` : ""}
+                                    </label>
                                     <input
                                         type="number"
                                         required
                                         min="1"
-                                        max={readBatchLimit}
+                                        max={readBatchLimit || undefined}
                                         disabled={!connectionReady}
                                         value={form.readBatchSize}
                                         onChange={(e) => update({ readBatchSize: e.target.value })}
                                         className="w-full disabled:opacity-50"
                                     />
-                                    <p className="text-xs text-on-surface-tertiary mt-4">
-                                        {connectionReady
-                                            ? `Max Nodes Per Read: ${form.capabilities?.maxNodesPerRead || "Not provided"}`
-                                            : "Run Connection Test to enable this value."}
-                                    </p>
+                                    {!connectionReady && (
+                                        <p className="text-xs text-on-surface-tertiary mt-4">
+                                            Run Connection Test to enable this value.
+                                        </p>
+                                    )}
                                 </div>
                             </div>
                         )}
@@ -319,8 +327,8 @@ export default function OpcuaServerForm({ server, onSave, onConnectionTest, onCl
                             <div className="grid grid-cols-2 gap-8">
                                 <div>
                                     <label className="form-label pem-field-header">
-                                        <span>
-                                            Client Certificate PEM
+                                        <span className="pem-field-title" title="Client Certificate PEM">
+                                            Cert PEM
                                             {isEdit && hasStoredCertificate && (
                                                 <span className="text-on-surface-tertiary font-normal ml-4">(saved)</span>
                                             )}
@@ -349,8 +357,8 @@ export default function OpcuaServerForm({ server, onSave, onConnectionTest, onCl
                                 </div>
                                 <div>
                                     <label className="form-label pem-field-header">
-                                        <span>
-                                            Client Key PEM
+                                        <span className="pem-field-title" title="Client Key PEM">
+                                            Key PEM
                                             {isEdit && hasStoredCertificate && (
                                                 <span className="text-on-surface-tertiary font-normal ml-4">(saved)</span>
                                             )}

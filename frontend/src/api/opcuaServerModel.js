@@ -18,23 +18,29 @@ function positiveInteger(value, fallback) {
     return Number.isFinite(n) && Math.floor(n) === n && n > 0 ? n : fallback;
 }
 
+function nonNegativeInteger(value, fallback) {
+    const n = Number(value);
+    return Number.isFinite(n) && Math.floor(n) === n && n >= 0 ? n : fallback;
+}
+
 function normalizeCapabilities(capabilities) {
     const source = capabilities?.maxNodesPerReadSource === "server" ? "server" : "default";
     const maxNodesPerRead =
         capabilities?.maxNodesPerRead === undefined || capabilities?.maxNodesPerRead === null
             ? null
-            : positiveInteger(capabilities.maxNodesPerRead, null);
+            : nonNegativeInteger(capabilities.maxNodesPerRead, null);
     return {
         maxNodesPerRead,
-        maxNodesPerReadSource: maxNodesPerRead ? "server" : source,
+        maxNodesPerReadSource: maxNodesPerRead !== null ? "server" : source,
         checkedAt: cleanText(capabilities?.checkedAt),
     };
 }
 
 function normalizeReadBatchSize(value, capabilities) {
-    const limit = capabilities.maxNodesPerRead || DEFAULT_READ_BATCH_SIZE;
-    const batchSize = positiveInteger(value, limit);
-    return Math.min(batchSize, limit);
+    const unlimited = capabilities.maxNodesPerRead === 0;
+    const limit = unlimited ? null : (capabilities.maxNodesPerRead || DEFAULT_READ_BATCH_SIZE);
+    const batchSize = positiveInteger(value, limit || DEFAULT_READ_BATCH_SIZE);
+    return limit ? Math.min(batchSize, limit) : batchSize;
 }
 
 export function mapOpcuaServerListItem(item) {

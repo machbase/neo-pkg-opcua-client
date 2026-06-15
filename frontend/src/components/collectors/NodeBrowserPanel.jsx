@@ -10,6 +10,7 @@ import {
     isSelectableNodeRow,
 } from "./nodeRangeSelection";
 import { buildNodeTree } from "./nodeTree";
+import { normalizeTagNameInput } from "./tagName";
 
 const DEFAULT_ROOT = "ns=0;i=85";
 const NODE_CLASS_OBJECT = 1;
@@ -22,6 +23,10 @@ function getLabel(node) {
     return node.displayName || node.browseName || node.nodeId;
 }
 
+function tagPathPart(label) {
+    return normalizeTagNameInput(label);
+}
+
 function flattenTree(parentId, childrenMap, expandedIds, depth, parentPath, parentLabels, visitedIds) {
     const children = childrenMap.get(parentId);
     if (!children) return [];
@@ -30,7 +35,7 @@ function flattenTree(parentId, childrenMap, expandedIds, depth, parentPath, pare
     for (const node of children) {
         const isObject = node.nodeClass === NODE_CLASS_OBJECT;
         const label = getLabel(node);
-        const currentPath = parentPath ? `${parentPath}_${label}` : label;
+        const currentPath = parentPath ? `${parentPath}_${tagPathPart(label)}` : tagPathPart(label);
         const pathLabels = [...parentLabels, label];
         const isCycle = visitedIds.has(node.nodeId);
 
@@ -231,7 +236,7 @@ export default function NodeBrowserPanel({ endpoint, endpointTarget, existingNod
         const add = Array.from(selected.entries()).map(([nodeId, { path, pathLabels, node }]) => ({
             nodeId,
             name: path,
-            treePath: path.split("_").filter(Boolean),
+            treePath: pathLabels,
             dataType: getDataType(node) || undefined,
             nodeTree: buildNodeTree({ rootNodeId, pathLabels, node }),
         }));

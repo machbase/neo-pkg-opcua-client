@@ -136,6 +136,54 @@ test("buildOpcuaServerPayload includes read batch size and capabilities after co
     );
 });
 
+test("buildOpcuaServerPayload treats maxNodesPerRead zero as unlimited", () => {
+    assert.deepEqual(
+        buildOpcuaServerPayload({
+            name: "opc-unlimited",
+            endpoint: "opc.tcp://127.0.0.1:4840",
+            readBatchSize: "1000",
+            capabilities: {
+                maxNodesPerRead: 0,
+                maxNodesPerReadSource: "server",
+                checkedAt: "2026-06-09T01:53:51.003Z",
+            },
+            securityMode: "None",
+            securityPolicy: "None",
+            authMode: "Anonymous",
+        }),
+        {
+            name: "opc-unlimited",
+            endpoint: "opc.tcp://127.0.0.1:4840",
+            readBatchSize: 1000,
+            capabilities: {
+                maxNodesPerRead: 0,
+                maxNodesPerReadSource: "server",
+                checkedAt: "2026-06-09T01:53:51.003Z",
+            },
+            security: { enabled: false },
+        }
+    );
+});
+
+test("mapOpcuaServerListItem preserves maxNodesPerRead zero capability", () => {
+    const item = mapOpcuaServerListItem({
+        name: "opc-unlimited",
+        config: {
+            endpoint: "opc.tcp://127.0.0.1:4840",
+            readBatchSize: 1000,
+            capabilities: {
+                maxNodesPerRead: 0,
+                maxNodesPerReadSource: "server",
+            },
+            security: { enabled: false },
+        },
+    });
+
+    assert.equal(item.readBatchSize, 1000);
+    assert.equal(item.capabilities.maxNodesPerRead, 0);
+    assert.equal(item.capabilities.maxNodesPerReadSource, "server");
+});
+
 test("buildOpcuaServerPayload sends disabled security for None mode", () => {
     assert.deepEqual(
         buildOpcuaServerPayload({

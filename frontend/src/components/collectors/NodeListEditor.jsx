@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Icon from "../common/Icon";
 import NodeBrowserPanel from "./NodeBrowserPanel";
 import { normalizeCollectorNode } from "./nodeTree";
+import { normalizeTagNameInput } from "./tagName";
 
 const NODE_ID_PATTERN = /^ns=\d+;[isgb]=.+$/;
 
@@ -144,7 +145,7 @@ export default function NodeListEditor({ nodes, onChange, endpoint, endpointTarg
 
     const addNode = () => {
         const trimmedId = nodeId.trim();
-        const trimmedName = name.trim();
+        const trimmedName = normalizeTagNameInput(name).trim();
         if (!trimmedId || !trimmedName) return;
 
         const err = validateNodeId(trimmedId);
@@ -282,7 +283,7 @@ export default function NodeListEditor({ nodes, onChange, endpoint, endpointTarg
 
     const startNameEdit = (idx, currentName) => {
         setEditingNameIdx(idx);
-        setEditingNameValue(currentName || "");
+        setEditingNameValue(normalizeTagNameInput(currentName || ""));
     };
 
     const cancelNameEdit = () => {
@@ -291,7 +292,7 @@ export default function NodeListEditor({ nodes, onChange, endpoint, endpointTarg
     };
 
     const saveNameEdit = (idx) => {
-        const trimmed = editingNameValue.trim();
+        const trimmed = normalizeTagNameInput(editingNameValue).trim();
         if (trimmed && trimmed !== (nodes[idx]?.name || "")) {
             patchNode(idx, { name: trimmed });
         }
@@ -307,7 +308,7 @@ export default function NodeListEditor({ nodes, onChange, endpoint, endpointTarg
                     <input
                         type="text"
                         value={name}
-                        onChange={(e) => setName(e.target.value)}
+                        onChange={(e) => setName(normalizeTagNameInput(e.target.value))}
                         onKeyDown={handleKeyDown}
                         className="w-full"
                         placeholder="e.g. Tank_Temp_01"
@@ -463,7 +464,7 @@ export default function NodeListEditor({ nodes, onChange, endpoint, endpointTarg
                                                         ref={editingNameInputRef}
                                                         type="text"
                                                         value={editingNameValue}
-                                                        onChange={(e) => setEditingNameValue(e.target.value)}
+                                                        onChange={(e) => setEditingNameValue(normalizeTagNameInput(e.target.value))}
                                                         onBlur={() => saveNameEdit(idx)}
                                                         onKeyDown={(e) => {
                                                             if (e.key === "Enter") {
