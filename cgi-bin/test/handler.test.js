@@ -795,7 +795,7 @@ runner.run('Handler: OPC UA server CRUD', {
         t.assertEqual(result.data.name, 'opc1');
         t.assertEqual(mockCGI._opcuaServers['opc1'].endpoint, 'opc.tcp://h:4840');
         t.assertEqual(mockCGI._opcuaServers['opc1'].security.enabled, false);
-        t.assertEqual(mockCGI._opcuaServers['opc1'].readBatchSize, 32);
+        t.assertEqual(mockCGI._opcuaServers['opc1'].readBatchSize, 100);
         t.assertEqual(mockCGI._opcuaServers['opc1'].capabilities.maxNodesPerRead, null);
         t.assertEqual(mockCGI._opcuaServers['opc1'].capabilities.maxNodesPerReadSource, 'default');
     },
@@ -819,6 +819,23 @@ runner.run('Handler: OPC UA server CRUD', {
         t.assertEqual(mockCGI._opcuaServers['opc1'].capabilities.checkedAt, '2026-06-08T00:00:00.000Z');
     },
 
+    'opcuaServerPost allows any readBatchSize when server maxNodesPerRead is unlimited': (t) => {
+        const H = makeHandler();
+        let result;
+        H.opcuaServerPost('opc1', {
+            endpoint: 'opc.tcp://h:4840',
+            readBatchSize: 1000,
+            capabilities: {
+                maxNodesPerRead: 0,
+                maxNodesPerReadSource: 'server',
+            },
+        }, (r) => { result = r; });
+        t.assert(result.ok, 'should be ok');
+        t.assertEqual(mockCGI._opcuaServers['opc1'].readBatchSize, 1000);
+        t.assertEqual(mockCGI._opcuaServers['opc1'].capabilities.maxNodesPerRead, 0);
+        t.assertEqual(mockCGI._opcuaServers['opc1'].capabilities.maxNodesPerReadSource, 'server');
+    },
+
     'opcuaServerPost rejects readBatchSize greater than maxNodesPerRead': (t) => {
         const H = makeHandler();
         let result;
@@ -834,19 +851,19 @@ runner.run('Handler: OPC UA server CRUD', {
         t.assert(result.reason.includes('readBatchSize must be <= 32'));
     },
 
-    'opcuaServerPost limits readBatchSize to 32 when maxNodesPerRead is unknown': (t) => {
+    'opcuaServerPost limits readBatchSize to 100 when maxNodesPerRead is unknown': (t) => {
         const H = makeHandler();
         let result;
         H.opcuaServerPost('opc1', {
             endpoint: 'opc.tcp://h:4840',
-            readBatchSize: 33,
+            readBatchSize: 101,
             capabilities: {
                 maxNodesPerRead: null,
                 maxNodesPerReadSource: 'default',
             },
         }, (r) => { result = r; });
         t.assert(!result.ok, 'should not be ok');
-        t.assert(result.reason.includes('readBatchSize must be <= 32'));
+        t.assert(result.reason.includes('readBatchSize must be <= 100'));
     },
 
     'opcuaServerPost stores username auth and masks password on get': (t) => {
@@ -964,7 +981,7 @@ runner.run('Handler: OPC UA server CRUD', {
         let result;
         H.opcuaServerPut('opc1', { endpoint: 'opc.tcp://h2:4840', security: { enabled: false } }, (r) => { result = r; });
         t.assert(result.ok, 'should be ok');
-        t.assertEqual(mockCGI._opcuaServers['opc1'].readBatchSize, 32);
+        t.assertEqual(mockCGI._opcuaServers['opc1'].readBatchSize, 100);
         t.assertEqual(mockCGI._opcuaServers['opc1'].capabilities.maxNodesPerRead, null);
         t.assertEqual(mockCGI._opcuaServers['opc1'].capabilities.maxNodesPerReadSource, 'default');
     },
@@ -1037,7 +1054,7 @@ runner.run('Handler: OPC UA server CRUD', {
         t.assertEqual(result.data.length, 2);
         t.assertEqual(result.data[0].name, 'opc-a');
         t.assertEqual(result.data[1].name, 'opc-b');
-        t.assertEqual(result.data[0].config.readBatchSize, 32);
+        t.assertEqual(result.data[0].config.readBatchSize, 100);
     },
 });
 
@@ -1406,7 +1423,7 @@ runner.run('Handler: opcuaConnect', {
         t.assertEqual(mockOpcuaClient.readRetryInterval, 250);
         t.assert(mockOpcuaClient.opened, 'client should be opened');
         t.assert(mockOpcuaClient.closed, 'client should be closed');
-        t.assertEqual(result.data.readBatchSize, 32);
+        t.assertEqual(result.data.readBatchSize, 100);
         t.assertEqual(result.data.capabilities.maxNodesPerRead, null);
         t.assertEqual(result.data.capabilities.maxNodesPerReadSource, 'default');
     },
@@ -1421,6 +1438,29 @@ runner.run('Handler: opcuaConnect', {
         t.assertEqual(result.data.readBatchSize, 64);
         t.assertEqual(result.data.capabilities.maxNodesPerRead, 64);
         t.assertEqual(result.data.capabilities.maxNodesPerReadSource, 'server');
+    },
+
+    'returns unlimited maxNodesPerRead capability when server exposes zero': (t) => {
+        const H = makeHandler();
+        mockOpcuaClient.readResult = [{ value: 0, sourceTimestamp: 100, serverTimestamp: 200 }];
+        let result;
+        H.opcuaConnect('opc.tcp://h:4840', undefined, (r) => { result = r; });
+        t.assert(result.ok, 'should be ok');
+        t.assertEqual(mockOpcuaClient.readCalls[0][0], 'ns=0;i=11705');
+        t.assertEqual(result.data.readBatchSize, 100);
+        t.assertEqual(result.data.capabilities.maxNodesPerRead, 0);
+        t.assertEqual(result.data.capabilities.maxNodesPerReadSource, 'server');
+    },
+
+    'keeps default capability when maxNodesPerRead value is empty': (t) => {
+        const H = makeHandler();
+        mockOpcuaClient.readResult = [{ value: null, sourceTimestamp: 100, serverTimestamp: 200 }];
+        let result;
+        H.opcuaConnect('opc.tcp://h:4840', undefined, (r) => { result = r; });
+        t.assert(result.ok, 'should be ok');
+        t.assertEqual(result.data.readBatchSize, 100);
+        t.assertEqual(result.data.capabilities.maxNodesPerRead, null);
+        t.assertEqual(result.data.capabilities.maxNodesPerReadSource, 'default');
     },
 
     'resolves endpoint from OPC UA server profile': (t) => {
