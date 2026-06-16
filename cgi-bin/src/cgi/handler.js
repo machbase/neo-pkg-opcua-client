@@ -1947,18 +1947,83 @@ function buildTagStatViewRef(table) {
   return table.tableUser ? `${table.tableUser}.V$${table.tableName}_STAT` : `V$${table.tableName}_STAT`;
 }
 
+const HIERARCHY_TAG_NAME = '__machbase_hierarchy__';
+
+function parseJsonObject(value) {
+  if (value === undefined || value === null || value === '') return null;
+  if (value && typeof value === 'object' && !Array.isArray(value)) return value;
+  if (typeof value !== 'string') return null;
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
+  } catch (_err) {
+    return null;
+  }
+}
+
+function normalizeAssetTreeNodes(nodes, schema, depth = 0) {
+  if (!Array.isArray(nodes) || depth >= schema.length) return null;
+  const normalized = [];
+  for (const node of nodes) {
+    if (!node || typeof node !== 'object' || Array.isArray(node)) return null;
+    const key = normalizeText(node.key);
+    const value = normalizeText(node.value);
+    if (!key || !value || key !== schema[depth]) return null;
+    const children = normalizeAssetTreeNodes(node.children || [], schema, depth + 1);
+    if (!children) return null;
+    normalized.push({ key, value, children });
+  }
+  return normalized;
+}
+
+function normalizeAssetHierarchy(value) {
+  const parsed = parseJsonObject(value);
+  if (!parsed || !Array.isArray(parsed.schema) || !Array.isArray(parsed.tree)) return null;
+  const schema = parsed.schema.map((key) => normalizeText(key)).filter(Boolean);
+  if (schema.length !== parsed.schema.length || schema.length === 0) return null;
+  if (new Set(schema).size !== schema.length) return null;
+  const tree = normalizeAssetTreeNodes(parsed.tree, schema);
+  if (!tree || tree.length === 0) return null;
+  return { schema, tree };
+}
+
+function mapTagMetaResponse(rows) {
+  let assetHierarchy = null;
+  const tags = [];
+
+  for (const row of rows || []) {
+    const name = pickRowValue(row, ['NAME', 'name']);
+    if (name === undefined || name === null || name === '') continue;
+    const tagName = String(name);
+    const asset = pickRowValue(row, ['ASSET', 'asset']);
+    if (tagName === HIERARCHY_TAG_NAME) {
+      assetHierarchy = normalizeAssetHierarchy(asset);
+      continue;
+    }
+
+    const id = pickRowValue(row, ['_ID', '_id', 'ID', 'id']);
+    const tag = {
+      id: id === undefined || id === null ? null : String(id),
+      name: tagName,
+    };
+    const assetObject = parseJsonObject(asset);
+    if (assetObject) tag.asset = assetObject;
+    tags.push(tag);
+  }
+
+  return { tags, assetHierarchy };
+}
+
 function mapTagMetaRows(rows) {
-  return (rows || [])
-    .map((row) => {
-      const name = pickRowValue(row, ['NAME', 'name']);
-      if (name === undefined || name === null || name === '') return null;
-      const id = pickRowValue(row, ['_ID', '_id', 'ID', 'id']);
-      return {
-        id: id === undefined || id === null ? null : String(id),
-        name: String(name),
-      };
-    })
-    .filter(Boolean);
+  return mapTagMetaResponse(rows).tags;
+}
+
+function hasAssetMetadataColumn(columns) {
+  return (columns || []).some((row) => {
+    const name = normalizeText(row.NAME || row.name).toUpperCase();
+    const flag = Number(row.FLAG || row.flag || 0);
+    return name === 'ASSET' && (flag & FLAG_METADATA);
+  });
 }
 
 function buildTagDataWhere(params, primaryColumn, timeColumn) {
@@ -2043,13 +2108,17 @@ function dbTableTags(db, params, reply) {
       return;
     }
 
+    const columns = client.selectColumnsByTableId(meta.ID);
+    const selectAsset = hasAssetMetadataColumn(columns);
     const tagMetaTable = buildTagMetaTableRef(req);
-    const rows = client.query(`SELECT _ID, NAME FROM ${tagMetaTable} ORDER BY NAME`);
+    const rows = client.query(`SELECT _ID, NAME${selectAsset ? ', ASSET' : ''} FROM ${tagMetaTable} ORDER BY NAME`);
+    const tagMeta = mapTagMetaResponse(rows);
     reply({
       ok: true,
       data: {
         table: req.tableRef,
-        tags: mapTagMetaRows(rows),
+        tags: tagMeta.tags,
+        assetHierarchy: tagMeta.assetHierarchy,
       },
     });
   } catch (err) {

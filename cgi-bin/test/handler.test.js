@@ -1271,6 +1271,78 @@ runner.run('Handler: dbTableTags', {
         t.assertEqual(result.data.tags[1].name, 'sensor.b');
         t.assert(mockMachbaseClient.closed, 'client should be closed');
     },
+
+    'returns asset hierarchy and excludes hierarchy row from tag list': (t) => {
+        const H = makeHandler();
+        mockMachbaseClient.users = [{ USER_ID: 1, NAME: 'SYS' }];
+        mockMachbaseClient.tableMeta = { ID: 10, TYPE: 6, NAME: 'TAG' };
+        mockMachbaseClient.columns = [
+            { NAME: 'ASSET', TYPE: 0, ID: 3, FLAG: 0x4000000, LENGTH: 0 },
+        ];
+        mockMachbaseClient.queryResults = [
+            [
+                {
+                    _ID: 1,
+                    NAME: '__machbase_hierarchy__',
+                    ASSET: JSON.stringify({
+                        schema: ['country', 'city'],
+                        tree: [{ key: 'country', value: 'Korea', children: [] }],
+                    }),
+                },
+                {
+                    _ID: 2,
+                    NAME: 'sensor.a',
+                    ASSET: '{"country":"Korea","city":"Seoul"}',
+                },
+            ],
+        ];
+
+        let result;
+        H.dbTableTags({
+            host: 'h',
+            port: 5656,
+            user: 'sys',
+            password: 'p',
+        }, {
+            table: 'TAG',
+        }, (r) => { result = r; });
+
+        t.assert(result.ok, 'should be ok');
+        t.assertEqual(result.data.tags.length, 1);
+        t.assertEqual(result.data.tags[0].name, 'sensor.a');
+        t.assertEqual(result.data.tags[0].asset.city, 'Seoul');
+        t.assertEqual(result.data.assetHierarchy.schema[0], 'country');
+        t.assertEqual(result.data.assetHierarchy.tree[0].value, 'Korea');
+    },
+
+    'returns null asset hierarchy for invalid hierarchy metadata': (t) => {
+        const H = makeHandler();
+        mockMachbaseClient.users = [{ USER_ID: 1, NAME: 'SYS' }];
+        mockMachbaseClient.tableMeta = { ID: 10, TYPE: 6, NAME: 'TAG' };
+        mockMachbaseClient.columns = [
+            { NAME: 'ASSET', TYPE: 0, ID: 3, FLAG: 0x4000000, LENGTH: 0 },
+        ];
+        mockMachbaseClient.queryResults = [
+            [
+                { _ID: 1, NAME: '__machbase_hierarchy__', ASSET: '{"world":{"city":{}}}' },
+                { _ID: 2, NAME: 'sensor.a', ASSET: '{"country":"Korea"}' },
+            ],
+        ];
+
+        let result;
+        H.dbTableTags({
+            host: 'h',
+            port: 5656,
+            user: 'sys',
+            password: 'p',
+        }, {
+            table: 'TAG',
+        }, (r) => { result = r; });
+
+        t.assert(result.ok, 'should be ok');
+        t.assertEqual(result.data.assetHierarchy, null);
+        t.assertEqual(result.data.tags.length, 1);
+    },
 });
 
 // ── dbTableData ──────────────────────────────────────────────────────────────

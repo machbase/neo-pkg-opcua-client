@@ -62,6 +62,7 @@ export function buildDataViewerHeaderLabels(jobName, tableName) {
 
 const RAW_COLUMN_ORDER = ["time", "name", "value"];
 const INTERNAL_RAW_RESULT_KEYS = new Set(["buffer", "names"]);
+const ASSET_METADATA_RAW_KEYS = new Set(["asset"]);
 
 function formatRawColumnLabel(key) {
     return String(key || "")
@@ -71,14 +72,17 @@ function formatRawColumnLabel(key) {
         .join(" ");
 }
 
-export function buildRawResultColumns(rows = []) {
+export function buildRawResultColumns(rows = [], options = {}) {
     const keys = [];
     const seen = new Set();
+    const hiddenKeys = options.hideAssetMetadata ? ASSET_METADATA_RAW_KEYS : new Set();
 
     for (const row of rows) {
         if (!row || typeof row !== "object") continue;
         for (const key of Object.keys(row)) {
-            if (INTERNAL_RAW_RESULT_KEYS.has(String(key).toLowerCase())) continue;
+            const normalizedKey = String(key).toLowerCase();
+            if (INTERNAL_RAW_RESULT_KEYS.has(normalizedKey)) continue;
+            if (hiddenKeys.has(normalizedKey)) continue;
             if (seen.has(key)) continue;
             seen.add(key);
             keys.push(key);
@@ -239,6 +243,119 @@ export function buildTagRows(nodes = []) {
         });
     }
 
+    return rows;
+}
+
+function isPlainObject(value) {
+    return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+export function hasAssetHierarchy(assetHierarchy) {
+    return Boolean(
+        assetHierarchy &&
+        Array.isArray(assetHierarchy.schema) &&
+        assetHierarchy.schema.length > 0 &&
+        assetHierarchy.schema.every((key) => typeof key === "string" && key.trim()) &&
+        Array.isArray(assetHierarchy.tree) &&
+        assetHierarchy.tree.length > 0
+    );
+}
+
+function assetPathKey(parts) {
+    return parts.map((part) => `${part.key}=${part.value}`).join("/");
+}
+
+function collectAssetFolders(nodes = [], schema = [], folders = new Map(), path = [], depth = 0) {
+    if (!Array.isArray(nodes) || depth >= schema.length) return folders;
+
+    for (const node of nodes) {
+        if (!isPlainObject(node)) continue;
+        const key = String(node.key || "").trim();
+        const value = String(node.value || "").trim();
+        if (!key || !value || key !== schema[depth]) continue;
+        const nextPath = [...path, { key, value }];
+        folders.set(assetPathKey(nextPath), { node, path: nextPath, depth });
+        collectAssetFolders(node.children || [], schema, folders, nextPath, depth + 1);
+    }
+
+    return folders;
+}
+
+function deepestAssetFolderKey(asset, schema, folders) {
+    if (!isPlainObject(asset)) return "";
+    const path = [];
+    let deepest = "";
+    let deepestFolder = null;
+
+    for (const key of schema) {
+        const value = String(asset[key] || "").trim();
+        if (!value) break;
+        path.push({ key, value });
+        const folderKey = assetPathKey(path);
+        if (!folders.has(folderKey)) {
+            return Array.isArray(deepestFolder?.node?.children) && deepestFolder.node.children.length > 0 ? "" : deepest;
+        }
+        deepest = folderKey;
+        deepestFolder = folders.get(folderKey);
+    }
+
+    return deepest;
+}
+
+export function buildAssetRows(assetHierarchy, tags = []) {
+    if (!hasAssetHierarchy(assetHierarchy)) return [];
+    const schema = assetHierarchy.schema.map((key) => String(key).trim());
+    const folders = collectAssetFolders(assetHierarchy.tree, schema);
+    const tagsByFolder = new Map();
+
+    for (const tag of Array.isArray(tags) ? tags : []) {
+        const name = tag?.name || tag?.NAME;
+        if (!name) continue;
+        const folderKey = deepestAssetFolderKey(tag.asset || tag.ASSET, schema, folders);
+        if (!folderKey) continue;
+        if (!tagsByFolder.has(folderKey)) tagsByFolder.set(folderKey, []);
+        tagsByFolder.get(folderKey).push({ ...tag, name: String(name) });
+    }
+
+    const rows = [];
+    const walk = (nodes = [], path = [], depth = 0) => {
+        if (!Array.isArray(nodes) || depth >= schema.length) return;
+        for (const node of nodes) {
+            if (!isPlainObject(node)) continue;
+            const key = String(node.key || "").trim();
+            const value = String(node.value || "").trim();
+            if (!key || !value || key !== schema[depth]) continue;
+            const nextPath = [...path, { key, value }];
+            const folderKey = assetPathKey(nextPath);
+            const ancestorKeys = nextPath
+                .slice(0, -1)
+                .map((_, index) => `asset-folder:${assetPathKey(nextPath.slice(0, index + 1))}`);
+            rows.push({
+                type: "folder",
+                key: `asset-folder:${folderKey}`,
+                ancestorKeys,
+                depth,
+                label: value,
+                assetPath: nextPath,
+            });
+
+            for (const tag of tagsByFolder.get(folderKey) || []) {
+                rows.push({
+                    type: "tag",
+                    key: `asset-tag:${folderKey}:${tag.name}`,
+                    ancestorKeys: [...ancestorKeys, `asset-folder:${folderKey}`],
+                    depth: depth + 1,
+                    label: tag.name,
+                    tag,
+                    selectable: true,
+                });
+            }
+
+            walk(node.children || [], nextPath, depth + 1);
+        }
+    };
+
+    walk(assetHierarchy.tree);
     return rows;
 }
 

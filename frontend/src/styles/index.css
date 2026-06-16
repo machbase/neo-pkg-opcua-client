@@ -3213,6 +3213,40 @@ label.switch input:checked + .switch-slider::before {
     flex-shrink: 0;
 }
 
+.data-viewer-tag-tabs {
+    display: flex;
+    align-items: flex-end;
+    gap: var(--spacing-24);
+    padding: 0;
+    border-bottom: 1px solid var(--color-border);
+    flex-shrink: 0;
+}
+
+.data-viewer-tag-tab {
+    min-height: 40px;
+    padding: 0 var(--spacing-4);
+    border: 0;
+    border-bottom: 3px solid transparent;
+    border-radius: 0;
+    background: transparent;
+    color: var(--color-on-surface-tertiary);
+    font-size: var(--font-size-base);
+    font-weight: 600;
+    letter-spacing: 0;
+    text-transform: none;
+}
+
+.data-viewer-tag-tab:hover {
+    background-color: transparent;
+    color: var(--color-on-surface);
+}
+
+.data-viewer-tag-tab.is-active {
+    background-color: transparent;
+    border-bottom-color: var(--color-primary);
+    color: var(--color-on-surface);
+}
+
 .data-viewer-tag-list {
     flex: 1;
     min-height: 0;

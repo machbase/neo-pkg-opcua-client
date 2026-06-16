@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import {
     DATA_VIEWER_BACK_PATH,
+    buildAssetRows,
     buildTagRows,
     buildTagChartSeries,
     buildDataViewerPath,
@@ -15,6 +16,7 @@ import {
     getResultHeading,
     getScanDirectionLabel,
     getVisibleTagRows,
+    hasAssetHierarchy,
     QUICK_TIME_RANGE_GROUPS,
     resolveTimeRangeInput,
     resolveTagNodes,
@@ -69,6 +71,25 @@ test("buildRawResultColumns keeps time name value first and appends extra fields
         "Str Value",
         "Quality",
         "Extra Status",
+    ]);
+});
+
+test("buildRawResultColumns can hide asset metadata while keeping other metadata fields", () => {
+    const columns = buildRawResultColumns([
+        {
+            time: "2026-06-01",
+            name: "sensor.a",
+            value: 12.5,
+            asset: "{\"city\":\"Seoul\"}",
+            spec: "{\"unit\":\"C\"}",
+        },
+    ], { hideAssetMetadata: true });
+
+    assert.deepEqual(columns.map((column) => column.key), [
+        "time",
+        "name",
+        "value",
+        "spec",
     ]);
 });
 
@@ -218,6 +239,82 @@ test("buildTagRows uses treePath only when nodeTree is missing", () => {
         ["tag", 1, "Temperature"],
         ["tag", 1, "Pressure"],
     ]);
+});
+
+test("hasAssetHierarchy returns true for valid asset hierarchy even with configured nodeTree", () => {
+    const assetHierarchy = {
+        schema: ["country", "city", "equipment"],
+        tree: [{ key: "country", value: "Korea", children: [] }],
+    };
+
+    assert.equal(hasAssetHierarchy(assetHierarchy), true);
+    assert.equal(hasAssetHierarchy(null), false);
+    assert.equal(hasAssetHierarchy({ schema: ["country"], tree: [] }), false);
+});
+
+test("buildAssetRows renders hierarchy folders and matching tag leaves", () => {
+    const rows = buildAssetRows(
+        {
+            schema: ["country", "city", "equipment", "sensor"],
+            tree: [
+                {
+                    key: "country",
+                    value: "Korea",
+                    children: [
+                        {
+                            key: "city",
+                            value: "Seoul",
+                            children: [
+                                {
+                                    key: "equipment",
+                                    value: "Boiler-01",
+                                    children: [],
+                                },
+                            ],
+                        },
+                    ],
+                },
+            ],
+        },
+        [
+            {
+                name: "GLOBAL.SEOUL.BOILER01.TEMP",
+                asset: {
+                    country: "Korea",
+                    city: "Seoul",
+                    equipment: "Boiler-01",
+                    sensor: "Temperature",
+                },
+            },
+            {
+                name: "GLOBAL.SEOUL.PARTIAL",
+                asset: {
+                    country: "Korea",
+                    city: "Seoul",
+                    equipment: "",
+                    sensor: "",
+                },
+            },
+            {
+                name: "GLOBAL.BUSAN.UNMATCHED",
+                asset: {
+                    country: "Korea",
+                    city: "Busan",
+                    equipment: "Pump-01",
+                    sensor: "Pressure",
+                },
+            },
+        ]
+    );
+
+    assert.deepEqual(rows.map((row) => [row.type, row.depth, row.label]), [
+        ["folder", 0, "Korea"],
+        ["folder", 1, "Seoul"],
+        ["tag", 2, "GLOBAL.SEOUL.PARTIAL"],
+        ["folder", 2, "Boiler-01"],
+        ["tag", 3, "GLOBAL.SEOUL.BOILER01.TEMP"],
+    ]);
+    assert.equal(rows.find((row) => row.type === "tag").selectable, true);
 });
 
 test("defaultSelectedTag returns the first selectable tag", () => {

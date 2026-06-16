@@ -13,6 +13,7 @@ import {
     QUICK_TIME_RANGE_GROUPS,
     TIME_FORMATS,
     TIME_ZONE_OPTIONS,
+    buildAssetRows,
     buildDataViewerHeaderLabels,
     buildRawResultColumns,
     buildTagChartSeries,
@@ -26,6 +27,7 @@ import {
     getTimeFormatLabel,
     getTimeZoneLabel,
     getVisibleTagRows,
+    hasAssetHierarchy,
     resolveTimeRangeInput,
     resolveTagNodes,
     showsDataViewerTimeControls,
@@ -650,10 +652,16 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
     const stringValueColumn = config.stringOnly ? "" : (config.stringValueColumn || "");
 
     const [tableTags, setTableTags] = useState([]);
+    const [assetHierarchy, setAssetHierarchy] = useState(null);
+    const [assetHierarchyChecked, setAssetHierarchyChecked] = useState(false);
     const [tagsLoading, setTagsLoading] = useState(false);
     const [tagError, setTagError] = useState("");
     const nodes = useMemo(() => resolveTagNodes(configuredNodes, tableTags), [configuredNodes, tableTags]);
     const tagRows = useMemo(() => buildTagRows(nodes), [nodes]);
+    const showAssetTab = hasAssetHierarchy(assetHierarchy);
+    const assetHierarchyPending = Boolean(dbServer && dbTable && !assetHierarchyChecked && tagsLoading);
+    const assetRows = useMemo(() => buildAssetRows(assetHierarchy, tableTags), [assetHierarchy, tableTags]);
+    const [activeTagTab, setActiveTagTab] = useState("tags");
     const [tagFilter, setTagFilter] = useState("");
     const [collapsedTagFolders, setCollapsedTagFolders] = useState(() => new Set());
     const [selectedTagName, setSelectedTagName] = useState("");
@@ -678,10 +686,13 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
     useEffect(() => {
         let alive = true;
         setTableTags([]);
+        setAssetHierarchy(null);
+        setAssetHierarchyChecked(false);
         setTagError("");
 
-        if (configuredNodes.length > 0 || !dbServer || !dbTable) {
+        if (!dbServer || !dbTable) {
             setTagsLoading(false);
+            setAssetHierarchyChecked(true);
             return () => {
                 alive = false;
             };
@@ -692,11 +703,14 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
             .then((data) => {
                 if (!alive) return;
                 setTableTags(data?.tags || []);
+                setAssetHierarchy(data?.assetHierarchy || null);
+                setAssetHierarchyChecked(true);
             })
             .catch((e) => {
                 if (!alive) return;
                 const message = e.reason || e.message || "Failed to load tags";
                 setTagError(message);
+                setAssetHierarchyChecked(true);
                 notify(message, "error");
             })
             .finally(() => {
@@ -706,18 +720,30 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
         return () => {
             alive = false;
         };
-    }, [configuredNodes, dbServer, dbTable, notify]);
+    }, [dbServer, dbTable, notify]);
+
+    const selectableRows = useMemo(
+        () => [...tagRows, ...assetRows].filter((row) => row.type === "tag" && row.tag?.name),
+        [assetRows, tagRows]
+    );
+    const activeTagRows = activeTagTab === "asset" && showAssetTab ? assetRows : tagRows;
 
     useEffect(() => {
-        const fallback = defaultSelectedTag(tagRows);
-        if (!selectedTagName || !nodes.some((node) => node.name === selectedTagName)) {
+        if (activeTagTab === "asset" && !showAssetTab) {
+            setActiveTagTab("tags");
+        }
+    }, [activeTagTab, showAssetTab]);
+
+    useEffect(() => {
+        const fallback = defaultSelectedTag(tagRows) || defaultSelectedTag(assetRows);
+        if (!selectedTagName || !selectableRows.some((row) => row.tag.name === selectedTagName)) {
             setSelectedTagName(fallback?.name || "");
         }
-    }, [nodes, selectedTagName, tagRows]);
+    }, [assetRows, selectableRows, selectedTagName, tagRows]);
 
     useEffect(() => {
         setCollapsedTagFolders(new Set());
-    }, [selectedCollectorId, tagRows]);
+    }, [selectedCollectorId, activeTagRows]);
 
     useEffect(() => {
         setResultPage(1);
@@ -725,8 +751,8 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
 
     const filteredTagRows = useMemo(() => {
         const q = tagFilter.trim().toLowerCase();
-        if (!q) return tagRows;
-        return tagRows.filter((row) => {
+        if (!q) return activeTagRows;
+        return activeTagRows.filter((row) => {
             if (row.type === "folder") return row.label.toLowerCase().includes(q);
             return (
                 (row.tag?.name || "").toLowerCase().includes(q) ||
@@ -734,7 +760,7 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
                 row.label.toLowerCase().includes(q)
             );
         });
-    }, [tagFilter, tagRows]);
+    }, [activeTagRows, tagFilter]);
 
     const visibleTagRows = useMemo(
         () => getVisibleTagRows(filteredTagRows, collapsedTagFolders),
@@ -807,7 +833,7 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
     const timeFormatButtonText = `${getTimeFormatLabel(timeFormat)} / ${getTimeZoneLabel(timeZone)}`;
     const headerLabels = buildDataViewerHeaderLabels(collector.id, dbTable);
     const resultHeading = getResultHeading(mode);
-    const rawColumns = buildRawResultColumns(result.rows);
+    const rawColumns = buildRawResultColumns(result.rows, { hideAssetMetadata: showAssetTab });
     const handleScanDirectionChange = (nextBackwardScan) => {
         setBackwardScan(nextBackwardScan);
         setResultPage(1);
@@ -873,10 +899,34 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
                 <div className={embedded ? "data-viewer-embedded-inner" : "page-body-inner"}>
                     <div className="data-viewer-layout">
                         <aside className="form-card data-viewer-tags">
-                            <div className="form-card-header !mb-0">
-                                <span className="section-dot" />
-                                Tags
-                            </div>
+                            {!showAssetTab && !assetHierarchyPending && (
+                                <div className="form-card-header !mb-0">
+                                    <span className="section-dot" />
+                                    Tags
+                                </div>
+                            )}
+                            {showAssetTab && (
+                                <div className="data-viewer-tag-tabs" role="tablist" aria-label="Tag source">
+                                    <button
+                                        type="button"
+                                        role="tab"
+                                        aria-selected={activeTagTab === "tags"}
+                                        className={`data-viewer-tag-tab${activeTagTab === "tags" ? " is-active" : ""}`}
+                                        onClick={() => setActiveTagTab("tags")}
+                                    >
+                                        Tags
+                                    </button>
+                                    <button
+                                        type="button"
+                                        role="tab"
+                                        aria-selected={activeTagTab === "asset"}
+                                        className={`data-viewer-tag-tab${activeTagTab === "asset" ? " is-active" : ""}`}
+                                        onClick={() => setActiveTagTab("asset")}
+                                    >
+                                        Asset
+                                    </button>
+                                </div>
+                            )}
                             <div className="data-viewer-tag-search">
                                 <input
                                     type="text"
@@ -884,11 +934,12 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
                                     onChange={(e) => setTagFilter(e.target.value)}
                                     placeholder="Filter tags..."
                                     className="w-full"
+                                    disabled={assetHierarchyPending}
                                 />
                             </div>
                             {tagError && <div className="error-box">{tagError}</div>}
                             <div className="data-viewer-tag-list">
-                                {visibleTagRows.map((row) => {
+                                {!assetHierarchyPending && visibleTagRows.map((row) => {
                                     if (row.type === "folder") {
                                         const collapsed = collapsedTagFolders.has(row.key);
                                         return (
@@ -926,8 +977,8 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
                                         </label>
                                     );
                                 })}
-                                {tagsLoading && <div className="empty-state">Loading tags...</div>}
-                                {!tagsLoading && visibleTagRows.length === 0 && <div className="empty-state">No tags</div>}
+                                {(tagsLoading || assetHierarchyPending) && <div className="empty-state">Loading tags...</div>}
+                                {!tagsLoading && !assetHierarchyPending && visibleTagRows.length === 0 && <div className="empty-state">No tags</div>}
                             </div>
                         </aside>
 
