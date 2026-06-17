@@ -8,12 +8,12 @@ export default function CollectorDataViewerRoute({ collectors, detail }) {
     const { selectedCollectorId, setSelectedCollectorId } = useApp();
 
     useEffect(() => {
-        if (collectorId && selectedCollectorId !== collectorId) {
-            setSelectedCollectorId(collectorId);
+        if (collectorId) {
+            setSelectedCollectorId((current) => (current === collectorId ? current : collectorId));
         }
-    }, [collectorId, selectedCollectorId, setSelectedCollectorId]);
+    }, [collectorId, setSelectedCollectorId]);
 
-    const activeDetail = selectedCollectorId === collectorId ? detail : null;
+    const activeDetail = selectedCollectorId === collectorId && detail?.name === collectorId ? detail : null;
 
     return <DataViewerPage collectors={collectors} detail={activeDetail} />;
 }

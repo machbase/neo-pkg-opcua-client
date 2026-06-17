@@ -342,7 +342,6 @@ const OPCUA_MESSAGE_SECURITY_MODES = {
 const OPCUA_AUTH_MODES = {
   Anonymous: true,
   UserName: true,
-  Certificate: true,
 };
 const OPCUA_DEFAULT_READ_BATCH_SIZE = 100;
 const OPCUA_MAX_NODES_PER_READ_NODE_ID = 'ns=0;i=11705';
@@ -545,14 +544,20 @@ function normalizeOpcuaServerSecurity(security, options = {}) {
     }
   }
 
-  const certificateRequired = normalized.authMode === 'Certificate' || normalized.messageSecurityMode !== 'None';
+  const certificateRequired = normalized.messageSecurityMode !== 'None';
+  if (!certificateRequired) {
+    if (forStorage && serverName && (previous.certificateFile || previous.keyFile)) {
+      normalized.__removeCertificate = true;
+    }
+    return normalized;
+  }
   const existingCertificateFiles = normalizeText(input.certificateFile)
     || (!input.clearCertificate && normalizeText(previous.certificateFile));
   const existingKeyFiles = normalizeText(input.keyFile)
     || (!input.clearCertificate && normalizeText(previous.keyFile));
   const willHaveCertificate = (hasCertificatePem && hasKeyPem) || (existingCertificateFiles && existingKeyFiles);
   if (certificateRequired && !willHaveCertificate) {
-    throw userFacingError('security.certificatePem and security.keyPem are required for certificate authentication or secure mode');
+    throw userFacingError('security.certificatePem and security.keyPem are required for secure mode');
   }
 
   if (input.clearCertificate === true) {
@@ -696,10 +701,11 @@ function resolveOpcuaEndpoint(request) {
     : '';
   if (serverName) {
     const resolved = getOpcuaServerConfigOrThrow(serverName);
+    const endpoint = normalizeText(source.endpoint) || resolved.config.endpoint;
     return {
       server: resolved.name,
-      endpoint: resolved.config.endpoint,
-      config: resolved.config,
+      endpoint,
+      config: { ...resolved.config, endpoint },
     };
   }
   const endpoint = String(source.endpoint || '').trim();
@@ -765,6 +771,11 @@ function opcuaClientConfig(resolved, readRetryInterval) {
   return config;
 }
 
+function opcuaConnectFailedReason(endpoint, client) {
+  const detail = client && client.lastError ? errorMessage(client.lastError) : '';
+  return detail ? `connect failed: ${endpoint}: ${detail}` : `connect failed: ${endpoint}`;
+}
+
 function temporaryOpcuaConnectSecurityName() {
   return `opcua-connect-test-${Date.now()}-${Math.floor(Math.random() * 1000000)}`;
 }
@@ -777,12 +788,13 @@ function cleanupTemporaryOpcuaConnectSecurity(name) {
 }
 
 function applyDirectOpcuaConnectSecurity(resolved, request) {
-  if (!resolved || resolved.server) return null;
+  if (!resolved) return null;
   if (!request || typeof request !== 'object' || !hasOwn(request, 'security')) return null;
 
   const tempName = temporaryOpcuaConnectSecurityName();
   try {
     resolved.config.security = normalizeOpcuaServerSecurity(request.security, {
+      previous: resolved.config && resolved.config.security,
       serverName: tempName,
       forStorage: true,
     });
@@ -1935,18 +1947,109 @@ function buildTagStatViewRef(table) {
   return table.tableUser ? `${table.tableUser}.V$${table.tableName}_STAT` : `V$${table.tableName}_STAT`;
 }
 
+const HIERARCHY_TAG_NAME = '__machbase_hierarchy__';
+
+function parseJsonObject(value) {
+  if (value === undefined || value === null || value === '') return null;
+  if (value && typeof value === 'object' && !Array.isArray(value)) return value;
+  if (typeof value !== 'string') return null;
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
+  } catch (_err) {
+    return null;
+  }
+}
+
+function normalizeAssetTreeNodes(nodes, schema, depth = 0) {
+  if (!Array.isArray(nodes) || depth >= schema.length) return null;
+  const normalized = [];
+  for (const node of nodes) {
+    if (!node || typeof node !== 'object' || Array.isArray(node)) return null;
+    const key = normalizeText(node.key);
+    const value = normalizeText(node.value);
+    if (!key || !value || key !== schema[depth]) return null;
+    const children = normalizeAssetTreeNodes(node.children || [], schema, depth + 1);
+    if (!children) return null;
+    normalized.push({ key, value, children });
+  }
+  return normalized;
+}
+
+function normalizeAssetHierarchy(value) {
+  const parsed = parseJsonObject(value);
+  if (!parsed || !Array.isArray(parsed.schema) || !Array.isArray(parsed.tree)) return null;
+  const column = normalizeText(parsed.column);
+  if (!column) return null;
+  const schema = parsed.schema.map((key) => normalizeText(key)).filter(Boolean);
+  if (schema.length !== parsed.schema.length || schema.length === 0) return null;
+  if (new Set(schema).size !== schema.length) return null;
+  const tree = normalizeAssetTreeNodes(parsed.tree, schema);
+  if (!tree || tree.length === 0) return null;
+  return { column, schema, tree };
+}
+
+function findAssetHierarchy(row, columns) {
+  if (!row) return null;
+  const metadataColumns = new Set((columns || [])
+    .filter((col) => Number(col.FLAG || col.flag || 0) & FLAG_METADATA)
+    .map((col) => normalizeText(col.NAME || col.name).toUpperCase())
+    .filter(Boolean));
+
+  for (const [key, value] of Object.entries(row || {})) {
+    const columnName = normalizeText(key).toUpperCase();
+    if (!metadataColumns.has(columnName)) continue;
+    const hierarchy = normalizeAssetHierarchy(value);
+    if (!hierarchy) continue;
+    const hierarchyColumn = normalizeText(hierarchy.column).toUpperCase();
+    if (!metadataColumns.has(hierarchyColumn)) continue;
+    return hierarchy;
+  }
+
+  return null;
+}
+
+function mapTagMetaResponse(rows, assetColumn, assetHierarchy = null) {
+  const tags = [];
+  const assetColumnNames = assetColumn
+    ? [assetColumn, assetColumn.toUpperCase(), assetColumn.toLowerCase()]
+    : [];
+
+  for (const row of rows || []) {
+    const name = pickRowValue(row, ['NAME', 'name']);
+    if (name === undefined || name === null || name === '') continue;
+    const tagName = String(name);
+    if (tagName === HIERARCHY_TAG_NAME) {
+      continue;
+    }
+
+    const id = pickRowValue(row, ['_ID', '_id', 'ID', 'id']);
+    const tag = {
+      id: id === undefined || id === null ? null : String(id),
+      name: tagName,
+    };
+    const asset = assetColumnNames.length > 0 ? pickRowValue(row, assetColumnNames) : undefined;
+    const assetObject = parseJsonObject(asset);
+    if (assetObject) tag.asset = assetObject;
+    tags.push(tag);
+  }
+
+  return { tags, assetHierarchy };
+}
+
 function mapTagMetaRows(rows) {
-  return (rows || [])
-    .map((row) => {
-      const name = pickRowValue(row, ['NAME', 'name']);
-      if (name === undefined || name === null || name === '') return null;
-      const id = pickRowValue(row, ['_ID', '_id', 'ID', 'id']);
-      return {
-        id: id === undefined || id === null ? null : String(id),
-        name: String(name),
-      };
-    })
-    .filter(Boolean);
+  return mapTagMetaResponse(rows).tags;
+}
+
+function findMetadataColumnName(columns, requestedName) {
+  const requested = normalizeText(requestedName).toUpperCase();
+  if (!requested) return '';
+  const found = (columns || []).find((row) => {
+    const name = normalizeText(row.NAME || row.name).toUpperCase();
+    const flag = Number(row.FLAG || row.flag || 0);
+    return name === requested && (flag & FLAG_METADATA);
+  });
+  return found ? normalizeText(found.NAME || found.name) : '';
 }
 
 function buildTagDataWhere(params, primaryColumn, timeColumn) {
@@ -2032,12 +2135,18 @@ function dbTableTags(db, params, reply) {
     }
 
     const tagMetaTable = buildTagMetaTableRef(req);
-    const rows = client.query(`SELECT _ID, NAME FROM ${tagMetaTable} ORDER BY NAME`);
+    const columns = client.selectColumnsByTableId(meta.ID);
+    const hierarchyRows = client.query(`SELECT * FROM ${tagMetaTable} WHERE NAME = ?`, [HIERARCHY_TAG_NAME]);
+    const assetHierarchy = findAssetHierarchy(hierarchyRows && hierarchyRows[0], columns);
+    const assetColumn = findMetadataColumnName(columns, assetHierarchy && assetHierarchy.column);
+    const rows = client.query(`SELECT _ID, NAME${assetColumn ? `, ${assetColumn}` : ''} FROM ${tagMetaTable} ORDER BY NAME`);
+    const tagMeta = mapTagMetaResponse(rows, assetColumn, assetHierarchy);
     reply({
       ok: true,
       data: {
         table: req.tableRef,
-        tags: mapTagMetaRows(rows),
+        tags: tagMeta.tags,
+        assetHierarchy: tagMeta.assetHierarchy,
       },
     });
   } catch (err) {
@@ -2187,7 +2296,7 @@ function opcuaConnect(endpointOrRequest, readRetryInterval, reply) {
     cleanupTemporaryOpcuaConnectSecurity(temporarySecurityName);
     reply({
       ok: false,
-      reason: 'connect failed: ' + endpoint,
+      reason: opcuaConnectFailedReason(endpoint, client),
     });
     return;
   }
@@ -2228,7 +2337,7 @@ function opcuaRead(endpointOrRequest, nodeIds, reply) {
   if (!client.open()) {
     reply({
       ok: false,
-      reason: 'connect failed: ' + endpoint,
+      reason: opcuaConnectFailedReason(endpoint, client),
     });
     return;
   }
@@ -2272,7 +2381,7 @@ function opcuaWrite(endpointOrRequest, writes, reply) {
   if (!client.open()) {
     reply({
       ok: false,
-      reason: 'connect failed: ' + endpoint,
+      reason: opcuaConnectFailedReason(endpoint, client),
     });
     return;
   }
@@ -2357,7 +2466,7 @@ function nodeDescendants(body, reply) {
   if (!client.open()) {
     reply({
       ok: false,
-      reason: 'connect failed: ' + resolved.endpoint,
+      reason: opcuaConnectFailedReason(resolved.endpoint, client),
     });
     return;
   }

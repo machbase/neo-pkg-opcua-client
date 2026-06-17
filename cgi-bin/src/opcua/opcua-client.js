@@ -10,9 +10,29 @@ function _asText(value) {
 
 function _enumValue(group, key, label) {
     if (!group || group[key] === undefined) {
-        throw new Error(`${label} is invalid: ${key}`);
+        const choices = group && typeof group === "object" ? Object.keys(group).join(", ") : "";
+        throw new Error(`${label} is invalid: ${key}${choices ? ` (expected one of: ${choices})` : ""}`);
     }
     return group[key];
+}
+
+function _authModeValue(authMode) {
+    if (authMode === "UserName") {
+        return undefined;
+    }
+    if (!opcua.AuthMode) {
+        return undefined;
+    }
+    const aliases = {
+        UserName: ["UserName", "Username"],
+    };
+    const keys = aliases[authMode] || [authMode];
+    for (const key of keys) {
+        if (opcua.AuthMode[key] !== undefined) {
+            return opcua.AuthMode[key];
+        }
+    }
+    return _enumValue(opcua.AuthMode, authMode, "authMode");
 }
 
 function _nativeFilePathSpec(filePath) {
@@ -53,6 +73,7 @@ class OpcuaClient {
         this.readRetryInterval = readRetryInterval || config.readRetryInterval || 100;
         this.readBatchSize = _positiveInteger(config.readBatchSize, DEFAULT_READ_BATCH_SIZE);
         this.client = null;
+        this.lastError = null;
     }
 
     _clientOptions() {
@@ -71,7 +92,10 @@ class OpcuaClient {
 
         options.securityPolicy = securityPolicy;
         options.messageSecurityMode = _enumValue(opcua.MessageSecurityMode, messageSecurityMode, "messageSecurityMode");
-        options.authMode = _enumValue(opcua.AuthMode, authMode, "authMode");
+        const authModeValue = _authModeValue(authMode);
+        if (authModeValue !== undefined) {
+            options.authMode = authModeValue;
+        }
 
         if (security.username !== undefined && security.username !== null) {
             options.username = String(security.username);
@@ -93,9 +117,11 @@ class OpcuaClient {
             return true;
         }
         try {
+            this.lastError = null;
             this.client = new opcua.Client(this._clientOptions());
             return true;
         } catch (e) {
+            this.lastError = e;
             this.client = null;
             return false;
         }

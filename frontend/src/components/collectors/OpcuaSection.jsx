@@ -1,28 +1,28 @@
-import { useState } from 'react'
+import { useEffect } from 'react'
 import Icon from '../common/Icon'
-import { useApp } from '../../context/AppContext'
-import { testOpcuaConnection } from '../../api/collectors'
 
-export default function OpcuaSection({ form, update }) {
-  const { notify } = useApp()
-  const [testing, setTesting] = useState(false)
+const LEGACY_OPTION_VALUE = '__legacy_endpoint__'
 
-  const handleTest = async () => {
-    const endpoint = form.opcua.endpoint
-    if (!endpoint) return
-    const readRetryInterval =
-      form.opcua.readRetryInterval !== '' && form.opcua.readRetryInterval != null
-        ? Number(form.opcua.readRetryInterval)
-        : undefined
-    setTesting(true)
-    try {
-      await testOpcuaConnection(endpoint, readRetryInterval)
-      notify('OPC UA connection successful', 'success')
-    } catch (e) {
-      notify(e.reason || e.message || 'OPC UA connection failed', 'error')
-    } finally {
-      setTesting(false)
+export default function OpcuaSection({
+  form,
+  update,
+  opcuaServers = [],
+  onOpenOpcuaServerSettings,
+  onRefreshOpcuaServers,
+}) {
+  const legacyEndpoint = form.opcua.endpoint && !form.opcua.server ? form.opcua.endpoint : ''
+  const selectedValue = form.opcua.server || (legacyEndpoint ? LEGACY_OPTION_VALUE : '')
+
+  useEffect(() => {
+    if (!form.opcua.server && !legacyEndpoint && opcuaServers.length > 0) {
+      update('opcua.server', opcuaServers[0].name)
     }
+  }, [form.opcua.server, legacyEndpoint, opcuaServers, update])
+
+  const handleServerChange = (e) => {
+    if (e.target.value === LEGACY_OPTION_VALUE) return
+    update('opcua.server', e.target.value)
+    if (e.target.value) update('opcua.endpoint', '')
   }
 
   return (
@@ -35,24 +35,41 @@ export default function OpcuaSection({ form, update }) {
 
       <div className="space-y-20">
         <div>
-          <label className="form-label">Endpoint URL</label>
+          <label className="form-label">OPC UA Server</label>
           <div className="flex gap-8">
-            <input
-              type="text"
+            <select
               required
-              value={form.opcua.endpoint}
-              onChange={(e) => update('opcua.endpoint', e.target.value)}
+              value={selectedValue}
+              onChange={handleServerChange}
+              onMouseDown={() => onRefreshOpcuaServers?.()}
               className="flex-1"
-              placeholder="opc.tcp://192.168.1.100:4840"
-            />
+            >
+              {opcuaServers.length === 0 && !legacyEndpoint && (
+                <option value="">No OPC UA servers configured</option>
+              )}
+              {!form.opcua.server && !legacyEndpoint && opcuaServers.length > 0 && (
+                <option value="" disabled>
+                  Select an OPC UA server...
+                </option>
+              )}
+              {legacyEndpoint && (
+                <option value={LEGACY_OPTION_VALUE}>
+                  Legacy endpoint: {legacyEndpoint}
+                </option>
+              )}
+              {opcuaServers.map((server) => (
+                <option key={server.name} value={server.name}>
+                  {server.name}
+                </option>
+              ))}
+            </select>
             <button
               type="button"
-              onClick={handleTest}
-              disabled={!form.opcua.endpoint || testing}
-              className="btn btn-primary-outline shrink-0"
+              onClick={() => onOpenOpcuaServerSettings?.(true)}
+              className="btn btn-primary-outline btn-icon shrink-0"
+              title="Add OPC UA server"
             >
-              <Icon name={testing ? 'progress_activity' : 'electrical_services'} className="icon-sm" />
-              <span>{testing ? 'Testing...' : 'Connection Test'}</span>
+              <Icon name="add" />
             </button>
           </div>
         </div>

@@ -10,6 +10,7 @@ export default function Sidebar({
     onInstallCollector,
     onRefresh,
     onServerSettings,
+    onOpcuaServerSettings,
     className = "side h-screen",
 }) {
     return (
@@ -31,6 +32,15 @@ export default function Sidebar({
                         data-tooltip="Server Settings"
                     >
                         <Icon name="dns" />
+                    </button>
+                )}
+                {onOpcuaServerSettings && (
+                    <button
+                        onClick={onOpcuaServerSettings}
+                        className="side-header-action tooltip"
+                        data-tooltip="OPC UA Servers"
+                    >
+                        <Icon name="settings_input_antenna" />
                     </button>
                 )}
             </div>

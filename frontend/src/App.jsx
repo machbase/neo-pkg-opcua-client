@@ -2,12 +2,14 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { Routes, Route, Navigate, useNavigate } from 'react-router'
 import useCollectors from './hooks/useCollectors'
 import useServers from './hooks/useServers'
+import useOpcuaServers from './hooks/useOpcuaServers'
 import { useApp } from './context/AppContext'
 import * as api from './api/collectors'
 import DashboardPage from './pages/DashboardPage'
 import CollectorFormPage from './pages/CollectorFormPage'
 import CollectorDataViewerRoute from './pages/CollectorDataViewerRoute'
 import ServerSettingsModal from './components/servers/ServerSettingsModal'
+import OpcuaServerSettingsModal from './components/opcuaServers/OpcuaServerSettingsModal'
 import Toast from './components/common/Toast'
 
 const CHANNEL_NAME = 'app:neo-opcua-collector'
@@ -17,9 +19,22 @@ export default function App() {
   const { selectedCollectorId, setSelectedCollectorId, notify } = useApp()
   const { collectors, toggleCollector, installCollector, removeCollector, refreshCollectors } = useCollectors()
   const { servers, loading: serversLoading, addServer, editServer, removeServer, healthCheck, refreshServers } = useServers()
+  const {
+    opcuaServers,
+    loading: opcuaServersLoading,
+    addOpcuaServer,
+    editOpcuaServer,
+    removeOpcuaServer,
+    healthCheck: opcuaHealthCheck,
+    formHealthCheck: opcuaFormHealthCheck,
+    refreshOpcuaServers,
+  } = useOpcuaServers()
   const [detail, setDetail] = useState(null)
+  const detailRequestRef = useRef(0)
   const [showServerSettings, setShowServerSettings] = useState(false)
   const [autoOpenForm, setAutoOpenForm] = useState(false)
+  const [showOpcuaServerSettings, setShowOpcuaServerSettings] = useState(false)
+  const [autoOpenOpcuaForm, setAutoOpenOpcuaForm] = useState(false)
 
   const openServerSettings = useCallback((openForm = false) => {
     setAutoOpenForm(Boolean(openForm))
@@ -31,11 +46,27 @@ export default function App() {
     setAutoOpenForm(false)
   }, [])
 
+  const openOpcuaServerSettings = useCallback((openForm = false) => {
+    setAutoOpenOpcuaForm(Boolean(openForm))
+    setShowOpcuaServerSettings(true)
+  }, [])
+
+  const closeOpcuaServerSettings = useCallback(() => {
+    setShowOpcuaServerSettings(false)
+    setAutoOpenOpcuaForm(false)
+  }, [])
+
   const fetchDetail = useCallback((id) => {
+    const requestId = detailRequestRef.current + 1
+    detailRequestRef.current = requestId
     if (!id) { setDetail(null); return Promise.resolve() }
+    setDetail(null)
     return api.getCollector(id)
-      .then(setDetail)
+      .then((data) => {
+        if (detailRequestRef.current === requestId) setDetail(data)
+      })
       .catch((e) => {
+        if (detailRequestRef.current !== requestId) return
         notify(e.reason || e.message, 'error')
         setDetail(null)
       })
@@ -49,7 +80,8 @@ export default function App() {
 
   handlersRef.current = {
     selectCollector: (payload) => {
-      setSelectedCollectorId(payload.collectorId)
+      const collectorId = payload.collectorId
+      setSelectedCollectorId(collectorId)
       navigate('/')
     },
     navigate: (payload) => {
@@ -65,6 +97,9 @@ export default function App() {
     },
     openServerSettings: () => {
       openServerSettings()
+    },
+    openOpcuaServerSettings: () => {
+      openOpcuaServerSettings()
     },
     requestReady: () => {
       const ch = channelRef.current
@@ -116,6 +151,9 @@ export default function App() {
                 servers={servers}
                 onOpenServerSettings={openServerSettings}
                 onRefreshServers={refreshServers}
+                opcuaServers={opcuaServers}
+                onOpenOpcuaServerSettings={openOpcuaServerSettings}
+                onRefreshOpcuaServers={refreshOpcuaServers}
               />
             } />
             <Route path="/collectors/:id/edit" element={
@@ -126,6 +164,9 @@ export default function App() {
                 servers={servers}
                 onOpenServerSettings={openServerSettings}
                 onRefreshServers={refreshServers}
+                opcuaServers={opcuaServers}
+                onOpenOpcuaServerSettings={openOpcuaServerSettings}
+                onRefreshOpcuaServers={refreshOpcuaServers}
               />
             } />
           </Routes>
@@ -143,6 +184,20 @@ export default function App() {
           onRefresh={refreshServers}
           onClose={closeServerSettings}
           autoOpenForm={autoOpenForm}
+        />
+      )}
+      {showOpcuaServerSettings && (
+        <OpcuaServerSettingsModal
+          opcuaServers={opcuaServers}
+          loading={opcuaServersLoading}
+          onAdd={addOpcuaServer}
+          onEdit={editOpcuaServer}
+          onDelete={removeOpcuaServer}
+          onHealthCheck={opcuaHealthCheck}
+          onFormHealthCheck={opcuaFormHealthCheck}
+          onRefresh={refreshOpcuaServers}
+          onClose={closeOpcuaServerSettings}
+          autoOpenForm={autoOpenOpcuaForm}
         />
       )}
     </>

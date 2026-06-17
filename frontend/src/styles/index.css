@@ -275,6 +275,69 @@ textarea {
     line-height: var(--line-height-normal);
 }
 
+.pem-drop-input {
+    min-height: 144px;
+}
+
+.pem-drop-input--active {
+    border-color: var(--color-primary);
+    background-color: var(--color-surface-active);
+}
+
+.form-label.pem-field-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--spacing-8);
+}
+
+.pem-field-title,
+.pem-file-btn {
+    white-space: nowrap;
+}
+
+.opcua-form-tabs {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: var(--spacing-4);
+    padding: var(--spacing-4);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-base);
+    background-color: var(--color-surface-input);
+}
+
+.opcua-form-tab {
+    min-height: 32px;
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--color-on-surface-tertiary);
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-medium);
+}
+
+.opcua-form-tab:hover {
+    background-color: var(--color-surface-tab-hover);
+    color: var(--color-on-surface);
+}
+
+.opcua-form-tab--active {
+    background-color: var(--color-surface-tab-active);
+    color: var(--color-on-surface);
+}
+
+.pem-file-btn {
+    cursor: pointer;
+    color: var(--color-primary);
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-medium);
+    text-transform: none;
+}
+
+.pem-file-btn:hover {
+    color: var(--color-primary-hover);
+}
+
 .input-masked {
     -webkit-text-security: disc;
 }
@@ -1864,6 +1927,13 @@ details.card > :not(summary) {
     padding: 0;
 }
 
+.modal > form {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+    flex-direction: column;
+}
+
 .modal-header {
     display: flex;
     align-items: center;
@@ -2413,7 +2483,6 @@ label.switch input:checked + .switch-slider::before {
     color: var(--color-on-surface-secondary);
     cursor: pointer;
     flex-shrink: 0;
-    margin-left: auto;
     transition: background-color var(--transition-duration-fast) ease, color var(--transition-duration-fast) ease;
 }
 .side-header-action:hover {
@@ -3097,6 +3166,17 @@ label.switch input:checked + .switch-slider::before {
     font-size: var(--font-size-sm);
 }
 
+.pagination-input[type="number"]::-webkit-inner-spin-button,
+.pagination-input[type="number"]::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+}
+
+.pagination-input[type="number"] {
+    -moz-appearance: textfield;
+    appearance: textfield;
+}
+
 /* ─── DATA VIEWER ─── */
 
 .data-viewer-embedded {
@@ -3131,6 +3211,40 @@ label.switch input:checked + .switch-slider::before {
 .data-viewer-tag-search {
     padding: var(--spacing-12) 0;
     flex-shrink: 0;
+}
+
+.data-viewer-tag-tabs {
+    display: flex;
+    align-items: flex-end;
+    gap: var(--spacing-24);
+    padding: 0;
+    border-bottom: 1px solid var(--color-border);
+    flex-shrink: 0;
+}
+
+.data-viewer-tag-tab {
+    min-height: 40px;
+    padding: 0 var(--spacing-4);
+    border: 0;
+    border-bottom: 3px solid transparent;
+    border-radius: 0;
+    background: transparent;
+    color: var(--color-on-surface-tertiary);
+    font-size: var(--font-size-base);
+    font-weight: 600;
+    letter-spacing: 0;
+    text-transform: none;
+}
+
+.data-viewer-tag-tab:hover {
+    background-color: transparent;
+    color: var(--color-on-surface);
+}
+
+.data-viewer-tag-tab.is-active {
+    background-color: transparent;
+    border-bottom-color: var(--color-primary);
+    color: var(--color-on-surface);
 }
 
 .data-viewer-tag-list {

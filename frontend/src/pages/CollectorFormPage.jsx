@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useParams, useNavigate } from 'react-router'
 import { useApp } from '../context/AppContext'
 import * as api from '../api/collectors'
@@ -14,6 +14,7 @@ import { koToEn } from '../utils/korean'
 const DEFAULTS = {
   name: '',
   opcua: {
+    server: '',
     endpoint: '',
     interval: 5000,
     readRetryInterval: 100,
@@ -42,7 +43,17 @@ const DEFAULTS = {
   },
 }
 
-export default function CollectorFormPage({ detail, onRefresh, onRefreshDetail, servers = [], onOpenServerSettings, onRefreshServers }) {
+export default function CollectorFormPage({
+  detail,
+  onRefresh,
+  onRefreshDetail,
+  servers = [],
+  onOpenServerSettings,
+  onRefreshServers,
+  opcuaServers = [],
+  onOpenOpcuaServerSettings,
+  onRefreshOpcuaServers,
+}) {
   const { id } = useParams()
   const navigate = useNavigate()
   const { notify, setSelectedCollectorId } = useApp()
@@ -100,6 +111,10 @@ export default function CollectorFormPage({ detail, onRefresh, onRefreshDetail, 
     form.db.autoCreateTable || form.db.stringOnly || form.db.columnKind === 'json' || !!form.db.stringColumn
       ? 'all'
       : 'numeric-only'
+  const opcuaConnectionTarget = useMemo(
+    () => (form.opcua.server ? { server: form.opcua.server } : { endpoint: form.opcua.endpoint }),
+    [form.opcua.server, form.opcua.endpoint]
+  )
 
   const handleSubmit = async (e) => {
     e.preventDefault()
@@ -142,11 +157,15 @@ export default function CollectorFormPage({ detail, onRefresh, onRefreshDetail, 
       }
     }
 
+    if (!form.opcua.server && !form.opcua.endpoint) {
+      notify('OPC UA Server is required', 'error')
+      return
+    }
+
     setSaving(true)
     try {
       const config = {
         opcua: {
-          endpoint: form.opcua.endpoint,
           interval: Number(form.opcua.interval),
           readRetryInterval: Number(form.opcua.readRetryInterval),
           nodes: form.opcua.nodes,
@@ -157,6 +176,12 @@ export default function CollectorFormPage({ detail, onRefresh, onRefreshDetail, 
           level: form.log.level,
           maxFiles: Number(form.log.file.maxFiles),
         },
+      }
+
+      if (form.opcua.server) {
+        config.opcua.server = form.opcua.server
+      } else {
+        config.opcua.endpoint = form.opcua.endpoint
       }
 
       if (autoCreateTable) {
@@ -251,6 +276,9 @@ export default function CollectorFormPage({ detail, onRefresh, onRefreshDetail, 
                 <OpcuaSection
                   form={form}
                   update={update}
+                  opcuaServers={opcuaServers}
+                  onOpenOpcuaServerSettings={onOpenOpcuaServerSettings}
+                  onRefreshOpcuaServers={onRefreshOpcuaServers}
                 />
                 <DbSection
                   form={form}
@@ -273,6 +301,7 @@ export default function CollectorFormPage({ detail, onRefresh, onRefreshDetail, 
                   nodes={form.opcua.nodes}
                   onChange={nodes => update('opcua.nodes', nodes)}
                   endpoint={form.opcua.endpoint}
+                  endpointTarget={opcuaConnectionTarget}
                   selectionMode={nodeSelectionMode}
                   storageMode={form.db.autoCreateTable || form.db.stringOnly ? 'string' : form.db.columnKind === 'json' ? 'json' : 'default'}
                 />

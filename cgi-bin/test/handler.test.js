@@ -194,6 +194,7 @@ class MockOpcuaClient {
         this.openResult = true;
         this.readResult = null;
         this.readError = null;
+        this.lastError = null;
         this.readCalls = [];
         this.writeResult = null;
         this.writeError = null;
@@ -866,6 +867,23 @@ runner.run('Handler: OPC UA server CRUD', {
         t.assert(result.reason.includes('readBatchSize must be <= 100'));
     },
 
+    'opcuaServerPost treats maxNodesPerRead zero as unlimited': (t) => {
+        const H = makeHandler();
+        let result;
+        H.opcuaServerPost('opc1', {
+            endpoint: 'opc.tcp://h:4840',
+            readBatchSize: 1000,
+            capabilities: {
+                maxNodesPerRead: 0,
+                maxNodesPerReadSource: 'server',
+            },
+        }, (r) => { result = r; });
+        t.assert(result.ok, 'should be ok');
+        t.assertEqual(mockCGI._opcuaServers['opc1'].readBatchSize, 1000);
+        t.assertEqual(mockCGI._opcuaServers['opc1'].capabilities.maxNodesPerRead, 0);
+        t.assertEqual(mockCGI._opcuaServers['opc1'].capabilities.maxNodesPerReadSource, 'server');
+    },
+
     'opcuaServerPost stores username auth and masks password on get': (t) => {
         const H = makeHandler();
         let result;
@@ -916,6 +934,24 @@ runner.run('Handler: OPC UA server CRUD', {
         t.assertEqual(result.data.config.security.hasKeyFile, true);
         t.assertEqual(result.data.config.security.certificateUpdatedAt, '2026-06-05T06:00:00.000Z');
         t.assertEqual(result.data.config.security.keyUpdatedAt, '2026-06-05T06:00:01.000Z');
+    },
+
+    'opcuaServerPost rejects certificate auth mode': (t) => {
+        const H = makeHandler();
+        let result;
+        H.opcuaServerPost('opc1', {
+            endpoint: 'opc.tcp://h:4840',
+            security: {
+                enabled: true,
+                securityPolicy: 'Basic256Sha256',
+                messageSecurityMode: 'SignAndEncrypt',
+                authMode: 'Certificate',
+                certificatePem: '-----BEGIN CERTIFICATE-----\nmock\n-----END CERTIFICATE-----\n',
+                keyPem: '-----BEGIN PRIVATE KEY-----\nmock\n-----END PRIVATE KEY-----\n',
+            },
+        }, (r) => { result = r; });
+        t.assert(!result.ok, 'should not be ok');
+        t.assert(result.reason.includes('security.authMode is invalid'));
     },
 
     'opcuaServerPost returns error when profile already exists': (t) => {
@@ -1212,6 +1248,7 @@ runner.run('Handler: dbTableTags', {
         mockMachbaseClient.users = [{ USER_ID: 1, NAME: 'SYS' }];
         mockMachbaseClient.tableMeta = { ID: 10, TYPE: 6, NAME: 'TAG' };
         mockMachbaseClient.queryResults = [
+            [],
             [
                 { _ID: 1, NAME: 'sensor.a' },
                 { _ID: 2, name: 'sensor.b' },
@@ -1234,6 +1271,191 @@ runner.run('Handler: dbTableTags', {
         t.assertEqual(result.data.tags[0].name, 'sensor.a');
         t.assertEqual(result.data.tags[1].name, 'sensor.b');
         t.assert(mockMachbaseClient.closed, 'client should be closed');
+    },
+
+    'returns asset hierarchy using column declared in hierarchy row': (t) => {
+        const H = makeHandler();
+        mockMachbaseClient.users = [{ USER_ID: 1, NAME: 'SYS' }];
+        mockMachbaseClient.tableMeta = { ID: 10, TYPE: 6, NAME: 'TAG' };
+        mockMachbaseClient.columns = [
+            { NAME: 'ASSET_PATH', TYPE: 0, ID: 3, FLAG: 0x4000000, LENGTH: 0 },
+        ];
+        mockMachbaseClient.queryResults = [
+            [
+                {
+                    _ID: 1,
+                    NAME: '__machbase_hierarchy__',
+                    ASSET_PATH: JSON.stringify({
+                        column: 'asset_path',
+                        schema: ['country', 'city'],
+                        tree: [{ key: 'country', value: 'Korea', children: [] }],
+                    }),
+                },
+            ],
+            [
+                {
+                    _ID: 1,
+                    NAME: '__machbase_hierarchy__',
+                    ASSET_PATH: JSON.stringify({ column: 'asset_path', schema: ['country'], tree: [] }),
+                },
+                {
+                    _ID: 2,
+                    NAME: 'sensor.a',
+                    ASSET_PATH: '{"country":"Korea","city":"Seoul"}',
+                },
+            ],
+        ];
+
+        let result;
+        H.dbTableTags({
+            host: 'h',
+            port: 5656,
+            user: 'sys',
+            password: 'p',
+        }, {
+            table: 'TAG',
+        }, (r) => { result = r; });
+
+        t.assert(result.ok, 'should be ok');
+        t.assertEqual(result.data.tags.length, 1);
+        t.assertEqual(result.data.tags[0].name, 'sensor.a');
+        t.assertEqual(result.data.tags[0].asset.city, 'Seoul');
+        t.assertEqual(result.data.assetHierarchy.column, 'asset_path');
+        t.assertEqual(result.data.assetHierarchy.schema[0], 'country');
+        t.assertEqual(result.data.assetHierarchy.tree[0].value, 'Korea');
+        t.assert(
+            mockMachbaseClient.queries.some((q) => q.sql.includes('SELECT _ID, NAME, ASSET_PATH')),
+            'should query the hierarchy-declared metadata column'
+        );
+    },
+
+    'returns asset hierarchy when declared column is asset': (t) => {
+        const H = makeHandler();
+        mockMachbaseClient.users = [{ USER_ID: 1, NAME: 'SYS' }];
+        mockMachbaseClient.tableMeta = { ID: 10, TYPE: 6, NAME: 'TAG' };
+        mockMachbaseClient.columns = [
+            { NAME: 'ASSET', TYPE: 0, ID: 3, FLAG: 0x4000000, LENGTH: 0 },
+        ];
+        mockMachbaseClient.queryResults = [
+            [
+                {
+                    _ID: 1,
+                    NAME: '__machbase_hierarchy__',
+                    ASSET: JSON.stringify({
+                        column: 'asset',
+                        schema: ['country', 'city'],
+                        tree: [{ key: 'country', value: 'Korea', children: [] }],
+                    }),
+                },
+            ],
+            [
+                {
+                    _ID: 1,
+                    NAME: '__machbase_hierarchy__',
+                    ASSET: JSON.stringify({ column: 'asset', schema: ['country'], tree: [] }),
+                },
+                {
+                    _ID: 2,
+                    NAME: 'sensor.a',
+                    ASSET: '{"country":"Korea","city":"Seoul"}',
+                },
+            ],
+        ];
+
+        let result;
+        H.dbTableTags({
+            host: 'h',
+            port: 5656,
+            user: 'sys',
+            password: 'p',
+        }, {
+            table: 'TAG',
+        }, (r) => { result = r; });
+
+        t.assert(result.ok, 'should be ok');
+        t.assertEqual(result.data.assetHierarchy.column, 'asset');
+        t.assertEqual(result.data.tags[0].asset.country, 'Korea');
+        t.assert(
+            mockMachbaseClient.queries.some((q) => q.sql.includes('SELECT _ID, NAME, ASSET')),
+            'should query the asset metadata column'
+        );
+    },
+
+    'ignores hierarchy row when declared column does not exist': (t) => {
+        const H = makeHandler();
+        mockMachbaseClient.users = [{ USER_ID: 1, NAME: 'SYS' }];
+        mockMachbaseClient.tableMeta = { ID: 10, TYPE: 6, NAME: 'TAG' };
+        mockMachbaseClient.columns = [
+            { NAME: 'ASSET', TYPE: 0, ID: 3, FLAG: 0x4000000, LENGTH: 0 },
+        ];
+        mockMachbaseClient.queryResults = [
+            [
+                {
+                    _ID: 1,
+                    NAME: '__machbase_hierarchy__',
+                    ASSET: JSON.stringify({
+                        column: 'asset_path',
+                        schema: ['country'],
+                        tree: [{ key: 'country', value: 'Korea', children: [] }],
+                    }),
+                },
+            ],
+            [
+                { _ID: 1, NAME: '__machbase_hierarchy__' },
+                { _ID: 2, NAME: 'sensor.a' },
+            ],
+        ];
+
+        let result;
+        H.dbTableTags({
+            host: 'h',
+            port: 5656,
+            user: 'sys',
+            password: 'p',
+        }, {
+            table: 'TAG',
+        }, (r) => { result = r; });
+
+        t.assert(result.ok, 'should be ok');
+        t.assertEqual(result.data.assetHierarchy, null);
+        t.assertEqual(result.data.tags.length, 1);
+        t.assertEqual(result.data.tags[0].asset, undefined);
+        t.assert(
+            mockMachbaseClient.queries.some((q) => q.sql.includes('SELECT _ID, NAME FROM')),
+            'should not query a missing metadata column'
+        );
+    },
+
+    'returns null asset hierarchy for invalid hierarchy metadata': (t) => {
+        const H = makeHandler();
+        mockMachbaseClient.users = [{ USER_ID: 1, NAME: 'SYS' }];
+        mockMachbaseClient.tableMeta = { ID: 10, TYPE: 6, NAME: 'TAG' };
+        mockMachbaseClient.columns = [
+            { NAME: 'ASSET', TYPE: 0, ID: 3, FLAG: 0x4000000, LENGTH: 0 },
+        ];
+        mockMachbaseClient.queryResults = [
+            [
+                { _ID: 1, NAME: '__machbase_hierarchy__', ASSET: '{"world":{"city":{}}}' },
+            ],
+            [
+                { _ID: 1, NAME: '__machbase_hierarchy__', ASSET: '{"world":{"city":{}}}' },
+                { _ID: 2, NAME: 'sensor.a', ASSET: '{"country":"Korea"}' },
+            ],
+        ];
+
+        let result;
+        H.dbTableTags({
+            host: 'h',
+            port: 5656,
+            user: 'sys',
+            password: 'p',
+        }, {
+            table: 'TAG',
+        }, (r) => { result = r; });
+
+        t.assert(result.ok, 'should be ok');
+        t.assertEqual(result.data.assetHierarchy, null);
+        t.assertEqual(result.data.tags.length, 1);
     },
 });
 
@@ -1463,6 +1685,17 @@ runner.run('Handler: opcuaConnect', {
         t.assertEqual(result.data.capabilities.maxNodesPerReadSource, 'default');
     },
 
+    'returns unlimited capability when server exposes maxNodesPerRead zero': (t) => {
+        const H = makeHandler();
+        mockOpcuaClient.readResult = [{ value: 0, sourceTimestamp: 100, serverTimestamp: 200 }];
+        let result;
+        H.opcuaConnect('opc.tcp://h:4840', undefined, (r) => { result = r; });
+        t.assert(result.ok, 'should be ok');
+        t.assertEqual(result.data.readBatchSize, 32);
+        t.assertEqual(result.data.capabilities.maxNodesPerRead, 0);
+        t.assertEqual(result.data.capabilities.maxNodesPerReadSource, 'server');
+    },
+
     'resolves endpoint from OPC UA server profile': (t) => {
         const H = makeHandler();
         mockCGI._opcuaServers['opc-main'] = {
@@ -1482,6 +1715,60 @@ runner.run('Handler: opcuaConnect', {
         t.assertEqual(mockOpcuaClient.endpoint, 'opc.tcp://profile:4840');
         t.assertEqual(mockOpcuaClient.options.security.enabled, true);
         t.assertEqual(mockOpcuaClient.options.readRetryInterval, 250);
+    },
+
+    'resolves username credentials from OPC UA server profile': (t) => {
+        const H = makeHandler();
+        mockCGI._opcuaServers['opc-main'] = {
+            endpoint: 'opc.tcp://profile:4840',
+            security: {
+                enabled: true,
+                securityPolicy: 'None',
+                messageSecurityMode: 'None',
+                authMode: 'UserName',
+                username: 'opcuser',
+                password: 'secret',
+            },
+        };
+        let result;
+        H.opcuaConnect({ server: 'opc-main' }, undefined, (r) => { result = r; });
+        t.assert(result.ok, 'should be ok');
+        t.assertEqual(mockOpcuaClient.endpoint, 'opc.tcp://profile:4840');
+        t.assertEqual(mockOpcuaClient.options.security.authMode, 'UserName');
+        t.assertEqual(mockOpcuaClient.options.security.username, 'opcuser');
+        t.assertEqual(mockOpcuaClient.options.security.password, 'secret');
+    },
+
+    'preserves saved username password during profile form connection test': (t) => {
+        const H = makeHandler();
+        mockCGI._opcuaServers['opc-main'] = {
+            endpoint: 'opc.tcp://old:4840',
+            security: {
+                enabled: true,
+                securityPolicy: 'None',
+                messageSecurityMode: 'None',
+                authMode: 'UserName',
+                username: 'opcuser',
+                password: 'secret',
+            },
+        };
+        let result;
+        H.opcuaConnect({
+            server: 'opc-main',
+            endpoint: 'opc.tcp://new:4840',
+            security: {
+                enabled: true,
+                securityPolicy: 'None',
+                messageSecurityMode: 'None',
+                authMode: 'UserName',
+                username: 'opcuser',
+            },
+        }, undefined, (r) => { result = r; });
+        t.assert(result.ok, 'should be ok');
+        t.assertEqual(mockOpcuaClient.endpoint, 'opc.tcp://new:4840');
+        t.assertEqual(mockOpcuaClient.options.security.authMode, 'UserName');
+        t.assertEqual(mockOpcuaClient.options.security.username, 'opcuser');
+        t.assertEqual(mockOpcuaClient.options.security.password, 'secret');
     },
 
     'uses direct security config for unsaved endpoint connection test': (t) => {
@@ -1506,6 +1793,28 @@ runner.run('Handler: opcuaConnect', {
         t.assertEqual(mockOpcuaClient.options.security.password, 'secret');
     },
 
+    'ignores direct PEM values for None security mode': (t) => {
+        const H = makeHandler();
+        let result;
+        H.opcuaConnect({
+            endpoint: 'opc.tcp://secure:4840',
+            security: {
+                enabled: true,
+                securityPolicy: 'None',
+                messageSecurityMode: 'None',
+                authMode: 'UserName',
+                username: 'opcuser',
+                password: 'secret',
+                certificatePem: '-----BEGIN CERTIFICATE-----\nCERT\n-----END CERTIFICATE-----\n',
+                keyPem: '-----BEGIN PRIVATE KEY-----\nKEY\n-----END PRIVATE KEY-----\n',
+            },
+        }, undefined, (r) => { result = r; });
+        t.assert(result.ok, 'should be ok');
+        t.assertEqual(mockOpcuaClient.options.security.certificateFile, undefined);
+        t.assertEqual(mockOpcuaClient.options.security.keyFile, undefined);
+        t.assertEqual(Object.keys(mockCGI._opcuaCredentialWrites).length, 0);
+    },
+
     'uses temporary certificate files for direct secure connection test and cleans them up': (t) => {
         const H = makeHandler();
         let result;
@@ -1515,7 +1824,7 @@ runner.run('Handler: opcuaConnect', {
                 enabled: true,
                 securityPolicy: 'Basic256Sha256',
                 messageSecurityMode: 'SignAndEncrypt',
-                authMode: 'Certificate',
+                authMode: 'Anonymous',
                 certificatePem: '-----BEGIN CERTIFICATE-----\nCERT\n-----END CERTIFICATE-----\n',
                 keyPem: '-----BEGIN PRIVATE KEY-----\nKEY\n-----END PRIVATE KEY-----\n',
             },
@@ -1550,6 +1859,24 @@ runner.run('Handler: opcuaConnect', {
         t.assertEqual(Object.keys(mockCGI._opcuaCredentialWrites).length, 0);
     },
 
+    'rejects direct secure connection test when only one PEM value is provided': (t) => {
+        const H = makeHandler();
+        let result;
+        H.opcuaConnect({
+            endpoint: 'opc.tcp://secure:4840',
+            security: {
+                enabled: true,
+                securityPolicy: 'Basic256Sha256',
+                messageSecurityMode: 'SignAndEncrypt',
+                authMode: 'Anonymous',
+                certificatePem: '-----BEGIN CERTIFICATE-----\nCERT\n-----END CERTIFICATE-----\n',
+            },
+        }, undefined, (r) => { result = r; });
+        t.assert(!result.ok, 'should not be ok');
+        t.assert(result.reason.includes('security.certificatePem and security.keyPem must be provided together'));
+        t.assertEqual(Object.keys(mockCGI._opcuaCredentialWrites).length, 0);
+    },
+
     'returns error when connect fails': (t) => {
         const H = makeHandler();
         mockOpcuaClient.openResult = false;
@@ -1557,6 +1884,17 @@ runner.run('Handler: opcuaConnect', {
         H.opcuaConnect('opc.tcp://bad:1', undefined, (r) => { result = r; });
         t.assert(!result.ok, 'should not be ok');
         t.assert(result.reason.includes('connect failed'));
+    },
+
+    'returns native error detail when connect open fails': (t) => {
+        const H = makeHandler();
+        mockOpcuaClient.openResult = false;
+        mockOpcuaClient.lastError = new Error('BadIdentityTokenRejected');
+        let result;
+        H.opcuaConnect('opc.tcp://bad:1', undefined, (r) => { result = r; });
+        t.assert(!result.ok, 'should not be ok');
+        t.assert(result.reason.includes('connect failed'));
+        t.assert(result.reason.includes('BadIdentityTokenRejected'));
     },
 });
 

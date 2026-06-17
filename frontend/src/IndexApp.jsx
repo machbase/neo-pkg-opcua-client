@@ -1,7 +1,8 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { Routes, Route, Navigate, useNavigate, useLocation } from 'react-router'
 import useCollectors from './hooks/useCollectors'
 import useServers from './hooks/useServers'
+import useOpcuaServers from './hooks/useOpcuaServers'
 import { useApp } from './context/AppContext'
 import * as api from './api/collectors'
 import Sidebar from './components/layout/Sidebar'
@@ -9,6 +10,7 @@ import DashboardPage from './pages/DashboardPage'
 import CollectorFormPage from './pages/CollectorFormPage'
 import CollectorDataViewerRoute from './pages/CollectorDataViewerRoute'
 import ServerSettingsModal from './components/servers/ServerSettingsModal'
+import OpcuaServerSettingsModal from './components/opcuaServers/OpcuaServerSettingsModal'
 import Toast from './components/common/Toast'
 
 export default function IndexApp() {
@@ -16,10 +18,23 @@ export default function IndexApp() {
   const location = useLocation()
   const { collectors, toggleCollector, installCollector, removeCollector, refreshCollectors } = useCollectors()
   const { servers, loading: serversLoading, addServer, editServer, removeServer, healthCheck, refreshServers } = useServers()
+  const {
+    opcuaServers,
+    loading: opcuaServersLoading,
+    addOpcuaServer,
+    editOpcuaServer,
+    removeOpcuaServer,
+    healthCheck: opcuaHealthCheck,
+    formHealthCheck: opcuaFormHealthCheck,
+    refreshOpcuaServers,
+  } = useOpcuaServers()
   const { selectedCollectorId, setSelectedCollectorId, notify } = useApp()
   const [detail, setDetail] = useState(null)
+  const detailRequestRef = useRef(0)
   const [showServerSettings, setShowServerSettings] = useState(false)
   const [autoOpenForm, setAutoOpenForm] = useState(false)
+  const [showOpcuaServerSettings, setShowOpcuaServerSettings] = useState(false)
+  const [autoOpenOpcuaForm, setAutoOpenOpcuaForm] = useState(false)
 
   const openServerSettings = useCallback((openForm = false) => {
     setAutoOpenForm(Boolean(openForm))
@@ -31,11 +46,27 @@ export default function IndexApp() {
     setAutoOpenForm(false)
   }, [])
 
+  const openOpcuaServerSettings = useCallback((openForm = false) => {
+    setAutoOpenOpcuaForm(Boolean(openForm))
+    setShowOpcuaServerSettings(true)
+  }, [])
+
+  const closeOpcuaServerSettings = useCallback(() => {
+    setShowOpcuaServerSettings(false)
+    setAutoOpenOpcuaForm(false)
+  }, [])
+
   const fetchDetail = useCallback((id) => {
+    const requestId = detailRequestRef.current + 1
+    detailRequestRef.current = requestId
     if (!id) { setDetail(null); return }
+    setDetail(null)
     api.getCollector(id)
-      .then(setDetail)
+      .then((data) => {
+        if (detailRequestRef.current === requestId) setDetail(data)
+      })
       .catch((e) => {
+        if (detailRequestRef.current !== requestId) return
         notify(e.reason || e.message, 'error')
         setDetail(null)
       })
@@ -63,6 +94,7 @@ export default function IndexApp() {
           onInstallCollector={installCollector}
           onRefresh={refreshCollectors}
           onServerSettings={() => openServerSettings()}
+          onOpcuaServerSettings={() => openOpcuaServerSettings()}
           className="side w-full shrink-0 lg:fixed lg:left-0 lg:top-0 lg:w-64 lg:h-screen z-dropdown border-b lg:border-b-0 lg:border-r border-border"
         />
         <main className="flex-1 h-screen overflow-y-auto bg-surface-alt lg:ml-64">
@@ -80,6 +112,9 @@ export default function IndexApp() {
                 servers={servers}
                 onOpenServerSettings={openServerSettings}
                 onRefreshServers={refreshServers}
+                opcuaServers={opcuaServers}
+                onOpenOpcuaServerSettings={openOpcuaServerSettings}
+                onRefreshOpcuaServers={refreshOpcuaServers}
               />
             } />
             <Route path="/collectors/:id/edit" element={
@@ -90,6 +125,9 @@ export default function IndexApp() {
                 servers={servers}
                 onOpenServerSettings={openServerSettings}
                 onRefreshServers={refreshServers}
+                opcuaServers={opcuaServers}
+                onOpenOpcuaServerSettings={openOpcuaServerSettings}
+                onRefreshOpcuaServers={refreshOpcuaServers}
               />
             } />
           </Routes>
@@ -107,6 +145,20 @@ export default function IndexApp() {
           onRefresh={refreshServers}
           onClose={closeServerSettings}
           autoOpenForm={autoOpenForm}
+        />
+      )}
+      {showOpcuaServerSettings && (
+        <OpcuaServerSettingsModal
+          opcuaServers={opcuaServers}
+          loading={opcuaServersLoading}
+          onAdd={addOpcuaServer}
+          onEdit={editOpcuaServer}
+          onDelete={removeOpcuaServer}
+          onHealthCheck={opcuaHealthCheck}
+          onFormHealthCheck={opcuaFormHealthCheck}
+          onRefresh={refreshOpcuaServers}
+          onClose={closeOpcuaServerSettings}
+          autoOpenForm={autoOpenOpcuaForm}
         />
       )}
     </>

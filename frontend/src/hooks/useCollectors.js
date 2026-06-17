@@ -19,7 +19,7 @@ export default function useCollectors() {
             setCollectors(data);
             if (!initialSelectedRef.current && data.length > 0) {
                 initialSelectedRef.current = true;
-                setSelectedCollectorId(data[0].id);
+                setSelectedCollectorId((current) => current || data[0].id);
             }
             lastErrorRef.current = null;
         } catch (e) {

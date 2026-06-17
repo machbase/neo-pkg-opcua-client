@@ -985,10 +985,10 @@ OPC UA 서버 profile을 등록합니다. Collector와 one-shot OPC UA API는 `s
 | `security.enabled` | N | 보안 설정 사용 여부. 생략하면 `false`로 저장됩니다 |
 | `security.securityPolicy` | N | `None`, `Basic128Rsa15`, `Basic256`, `Basic256Sha256`, `Aes128_Sha256_RsaOaep`, `Aes256_Sha256_RsaPss` |
 | `security.messageSecurityMode` | N | `None`, `Sign`, `SignAndEncrypt` |
-| `security.authMode` | N | `Anonymous`, `UserName`, `Certificate` |
+| `security.authMode` | N | `Anonymous`, `UserName` |
 | `security.username` | N | `authMode=UserName`일 때 필요 |
 | `security.password` | N | `authMode=UserName`일 때 필요. 저장 파일에는 obfuscation 처리되며 API 응답에는 반환되지 않습니다 |
-| `security.certificatePem` | N | client certificate PEM. secure mode 또는 certificate auth에서 필요 |
+| `security.certificatePem` | N | client certificate PEM. secure mode에서 필요 |
 | `security.keyPem` | N | client private key PEM. `certificatePem`과 함께 전달해야 합니다 |
 
 `security.enabled=false`이면 상세 security 필드는 사용하지 않습니다. `messageSecurityMode`가 `Sign` 또는 `SignAndEncrypt`이면 `securityPolicy=None`은 허용되지 않으며, client certificate/key가 필요합니다.
@@ -1168,7 +1168,7 @@ OPC UA 서버에 접속 가능한지 확인합니다. 노드 읽기나 브라우
     "enabled": true,
     "securityPolicy": "Basic256Sha256",
     "messageSecurityMode": "SignAndEncrypt",
-    "authMode": "Certificate",
+    "authMode": "Anonymous",
     "certificatePem": "-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----\n",
     "keyPem": "-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"
   },
