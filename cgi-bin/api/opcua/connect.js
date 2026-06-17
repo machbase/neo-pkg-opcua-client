@@ -20,11 +20,14 @@ const handlers = {
       reply({ ok: false, reason: 'endpoint or server is required' });
       return;
     }
-    Handler.opcuaConnect({
+    const request = {
       endpoint: body.endpoint,
       server: body.server,
-      security: body.security,
-    }, body.readRetryInterval, reply);
+    };
+    if (body.security !== undefined) {
+      request.security = body.security;
+    }
+    Handler.opcuaConnect(request, body.readRetryInterval, reply);
   },
 };
 const method = (process.env.get('REQUEST_METHOD') || 'GET').toUpperCase();

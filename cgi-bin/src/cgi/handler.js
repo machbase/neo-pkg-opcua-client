@@ -27,6 +27,7 @@ const APP_DIR = (() => {
 })();
 
 const SERVICE_PREFIX = Service.SERVICE_PREFIX || '_opc_';
+const OPCUA_ROOT_NODE_ID = 'ns=0;i=85';
 
 function readJsonFile(filePath) {
   try {
@@ -466,6 +467,18 @@ function detectOpcuaCapabilities(client) {
   };
 }
 
+function verifyOpcuaBrowse(config) {
+  const client = new OpcuaClient(config);
+  if (!client.open()) {
+    throw client.lastError || new Error('connect failed');
+  }
+  try {
+    _browseDescendants(client, OPCUA_ROOT_NODE_ID, 0);
+  } finally {
+    client.close();
+  }
+}
+
 function validatePemText(value, label, marker) {
   const text = value === undefined || value === null ? '' : String(value);
   if (!text.trim()) {
@@ -788,6 +801,7 @@ function cleanupTemporaryOpcuaConnectSecurity(name) {
 function applyDirectOpcuaConnectSecurity(resolved, request) {
   if (!resolved) return null;
   if (!request || typeof request !== 'object' || !hasOwn(request, 'security')) return null;
+  if (request.security === undefined || request.security === null) return null;
 
   const tempName = temporaryOpcuaConnectSecurityName();
   try {
@@ -2300,6 +2314,8 @@ function opcuaConnect(endpointOrRequest, readRetryInterval, reply) {
   }
   try {
     const capabilityInfo = detectOpcuaCapabilities(client);
+    client.close();
+    verifyOpcuaBrowse(opcuaClientConfig(resolved, readRetryInterval));
     reply({
       ok: true,
       data: {
@@ -2309,6 +2325,11 @@ function opcuaConnect(endpointOrRequest, readRetryInterval, reply) {
         readBatchSize: capabilityInfo.readBatchSize,
         capabilities: capabilityInfo.capabilities,
       },
+    });
+  } catch (e) {
+    reply({
+      ok: false,
+      reason: opcuaConnectFailedReason(endpoint, { lastError: e }),
     });
   } finally {
     client.close();

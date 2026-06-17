@@ -199,6 +199,8 @@ class MockOpcuaClient {
         this.writeResult = null;
         this.writeError = null;
         this.browseResult = {};
+        this.browseError = null;
+        this.browseCalls = [];
         this.attributesResult = [];
     }
     open() { this.opened = true; return this.openResult; }
@@ -213,6 +215,8 @@ class MockOpcuaClient {
         return this.writeResult;
     }
     browse(req) {
+        this.browseCalls.push(req);
+        if (this.browseError) throw new Error(this.browseError);
         const nodeId = req.nodes && req.nodes[0];
         const refs = (this.browseResult[nodeId] || []).map((r) => ({
             ReferenceTypeId: '',
@@ -1870,6 +1874,7 @@ runner.run('Handler: opcuaConnect', {
         t.assertEqual(mockOpcuaClient.readRetryInterval, 250);
         t.assert(mockOpcuaClient.opened, 'client should be opened');
         t.assert(mockOpcuaClient.closed, 'client should be closed');
+        t.assertEqual(mockOpcuaClient.browseCalls[0].nodes[0], 'ns=0;i=85');
         t.assertEqual(result.data.readBatchSize, 300);
         t.assertEqual(result.data.capabilities.maxNodesPerRead, null);
         t.assertEqual(result.data.capabilities.maxNodesPerReadSource, 'default');
@@ -1991,6 +1996,34 @@ runner.run('Handler: opcuaConnect', {
         }, undefined, (r) => { result = r; });
         t.assert(result.ok, 'should be ok');
         t.assertEqual(mockOpcuaClient.endpoint, 'opc.tcp://new:4840');
+        t.assertEqual(mockOpcuaClient.options.security.authMode, 'UserName');
+        t.assertEqual(mockOpcuaClient.options.security.username, 'opcuser');
+        t.assertEqual(mockOpcuaClient.options.security.password, 'secret');
+    },
+
+    'ignores undefined direct security and keeps saved server profile security': (t) => {
+        const H = makeHandler();
+        mockCGI._opcuaServers['opc-main'] = {
+            endpoint: 'opc.tcp://profile:4840',
+            security: {
+                enabled: true,
+                securityPolicy: 'Basic256Sha256',
+                messageSecurityMode: 'SignAndEncrypt',
+                authMode: 'UserName',
+                username: 'opcuser',
+                password: 'secret',
+                certificateFile: '/cert.pem',
+                keyFile: '/key.pem',
+            },
+        };
+        let result;
+        H.opcuaConnect({
+            server: 'opc-main',
+            security: undefined,
+        }, undefined, (r) => { result = r; });
+        t.assert(result.ok, 'should be ok');
+        t.assertEqual(mockOpcuaClient.options.security.enabled, true);
+        t.assertEqual(mockOpcuaClient.options.security.messageSecurityMode, 'SignAndEncrypt');
         t.assertEqual(mockOpcuaClient.options.security.authMode, 'UserName');
         t.assertEqual(mockOpcuaClient.options.security.username, 'opcuser');
         t.assertEqual(mockOpcuaClient.options.security.password, 'secret');
@@ -2120,6 +2153,16 @@ runner.run('Handler: opcuaConnect', {
         t.assert(!result.ok, 'should not be ok');
         t.assert(result.reason.includes('connect failed'));
         t.assert(result.reason.includes('BadIdentityTokenRejected'));
+    },
+
+    'returns error when browse verification fails': (t) => {
+        const H = makeHandler();
+        mockOpcuaClient.browseError = 'x509: negative serial number';
+        let result;
+        H.opcuaConnect('opc.tcp://bad-cert:4840', undefined, (r) => { result = r; });
+        t.assert(!result.ok, 'should not be ok');
+        t.assert(result.reason.includes('connect failed'));
+        t.assert(result.reason.includes('x509: negative serial number'));
     },
 });
 
