@@ -14,11 +14,13 @@ import {
     TIME_FORMATS,
     TIME_ZONE_OPTIONS,
     buildAssetRows,
+    buildDataViewerChartXAxis,
     buildDataViewerHeaderLabels,
     buildRawResultColumns,
     buildTagChartSeries,
     buildTagRows,
     defaultSelectedTag,
+    formatDataViewerAxisTime,
     formatDataViewerTime,
     formatTimeRangeInput,
     formatTimeRangeLabel,
@@ -435,7 +437,7 @@ function FormatTimezoneModal({ timeFormat, timeZone, onApply, onClose }) {
     );
 }
 
-function TagLineChart({ rows, timeFormat, timeZone }) {
+function TagLineChart({ rows, timeFormat, timeZone, timeRange }) {
     const chartRef = useRef(null);
     const containerRef = useRef(null);
     const [chartSize, setChartSize] = useState({ width: 0, height: MIN_CHART_HEIGHT });
@@ -467,7 +469,7 @@ function TagLineChart({ rows, timeFormat, timeZone }) {
     const options = useMemo(() => {
         if (allPoints.length === 0) return null;
 
-        const xValues = allPoints.map((point) => point[0]);
+        const xAxisRange = buildDataViewerChartXAxis(allPoints, timeRange);
         const yValues = allPoints.map((point) => point[1]);
         const yMin = Math.floor(Math.min(...yValues) * 1000) / 1000;
         const yMax = Math.ceil(Math.max(...yValues) * 1000) / 1000;
@@ -481,7 +483,6 @@ function TagLineChart({ rows, timeFormat, timeZone }) {
                 width: chartSize.width || undefined,
                 spacing: [10, 10, 15, 10],
                 type: "line",
-                zoomType: "x",
                 animation: false,
                 style: {
                     fontFamily: "Open Sans, Helvetica, Arial, sans-serif",
@@ -542,8 +543,9 @@ function TagLineChart({ rows, timeFormat, timeZone }) {
                 gridLineWidth: 1,
                 gridLineColor: "#323333",
                 lineColor: "#323333",
-                min: Math.min(...xValues),
-                max: Math.max(...xValues),
+                min: xAxisRange.min,
+                max: xAxisRange.max,
+                tickInterval: xAxisRange.tickInterval,
                 crosshair: {
                     snap: false,
                     width: 0.5,
@@ -552,7 +554,7 @@ function TagLineChart({ rows, timeFormat, timeZone }) {
                 labels: {
                     align: "center",
                     formatter: function () {
-                        return formatDataViewerTime(this.value, timeFormat, timeZone);
+                        return formatDataViewerAxisTime(this.value, xAxisRange, timeZone);
                     },
                     style: {
                         color: "#f8f8f8",
@@ -591,11 +593,15 @@ function TagLineChart({ rows, timeFormat, timeZone }) {
                 backgroundColor: "#1f1d1d",
                 borderColor: "#292929",
                 borderWidth: 1,
+                style: {
+                    color: "#f8f8f8",
+                    fontSize: "11px",
+                },
                 formatter: function () {
                     const points = this.points || (this.point ? [this.point] : []);
-                    const header = `<span style="font-size:10px">${formatDataViewerTime(this.x, timeFormat, timeZone)}</span><br/>`;
+                    const header = `<span style="color:#f8f8f8;font-size:10px">${formatDataViewerTime(this.x, timeFormat, timeZone)}</span><br/>`;
                     return header + points.map((point) => (
-                        `<span style="color:${point.color}">\u25cf</span> ${point.series.name}: <b>${point.y}</b><br/>`
+                        `<span style="color:${point.color}">\u25cf</span> <span style="color:#f8f8f8">${point.series.name}: <b>${point.y}</b></span><br/>`
                     )).join("");
                 },
             },
@@ -624,7 +630,7 @@ function TagLineChart({ rows, timeFormat, timeZone }) {
                 enabled: false,
             },
         };
-    }, [allPoints, chartSize.height, chartSize.width, series, timeFormat, timeZone]);
+    }, [allPoints, chartSize.height, chartSize.width, series, timeFormat, timeRange, timeZone]);
 
     if (!options) {
         return <div className="empty-state">No numeric data on this page</div>;
@@ -677,6 +683,7 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
     const [endLoading, setEndLoading] = useState(false);
     const [error, setError] = useState("");
     const [result, setResult] = useState({ rows: [], total: 0, page: 1, pageSize: RESULT_PAGE_SIZE });
+    const [chartTimeRange, setChartTimeRange] = useState({ from: "", to: "" });
 
     const selectedTag = useMemo(
         () => nodes.find((node) => node.name === selectedTagName) || null,
@@ -779,6 +786,7 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
     const fetchRows = useCallback(async () => {
         if (!canQuery) {
             setResult({ rows: [], total: 0, page: 1, pageSize: RESULT_PAGE_SIZE });
+            setChartTimeRange({ from: "", to: "" });
             return;
         }
         setLoading(true);
@@ -790,8 +798,10 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
             if (queryFrom === null || queryTo === null) {
                 setError("Please check the entered time.");
                 setResult({ rows: [], total: 0, page: resultPage, pageSize: RESULT_PAGE_SIZE });
+                setChartTimeRange({ from: "", to: "" });
                 return;
             }
+            setChartTimeRange({ from: queryFrom || "", to: queryTo || "" });
 
             const data = await queryTagData({
                 server: dbServer,
@@ -811,6 +821,7 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
             setError(message);
             notify(message, "error");
             setResult({ rows: [], total: 0, page: resultPage, pageSize: RESULT_PAGE_SIZE });
+            setChartTimeRange({ from: "", to: "" });
         } finally {
             setLoading(false);
         }
@@ -1074,7 +1085,7 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
                             {canQuery && mode === "chart" && (
                                 <div className="table-card data-viewer-chart-card">
                                     <div className="table-card-body">
-                                        {loading ? <div className="empty-state">Loading...</div> : <TagLineChart rows={result.rows} timeFormat={timeFormat} timeZone={timeZone} />}
+                                        {loading ? <div className="empty-state">Loading...</div> : <TagLineChart rows={result.rows} timeFormat={timeFormat} timeZone={timeZone} timeRange={chartTimeRange} />}
                                     </div>
                                     <ResultPagination page={resultPage} pageSize={RESULT_PAGE_SIZE} rowCount={result.rows.length} loading={loading} endLoading={endLoading} onPage={setResultPage} onEndPage={handleEndPage} />
                                 </div>

@@ -7,11 +7,12 @@ const DEFAULT_CAPABILITIES = {
     maxNodesPerReadSource: "default",
     checkedAt: "",
 };
+const DEFAULT_READ_BATCH_SIZE = 300;
 
 const DEFAULT_FORM = {
     name: "",
     endpoint: "opc.tcp://127.0.0.1:4840",
-    readBatchSize: 32,
+    readBatchSize: DEFAULT_READ_BATCH_SIZE,
     capabilities: DEFAULT_CAPABILITIES,
     securityMode: "None",
     securityPolicy: "None",
@@ -27,7 +28,7 @@ function initialForm(server) {
     const security = server.security || {};
     const secure = security.enabled === true && security.messageSecurityMode === "SignAndEncrypt";
     const capabilities = server.capabilities || DEFAULT_CAPABILITIES;
-    const readBatchSize = Number(server.readBatchSize) > 0 ? Number(server.readBatchSize) : (capabilities.maxNodesPerRead || 32);
+    const readBatchSize = Number(server.readBatchSize) > 0 ? Number(server.readBatchSize) : getDefaultReadBatchSize(capabilities);
     return {
         ...DEFAULT_FORM,
         name: server.name || "",
@@ -48,6 +49,20 @@ function getReadBatchLimit(capabilities) {
     const maxNodesPerRead = Number(capabilities?.maxNodesPerRead);
     if (Number.isFinite(maxNodesPerRead) && maxNodesPerRead > 0) return maxNodesPerRead;
     return null;
+}
+
+function getDefaultReadBatchSize(capabilities) {
+    const limit = getReadBatchLimit(capabilities);
+    return limit ? Math.min(limit, DEFAULT_READ_BATCH_SIZE) : DEFAULT_READ_BATCH_SIZE;
+}
+
+function getMaxNodesPerReadText(capabilities) {
+    if (capabilities?.maxNodesPerRead === 0) return "Unlimited (server returned 0)";
+    if (capabilities?.maxNodesPerRead === null || capabilities?.maxNodesPerRead === undefined) {
+        return "Unlimited (not provided)";
+    }
+    const limit = getReadBatchLimit(capabilities);
+    return limit ? String(limit) : "Unlimited";
 }
 
 export default function OpcuaServerForm({ server, onSave, onConnectionTest, onClose }) {
@@ -140,7 +155,7 @@ export default function OpcuaServerForm({ server, onSave, onConnectionTest, onCl
             const capabilities = result?.capabilities || DEFAULT_CAPABILITIES;
             const readBatchSize = Number(result?.readBatchSize) > 0
                 ? Number(result.readBatchSize)
-                : (Number(capabilities.maxNodesPerRead) > 0 ? Number(capabilities.maxNodesPerRead) : 32);
+                : getDefaultReadBatchSize(capabilities);
             update({ readBatchSize, capabilities });
             setConnectionReady(true);
             setActiveTab("server");
@@ -155,7 +170,7 @@ export default function OpcuaServerForm({ server, onSave, onConnectionTest, onCl
 
     return (
         <div className="modal-overlay" onMouseDown={onClose}>
-            <div className="modal modal-md" onMouseDown={(e) => e.stopPropagation()}>
+            <div className="modal modal-md opcua-server-form-modal" onMouseDown={(e) => e.stopPropagation()}>
                 <div className="modal-header">
                     <div className="modal-header-title">
                         <Icon name={isEdit ? "edit" : "add_circle"} className="text-primary" />
@@ -222,9 +237,7 @@ export default function OpcuaServerForm({ server, onSave, onConnectionTest, onCl
                                 </div>
 
                                 <div>
-                                    <label className="form-label">
-                                        Read Batch Size{readBatchLimit ? ` (${readBatchLimit})` : ""}
-                                    </label>
+                                    <label className="form-label">Read Batch Size</label>
                                     <input
                                         type="number"
                                         required
@@ -240,6 +253,9 @@ export default function OpcuaServerForm({ server, onSave, onConnectionTest, onCl
                                             Run Connection Test to enable this value.
                                         </p>
                                     )}
+                                    <p className="text-xs text-on-surface-tertiary mt-4">
+                                        Max Nodes Per Read: {getMaxNodesPerReadText(form.capabilities)}
+                                    </p>
                                 </div>
                             </div>
                         )}

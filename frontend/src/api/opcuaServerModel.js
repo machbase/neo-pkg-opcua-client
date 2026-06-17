@@ -6,7 +6,7 @@ function normalizeAuthMode(value) {
     return cleanText(value) === "UserName" ? "UserName" : "Anonymous";
 }
 
-const DEFAULT_READ_BATCH_SIZE = 32;
+const DEFAULT_READ_BATCH_SIZE = 300;
 const DEFAULT_CAPABILITIES = {
     maxNodesPerRead: null,
     maxNodesPerReadSource: "default",
@@ -37,8 +37,7 @@ function normalizeCapabilities(capabilities) {
 }
 
 function normalizeReadBatchSize(value, capabilities) {
-    const unlimited = capabilities.maxNodesPerRead === 0;
-    const limit = unlimited ? null : (capabilities.maxNodesPerRead || DEFAULT_READ_BATCH_SIZE);
+    const limit = capabilities.maxNodesPerRead > 0 ? capabilities.maxNodesPerRead : null;
     const batchSize = positiveInteger(value, limit || DEFAULT_READ_BATCH_SIZE);
     return limit ? Math.min(batchSize, limit) : batchSize;
 }

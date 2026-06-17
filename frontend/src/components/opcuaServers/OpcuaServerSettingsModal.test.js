@@ -75,6 +75,7 @@ test("OpcuaServerForm keeps create and readBatchSize locked until connection tes
 
     assert.match(source, /connectionReady/);
     assert.match(source, /Read Batch Size/);
+    assert.match(source, /Max Nodes Per Read/);
     assert.match(source, /disabled=\{!connectionReady\}/);
     assert.match(source, /disabled=\{saving \|\| \(!isEdit && !connectionReady\)\}/);
     assert.match(source, /setConnectionReady\(true\)/);

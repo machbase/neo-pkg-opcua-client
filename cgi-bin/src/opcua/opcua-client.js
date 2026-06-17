@@ -2,7 +2,7 @@ const opcua = require("opcua");
 const path = require("path");
 const process = require("process");
 
-const DEFAULT_READ_BATCH_SIZE = 100;
+const DEFAULT_READ_BATCH_SIZE = 300;
 
 function _asText(value) {
     return value === undefined || value === null ? "" : String(value).trim();

@@ -107,14 +107,14 @@ runner.run('OpcuaClient read batching', {
         resetNativeMock();
         const client = makeClient({ readBatchSize: 0 });
         const nodes = [];
-        for (let i = 0; i < 101; i++) {
+        for (let i = 0; i < 301; i++) {
             nodes.push('n' + i);
         }
 
         client.read(nodes);
         const nativeClient = MockNativeClient.instances[0];
         t.assertEqual(nativeClient.readCalls.length, 2);
-        t.assertEqual(nativeClient.readCalls[0].length, 100);
+        t.assertEqual(nativeClient.readCalls[0].length, 300);
         t.assertEqual(nativeClient.readCalls[1].length, 1);
     },
 

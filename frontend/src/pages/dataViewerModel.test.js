@@ -4,12 +4,14 @@ import assert from "node:assert/strict";
 import {
     DATA_VIEWER_BACK_PATH,
     buildAssetRows,
+    buildDataViewerChartXAxis,
     buildTagRows,
     buildTagChartSeries,
     buildDataViewerPath,
     buildDataViewerHeaderLabels,
     buildRawResultColumns,
     defaultSelectedTag,
+    formatDataViewerAxisTime,
     formatDataViewerTime,
     formatTimeRangeInput,
     formatTimeRangeLabel,
@@ -372,10 +374,61 @@ test("buildTagChartSeries uses real time values and sorts points by time", () =>
     ]);
 });
 
+test("buildDataViewerChartXAxis uses selected range instead of data extent", () => {
+    const from = "2026-06-17T00:00:00.000Z";
+    const to = "2026-06-17T00:10:00.000Z";
+    const axis = buildDataViewerChartXAxis([
+        [Date.parse("2026-06-17T00:04:00.000Z"), 1],
+        [Date.parse("2026-06-17T00:05:00.000Z"), 2],
+    ], { from, to });
+
+    assert.equal(axis.min, Date.parse(from));
+    assert.equal(axis.max, Date.parse(to));
+    assert.equal(axis.tickInterval, 2 * 60 * 1000);
+});
+
+test("buildDataViewerChartXAxis falls back to data extent when range is empty", () => {
+    const first = Date.parse("2026-06-17T00:04:00.000Z");
+    const last = Date.parse("2026-06-17T00:05:00.000Z");
+    const axis = buildDataViewerChartXAxis([
+        [last, 2],
+        [first, 1],
+    ]);
+
+    assert.equal(axis.min, first);
+    assert.equal(axis.max, last);
+});
+
 test("formatDataViewerTime supports default millisecond format", () => {
     const text = formatDataViewerTime("2026-06-01T12:34:56.789Z", "YYYY-MM-DD HH24:MI:SS.mmm");
 
     assert.match(text, /^2026-06-01 \d\d:34:56\.789$/);
+});
+
+test("formatDataViewerAxisTime uses compact labels based on visible range", () => {
+    const value = Date.parse("2026-06-17T09:43:15.984Z");
+
+    assert.equal(
+        formatDataViewerAxisTime(value, {
+            min: Date.parse("2026-06-17T09:40:00.000Z"),
+            max: Date.parse("2026-06-17T09:50:00.000Z"),
+        }, "UTC"),
+        "09:43:15"
+    );
+    assert.equal(
+        formatDataViewerAxisTime(value, {
+            min: Date.parse("2026-06-17T00:00:00.000Z"),
+            max: Date.parse("2026-06-17T12:00:00.000Z"),
+        }, "UTC"),
+        "09:43"
+    );
+    assert.equal(
+        formatDataViewerAxisTime(value, {
+            min: Date.parse("2026-06-01T00:00:00.000Z"),
+            max: Date.parse("2026-06-10T00:00:00.000Z"),
+        }, "UTC"),
+        "06-17 09:43"
+    );
 });
 
 test("formatDataViewerTime supports Neo time format and timezone", () => {

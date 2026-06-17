@@ -326,6 +326,10 @@ textarea {
     color: var(--color-on-surface);
 }
 
+.opcua-server-form-modal {
+    min-height: 434px;
+}
+
 .pem-file-btn {
     cursor: pointer;
     color: var(--color-primary);

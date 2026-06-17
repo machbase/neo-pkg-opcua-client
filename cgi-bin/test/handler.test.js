@@ -796,7 +796,7 @@ runner.run('Handler: OPC UA server CRUD', {
         t.assertEqual(result.data.name, 'opc1');
         t.assertEqual(mockCGI._opcuaServers['opc1'].endpoint, 'opc.tcp://h:4840');
         t.assertEqual(mockCGI._opcuaServers['opc1'].security.enabled, false);
-        t.assertEqual(mockCGI._opcuaServers['opc1'].readBatchSize, 100);
+        t.assertEqual(mockCGI._opcuaServers['opc1'].readBatchSize, 300);
         t.assertEqual(mockCGI._opcuaServers['opc1'].capabilities.maxNodesPerRead, null);
         t.assertEqual(mockCGI._opcuaServers['opc1'].capabilities.maxNodesPerReadSource, 'default');
     },
@@ -852,19 +852,21 @@ runner.run('Handler: OPC UA server CRUD', {
         t.assert(result.reason.includes('readBatchSize must be <= 32'));
     },
 
-    'opcuaServerPost limits readBatchSize to 100 when maxNodesPerRead is unknown': (t) => {
+    'opcuaServerPost treats null maxNodesPerRead as unlimited but preserves null': (t) => {
         const H = makeHandler();
         let result;
         H.opcuaServerPost('opc1', {
             endpoint: 'opc.tcp://h:4840',
-            readBatchSize: 101,
+            readBatchSize: 1000,
             capabilities: {
                 maxNodesPerRead: null,
                 maxNodesPerReadSource: 'default',
             },
         }, (r) => { result = r; });
-        t.assert(!result.ok, 'should not be ok');
-        t.assert(result.reason.includes('readBatchSize must be <= 100'));
+        t.assert(result.ok, 'should be ok');
+        t.assertEqual(mockCGI._opcuaServers['opc1'].readBatchSize, 1000);
+        t.assertEqual(mockCGI._opcuaServers['opc1'].capabilities.maxNodesPerRead, null);
+        t.assertEqual(mockCGI._opcuaServers['opc1'].capabilities.maxNodesPerReadSource, 'default');
     },
 
     'opcuaServerPost treats maxNodesPerRead zero as unlimited': (t) => {
@@ -1017,7 +1019,7 @@ runner.run('Handler: OPC UA server CRUD', {
         let result;
         H.opcuaServerPut('opc1', { endpoint: 'opc.tcp://h2:4840', security: { enabled: false } }, (r) => { result = r; });
         t.assert(result.ok, 'should be ok');
-        t.assertEqual(mockCGI._opcuaServers['opc1'].readBatchSize, 100);
+        t.assertEqual(mockCGI._opcuaServers['opc1'].readBatchSize, 300);
         t.assertEqual(mockCGI._opcuaServers['opc1'].capabilities.maxNodesPerRead, null);
         t.assertEqual(mockCGI._opcuaServers['opc1'].capabilities.maxNodesPerReadSource, 'default');
     },
@@ -1090,7 +1092,7 @@ runner.run('Handler: OPC UA server CRUD', {
         t.assertEqual(result.data.length, 2);
         t.assertEqual(result.data[0].name, 'opc-a');
         t.assertEqual(result.data[1].name, 'opc-b');
-        t.assertEqual(result.data[0].config.readBatchSize, 100);
+        t.assertEqual(result.data[0].config.readBatchSize, 300);
     },
 });
 
@@ -1381,6 +1383,229 @@ runner.run('Handler: dbTableTags', {
         );
     },
 
+    'defaults hierarchy column to asset when column key is omitted': (t) => {
+        const H = makeHandler();
+        mockMachbaseClient.users = [{ USER_ID: 1, NAME: 'SYS' }];
+        mockMachbaseClient.tableMeta = { ID: 10, TYPE: 6, NAME: 'TAG' };
+        mockMachbaseClient.columns = [
+            { NAME: 'ASSET', TYPE: 0, ID: 3, FLAG: 0x4000000, LENGTH: 0 },
+        ];
+        mockMachbaseClient.queryResults = [
+            [
+                {
+                    _ID: 1,
+                    NAME: '__machbase_hierarchy__',
+                    ASSET: JSON.stringify({
+                        schema: ['country', 'city'],
+                        tree: [{ key: 'country', value: 'Korea', children: [] }],
+                    }),
+                },
+            ],
+            [
+                {
+                    _ID: 1,
+                    NAME: '__machbase_hierarchy__',
+                    ASSET: JSON.stringify({ schema: ['country'], tree: [] }),
+                },
+                {
+                    _ID: 2,
+                    NAME: 'sensor.a',
+                    ASSET: '{"country":"Korea","city":"Seoul"}',
+                },
+            ],
+        ];
+
+        let result;
+        H.dbTableTags({
+            host: 'h',
+            port: 5656,
+            user: 'sys',
+            password: 'p',
+        }, {
+            table: 'TAG',
+        }, (r) => { result = r; });
+
+        t.assert(result.ok, 'should be ok');
+        t.assertEqual(result.data.assetHierarchy.column, 'asset');
+        t.assertEqual(result.data.tags[0].asset.city, 'Seoul');
+        t.assert(
+            mockMachbaseClient.queries.some((q) => q.sql.includes('SELECT _ID, NAME, ASSET')),
+            'should query the default asset metadata column'
+        );
+    },
+
+    'finds hierarchy JSON among multiple metadata JSON columns': (t) => {
+        const H = makeHandler();
+        mockMachbaseClient.users = [{ USER_ID: 1, NAME: 'SYS' }];
+        mockMachbaseClient.tableMeta = { ID: 10, TYPE: 6, NAME: 'TAG' };
+        mockMachbaseClient.columns = [
+            { NAME: 'SPEC', TYPE: 0, ID: 3, FLAG: 0x4000000, LENGTH: 0 },
+            { NAME: 'ASSET', TYPE: 0, ID: 4, FLAG: 0x4000000, LENGTH: 0 },
+        ];
+        mockMachbaseClient.queryResults = [
+            [
+                {
+                    _ID: 1,
+                    NAME: '__machbase_hierarchy__',
+                    SPEC: '{"unit":"C"}',
+                    ASSET: JSON.stringify({
+                        schema: ['country', 'city'],
+                        tree: [{ key: 'country', value: 'Korea', children: [] }],
+                    }),
+                },
+            ],
+            [
+                {
+                    _ID: 1,
+                    NAME: '__machbase_hierarchy__',
+                    ASSET: JSON.stringify({ schema: ['country'], tree: [] }),
+                },
+                {
+                    _ID: 2,
+                    NAME: 'sensor.a',
+                    ASSET: '{"country":"Korea","city":"Seoul"}',
+                },
+            ],
+        ];
+
+        let result;
+        H.dbTableTags({
+            host: 'h',
+            port: 5656,
+            user: 'sys',
+            password: 'p',
+        }, {
+            table: 'TAG',
+        }, (r) => { result = r; });
+
+        t.assert(result.ok, 'should be ok');
+        t.assertEqual(result.data.assetHierarchy.column, 'asset');
+        t.assertEqual(result.data.assetHierarchy.schema[0], 'country');
+        t.assertEqual(result.data.tags[0].asset.country, 'Korea');
+    },
+
+    'uses first valid hierarchy JSON when multiple candidates exist': (t) => {
+        const H = makeHandler();
+        mockMachbaseClient.users = [{ USER_ID: 1, NAME: 'SYS' }];
+        mockMachbaseClient.tableMeta = { ID: 10, TYPE: 6, NAME: 'TAG' };
+        mockMachbaseClient.columns = [
+            { NAME: 'ASSET', TYPE: 0, ID: 3, FLAG: 0x4000000, LENGTH: 0 },
+            { NAME: 'ASSET_PATH', TYPE: 0, ID: 4, FLAG: 0x4000000, LENGTH: 0 },
+        ];
+        mockMachbaseClient.queryResults = [
+            [
+                {
+                    _ID: 1,
+                    NAME: '__machbase_hierarchy__',
+                    ASSET: JSON.stringify({
+                        schema: ['country', 'city'],
+                        tree: [
+                            {
+                                key: 'country',
+                                value: 'Korea',
+                                children: [],
+                            },
+                        ],
+                    }),
+                    ASSET_PATH: JSON.stringify({
+                        column: 'asset_path',
+                        schema: ['site', 'line'],
+                        tree: [
+                            {
+                                key: 'site',
+                                value: 'Plant-A',
+                                children: [],
+                            },
+                        ],
+                    }),
+                },
+            ],
+            [
+                {
+                    _ID: 1,
+                    NAME: '__machbase_hierarchy__',
+                    ASSET: JSON.stringify({ schema: ['country', 'city'], tree: [] }),
+                },
+                {
+                    _ID: 2,
+                    NAME: 'sensor.a',
+                    ASSET: '{"country":"Korea","city":"Seoul"}',
+                },
+            ],
+        ];
+
+        let result;
+        H.dbTableTags({
+            host: 'h',
+            port: 5656,
+            user: 'sys',
+            password: 'p',
+        }, {
+            table: 'TAG',
+        }, (r) => { result = r; });
+
+        t.assert(result.ok, 'should be ok');
+        t.assertEqual(result.data.assetHierarchy.column, 'asset');
+        t.assertEqual(result.data.assetHierarchy.schema[0], 'country');
+        t.assert(
+            mockMachbaseClient.queries.some((q) => q.sql.includes('SELECT _ID, NAME, ASSET FROM')),
+            'should query the first valid hierarchy column'
+        );
+    },
+
+    'accepts hierarchy JSON with leading whitespace': (t) => {
+        const H = makeHandler();
+        mockMachbaseClient.users = [{ USER_ID: 1, NAME: 'SYS' }];
+        mockMachbaseClient.tableMeta = { ID: 10, TYPE: 6, NAME: 'TAG' };
+        mockMachbaseClient.columns = [
+            { NAME: 'ASSET', TYPE: 0, ID: 3, FLAG: 0x4000000, LENGTH: 0 },
+        ];
+        mockMachbaseClient.queryResults = [
+            [
+                {
+                    _ID: 1,
+                    NAME: '__machbase_hierarchy__',
+                    ASSET: `  ${JSON.stringify({
+                        schema: ['country', 'city'],
+                        tree: [
+                            {
+                                key: 'country',
+                                value: 'Korea',
+                                children: [],
+                            },
+                        ],
+                    })}`,
+                },
+            ],
+            [
+                {
+                    _ID: 1,
+                    NAME: '__machbase_hierarchy__',
+                    ASSET: JSON.stringify({ schema: ['country', 'city'], tree: [] }),
+                },
+                {
+                    _ID: 2,
+                    NAME: 'sensor.a',
+                    ASSET: '{"country":"Korea","city":"Seoul"}',
+                },
+            ],
+        ];
+
+        let result;
+        H.dbTableTags({
+            host: 'h',
+            port: 5656,
+            user: 'sys',
+            password: 'p',
+        }, {
+            table: 'TAG',
+        }, (r) => { result = r; });
+
+        t.assert(result.ok, 'should be ok');
+        t.assertEqual(result.data.assetHierarchy.column, 'asset');
+        t.assertEqual(result.data.assetHierarchy.schema[0], 'country');
+    },
+
     'ignores hierarchy row when declared column does not exist': (t) => {
         const H = makeHandler();
         mockMachbaseClient.users = [{ USER_ID: 1, NAME: 'SYS' }];
@@ -1645,7 +1870,7 @@ runner.run('Handler: opcuaConnect', {
         t.assertEqual(mockOpcuaClient.readRetryInterval, 250);
         t.assert(mockOpcuaClient.opened, 'client should be opened');
         t.assert(mockOpcuaClient.closed, 'client should be closed');
-        t.assertEqual(result.data.readBatchSize, 100);
+        t.assertEqual(result.data.readBatchSize, 300);
         t.assertEqual(result.data.capabilities.maxNodesPerRead, null);
         t.assertEqual(result.data.capabilities.maxNodesPerReadSource, 'default');
     },
@@ -1669,7 +1894,7 @@ runner.run('Handler: opcuaConnect', {
         H.opcuaConnect('opc.tcp://h:4840', undefined, (r) => { result = r; });
         t.assert(result.ok, 'should be ok');
         t.assertEqual(mockOpcuaClient.readCalls[0][0], 'ns=0;i=11705');
-        t.assertEqual(result.data.readBatchSize, 100);
+        t.assertEqual(result.data.readBatchSize, 300);
         t.assertEqual(result.data.capabilities.maxNodesPerRead, 0);
         t.assertEqual(result.data.capabilities.maxNodesPerReadSource, 'server');
     },
@@ -1680,7 +1905,7 @@ runner.run('Handler: opcuaConnect', {
         let result;
         H.opcuaConnect('opc.tcp://h:4840', undefined, (r) => { result = r; });
         t.assert(result.ok, 'should be ok');
-        t.assertEqual(result.data.readBatchSize, 100);
+        t.assertEqual(result.data.readBatchSize, 300);
         t.assertEqual(result.data.capabilities.maxNodesPerRead, null);
         t.assertEqual(result.data.capabilities.maxNodesPerReadSource, 'default');
     },
@@ -1691,7 +1916,7 @@ runner.run('Handler: opcuaConnect', {
         let result;
         H.opcuaConnect('opc.tcp://h:4840', undefined, (r) => { result = r; });
         t.assert(result.ok, 'should be ok');
-        t.assertEqual(result.data.readBatchSize, 32);
+        t.assertEqual(result.data.readBatchSize, 300);
         t.assertEqual(result.data.capabilities.maxNodesPerRead, 0);
         t.assertEqual(result.data.capabilities.maxNodesPerReadSource, 'server');
     },
