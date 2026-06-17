@@ -62,7 +62,6 @@ export function buildDataViewerHeaderLabels(jobName, tableName) {
 
 const RAW_COLUMN_ORDER = ["time", "name", "value"];
 const INTERNAL_RAW_RESULT_KEYS = new Set(["buffer", "names"]);
-const ASSET_METADATA_RAW_KEYS = new Set(["asset"]);
 
 function formatRawColumnLabel(key) {
     return String(key || "")
@@ -75,7 +74,10 @@ function formatRawColumnLabel(key) {
 export function buildRawResultColumns(rows = [], options = {}) {
     const keys = [];
     const seen = new Set();
-    const hiddenKeys = options.hideAssetMetadata ? ASSET_METADATA_RAW_KEYS : new Set();
+    const hiddenKeys = new Set((options.hiddenKeys || [])
+        .map((key) => String(key || "").trim().toLowerCase())
+        .filter(Boolean));
+    if (options.hideAssetMetadata) hiddenKeys.add("asset");
 
     for (const row of rows) {
         if (!row || typeof row !== "object") continue;

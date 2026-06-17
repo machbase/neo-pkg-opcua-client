@@ -30,6 +30,7 @@ export default function App() {
     refreshOpcuaServers,
   } = useOpcuaServers()
   const [detail, setDetail] = useState(null)
+  const detailRequestRef = useRef(0)
   const [showServerSettings, setShowServerSettings] = useState(false)
   const [autoOpenForm, setAutoOpenForm] = useState(false)
   const [showOpcuaServerSettings, setShowOpcuaServerSettings] = useState(false)
@@ -56,10 +57,16 @@ export default function App() {
   }, [])
 
   const fetchDetail = useCallback((id) => {
+    const requestId = detailRequestRef.current + 1
+    detailRequestRef.current = requestId
     if (!id) { setDetail(null); return Promise.resolve() }
+    setDetail(null)
     return api.getCollector(id)
-      .then(setDetail)
+      .then((data) => {
+        if (detailRequestRef.current === requestId) setDetail(data)
+      })
       .catch((e) => {
+        if (detailRequestRef.current !== requestId) return
         notify(e.reason || e.message, 'error')
         setDetail(null)
       })
@@ -73,7 +80,8 @@ export default function App() {
 
   handlersRef.current = {
     selectCollector: (payload) => {
-      setSelectedCollectorId(payload.collectorId)
+      const collectorId = payload.collectorId
+      setSelectedCollectorId(collectorId)
       navigate('/')
     },
     navigate: (payload) => {

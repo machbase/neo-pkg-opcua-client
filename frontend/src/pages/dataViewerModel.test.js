@@ -74,16 +74,35 @@ test("buildRawResultColumns keeps time name value first and appends extra fields
     ]);
 });
 
-test("buildRawResultColumns can hide asset metadata while keeping other metadata fields", () => {
+test("buildRawResultColumns can hide hierarchy metadata while keeping other metadata fields", () => {
     const columns = buildRawResultColumns([
         {
             time: "2026-06-01",
             name: "sensor.a",
             value: 12.5,
-            asset: "{\"city\":\"Seoul\"}",
+            asset_path: "{\"city\":\"Seoul\"}",
             spec: "{\"unit\":\"C\"}",
         },
-    ], { hideAssetMetadata: true });
+    ], { hiddenKeys: ["asset_path"] });
+
+    assert.deepEqual(columns.map((column) => column.key), [
+        "time",
+        "name",
+        "value",
+        "spec",
+    ]);
+});
+
+test("buildRawResultColumns hides hierarchy metadata case-insensitively", () => {
+    const columns = buildRawResultColumns([
+        {
+            time: "2026-06-01",
+            name: "sensor.a",
+            value: 12.5,
+            ASSET_PATH: "{\"city\":\"Seoul\"}",
+            spec: "{\"unit\":\"C\"}",
+        },
+    ], { hiddenKeys: ["asset_path"] });
 
     assert.deepEqual(columns.map((column) => column.key), [
         "time",

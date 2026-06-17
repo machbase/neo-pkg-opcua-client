@@ -742,7 +742,7 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
     }, [assetRows, selectableRows, selectedTagName, tagRows]);
 
     useEffect(() => {
-        setCollapsedTagFolders(new Set());
+        setCollapsedTagFolders((prev) => (prev.size === 0 ? prev : new Set()));
     }, [selectedCollectorId, activeTagRows]);
 
     useEffect(() => {
@@ -833,7 +833,9 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
     const timeFormatButtonText = `${getTimeFormatLabel(timeFormat)} / ${getTimeZoneLabel(timeZone)}`;
     const headerLabels = buildDataViewerHeaderLabels(collector.id, dbTable);
     const resultHeading = getResultHeading(mode);
-    const rawColumns = buildRawResultColumns(result.rows, { hideAssetMetadata: showAssetTab });
+    const rawColumns = buildRawResultColumns(result.rows, {
+        hiddenKeys: showAssetTab ? [assetHierarchy?.column || "asset"] : [],
+    });
     const handleScanDirectionChange = (nextBackwardScan) => {
         setBackwardScan(nextBackwardScan);
         setResultPage(1);

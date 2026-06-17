@@ -1979,25 +1979,47 @@ function normalizeAssetTreeNodes(nodes, schema, depth = 0) {
 function normalizeAssetHierarchy(value) {
   const parsed = parseJsonObject(value);
   if (!parsed || !Array.isArray(parsed.schema) || !Array.isArray(parsed.tree)) return null;
+  const column = normalizeText(parsed.column);
+  if (!column) return null;
   const schema = parsed.schema.map((key) => normalizeText(key)).filter(Boolean);
   if (schema.length !== parsed.schema.length || schema.length === 0) return null;
   if (new Set(schema).size !== schema.length) return null;
   const tree = normalizeAssetTreeNodes(parsed.tree, schema);
   if (!tree || tree.length === 0) return null;
-  return { schema, tree };
+  return { column, schema, tree };
 }
 
-function mapTagMetaResponse(rows) {
-  let assetHierarchy = null;
+function findAssetHierarchy(row, columns) {
+  if (!row) return null;
+  const metadataColumns = new Set((columns || [])
+    .filter((col) => Number(col.FLAG || col.flag || 0) & FLAG_METADATA)
+    .map((col) => normalizeText(col.NAME || col.name).toUpperCase())
+    .filter(Boolean));
+
+  for (const [key, value] of Object.entries(row || {})) {
+    const columnName = normalizeText(key).toUpperCase();
+    if (!metadataColumns.has(columnName)) continue;
+    const hierarchy = normalizeAssetHierarchy(value);
+    if (!hierarchy) continue;
+    const hierarchyColumn = normalizeText(hierarchy.column).toUpperCase();
+    if (!metadataColumns.has(hierarchyColumn)) continue;
+    return hierarchy;
+  }
+
+  return null;
+}
+
+function mapTagMetaResponse(rows, assetColumn, assetHierarchy = null) {
   const tags = [];
+  const assetColumnNames = assetColumn
+    ? [assetColumn, assetColumn.toUpperCase(), assetColumn.toLowerCase()]
+    : [];
 
   for (const row of rows || []) {
     const name = pickRowValue(row, ['NAME', 'name']);
     if (name === undefined || name === null || name === '') continue;
     const tagName = String(name);
-    const asset = pickRowValue(row, ['ASSET', 'asset']);
     if (tagName === HIERARCHY_TAG_NAME) {
-      assetHierarchy = normalizeAssetHierarchy(asset);
       continue;
     }
 
@@ -2006,6 +2028,7 @@ function mapTagMetaResponse(rows) {
       id: id === undefined || id === null ? null : String(id),
       name: tagName,
     };
+    const asset = assetColumnNames.length > 0 ? pickRowValue(row, assetColumnNames) : undefined;
     const assetObject = parseJsonObject(asset);
     if (assetObject) tag.asset = assetObject;
     tags.push(tag);
@@ -2018,12 +2041,15 @@ function mapTagMetaRows(rows) {
   return mapTagMetaResponse(rows).tags;
 }
 
-function hasAssetMetadataColumn(columns) {
-  return (columns || []).some((row) => {
+function findMetadataColumnName(columns, requestedName) {
+  const requested = normalizeText(requestedName).toUpperCase();
+  if (!requested) return '';
+  const found = (columns || []).find((row) => {
     const name = normalizeText(row.NAME || row.name).toUpperCase();
     const flag = Number(row.FLAG || row.flag || 0);
-    return name === 'ASSET' && (flag & FLAG_METADATA);
+    return name === requested && (flag & FLAG_METADATA);
   });
+  return found ? normalizeText(found.NAME || found.name) : '';
 }
 
 function buildTagDataWhere(params, primaryColumn, timeColumn) {
@@ -2108,11 +2134,13 @@ function dbTableTags(db, params, reply) {
       return;
     }
 
-    const columns = client.selectColumnsByTableId(meta.ID);
-    const selectAsset = hasAssetMetadataColumn(columns);
     const tagMetaTable = buildTagMetaTableRef(req);
-    const rows = client.query(`SELECT _ID, NAME${selectAsset ? ', ASSET' : ''} FROM ${tagMetaTable} ORDER BY NAME`);
-    const tagMeta = mapTagMetaResponse(rows);
+    const columns = client.selectColumnsByTableId(meta.ID);
+    const hierarchyRows = client.query(`SELECT * FROM ${tagMetaTable} WHERE NAME = ?`, [HIERARCHY_TAG_NAME]);
+    const assetHierarchy = findAssetHierarchy(hierarchyRows && hierarchyRows[0], columns);
+    const assetColumn = findMetadataColumnName(columns, assetHierarchy && assetHierarchy.column);
+    const rows = client.query(`SELECT _ID, NAME${assetColumn ? `, ${assetColumn}` : ''} FROM ${tagMetaTable} ORDER BY NAME`);
+    const tagMeta = mapTagMetaResponse(rows, assetColumn, assetHierarchy);
     reply({
       ok: true,
       data: {

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { Routes, Route, Navigate, useNavigate, useLocation } from 'react-router'
 import useCollectors from './hooks/useCollectors'
 import useServers from './hooks/useServers'
@@ -30,6 +30,7 @@ export default function IndexApp() {
   } = useOpcuaServers()
   const { selectedCollectorId, setSelectedCollectorId, notify } = useApp()
   const [detail, setDetail] = useState(null)
+  const detailRequestRef = useRef(0)
   const [showServerSettings, setShowServerSettings] = useState(false)
   const [autoOpenForm, setAutoOpenForm] = useState(false)
   const [showOpcuaServerSettings, setShowOpcuaServerSettings] = useState(false)
@@ -56,10 +57,16 @@ export default function IndexApp() {
   }, [])
 
   const fetchDetail = useCallback((id) => {
+    const requestId = detailRequestRef.current + 1
+    detailRequestRef.current = requestId
     if (!id) { setDetail(null); return }
+    setDetail(null)
     api.getCollector(id)
-      .then(setDetail)
+      .then((data) => {
+        if (detailRequestRef.current === requestId) setDetail(data)
+      })
       .catch((e) => {
+        if (detailRequestRef.current !== requestId) return
         notify(e.reason || e.message, 'error')
         setDetail(null)
       })
