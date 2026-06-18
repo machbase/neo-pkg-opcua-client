@@ -422,6 +422,53 @@ export function buildTagChartSeries(rows = []) {
     }));
 }
 
+const SECOND_MS = 1000;
+const MINUTE_MS = 60 * SECOND_MS;
+const HOUR_MS = 60 * MINUTE_MS;
+const DAY_MS = 24 * HOUR_MS;
+
+function chooseTimeTickInterval(duration) {
+    if (!Number.isFinite(duration) || duration <= 0) return undefined;
+    if (duration <= 10 * SECOND_MS) return SECOND_MS;
+    if (duration <= MINUTE_MS) return 10 * SECOND_MS;
+    if (duration <= 5 * MINUTE_MS) return MINUTE_MS;
+    if (duration <= 10 * MINUTE_MS) return 2 * MINUTE_MS;
+    if (duration <= HOUR_MS) return 10 * MINUTE_MS;
+    if (duration <= 3 * HOUR_MS) return 30 * MINUTE_MS;
+    if (duration <= DAY_MS) return 3 * HOUR_MS;
+    if (duration <= 3 * DAY_MS) return 12 * HOUR_MS;
+    if (duration <= 31 * DAY_MS) return 7 * DAY_MS;
+    if (duration <= 366 * DAY_MS) return 30 * DAY_MS;
+    return 90 * DAY_MS;
+}
+
+export function buildDataViewerChartXAxis(points = [], range = {}) {
+    const pointTimes = points
+        .map((point) => Array.isArray(point) ? point[0] : point?.x)
+        .filter((value) => Number.isFinite(value));
+    const rangeFrom = toEpochMs(range?.from);
+    const rangeTo = toEpochMs(range?.to);
+
+    let min = Number.isFinite(rangeFrom) ? rangeFrom : undefined;
+    let max = Number.isFinite(rangeTo) ? rangeTo : undefined;
+
+    if (min === undefined && pointTimes.length > 0) min = Math.min(...pointTimes);
+    if (max === undefined && pointTimes.length > 0) max = Math.max(...pointTimes);
+    if (!Number.isFinite(min) || !Number.isFinite(max)) return {};
+
+    if (min > max) {
+        const tmp = min;
+        min = max;
+        max = tmp;
+    }
+
+    return {
+        min,
+        max,
+        tickInterval: chooseTimeTickInterval(max - min),
+    };
+}
+
 export function defaultSelectedTag(rows = []) {
     return rows.find((row) => row.type === "tag")?.tag || null;
 }
@@ -565,6 +612,28 @@ export function formatDataViewerTime(value, format = DEFAULT_TIME_FORMAT, timeZo
     if (format === "YYYY-MM-DD HH24:MI:SS") return `${yyyy}-${mm}-${dd} ${hh}:${mi}:${ss}`;
     if (format === "HH24:MI:SS.mmm") return `${hh}:${mi}:${ss}.${ms}`;
     return `${yyyy}-${mm}-${dd} ${hh}:${mi}:${ss}.${ms}`;
+}
+
+export function formatDataViewerAxisTime(value, range = {}, timeZone = DEFAULT_TIME_ZONE) {
+    const startTime = toEpochMs(range?.min ?? range?.from ?? range?.startTime);
+    const endTime = toEpochMs(range?.max ?? range?.to ?? range?.endTime);
+    const span = Number.isFinite(startTime) && Number.isFinite(endTime)
+        ? endTime - startTime
+        : 0;
+
+    if (span <= HOUR_MS) {
+        return formatDataViewerTime(value, "03:04:05", timeZone);
+    }
+
+    if (span <= DAY_MS) {
+        return formatDataViewerTime(value, "2006-01-02 15:04", timeZone).slice(11);
+    }
+
+    if (span <= 30 * DAY_MS) {
+        return formatDataViewerTime(value, "2006-01-02 15:04", timeZone).slice(5);
+    }
+
+    return formatDataViewerTime(value, "2006-01-02", timeZone);
 }
 
 export function formatTimeRangeLabel(from, to) {

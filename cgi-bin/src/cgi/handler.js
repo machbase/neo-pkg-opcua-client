@@ -27,6 +27,7 @@ const APP_DIR = (() => {
 })();
 
 const SERVICE_PREFIX = Service.SERVICE_PREFIX || '_opc_';
+const OPCUA_ROOT_NODE_ID = 'ns=0;i=85';
 
 function readJsonFile(filePath) {
   try {
@@ -343,7 +344,7 @@ const OPCUA_AUTH_MODES = {
   Anonymous: true,
   UserName: true,
 };
-const OPCUA_DEFAULT_READ_BATCH_SIZE = 100;
+const OPCUA_DEFAULT_READ_BATCH_SIZE = 300;
 const OPCUA_MAX_NODES_PER_READ_NODE_ID = 'ns=0;i=11705';
 const OPCUA_CAPABILITY_SOURCES = {
   server: true,
@@ -426,18 +427,16 @@ function normalizeOpcuaReadBatchSize(config, previous, capabilities, preservePre
   const hasInput = config.readBatchSize !== undefined && config.readBatchSize !== null && config.readBatchSize !== '';
   const hasPrevious = previous && previous.readBatchSize !== undefined && previous.readBatchSize !== null;
   const serverLimit = capabilities.maxNodesPerRead > 0 ? capabilities.maxNodesPerRead : null;
-  const defaultValue = serverLimit || OPCUA_DEFAULT_READ_BATCH_SIZE;
+  const defaultValue = serverLimit ? Math.min(serverLimit, OPCUA_DEFAULT_READ_BATCH_SIZE) : OPCUA_DEFAULT_READ_BATCH_SIZE;
   const value = hasInput
     ? config.readBatchSize
     : (preservePrevious && hasPrevious ? previous.readBatchSize : defaultValue);
   const readBatchSize = normalizePositiveInteger(value, 'readBatchSize');
-  const limit = serverLimit || OPCUA_DEFAULT_READ_BATCH_SIZE;
-  if (capabilities.maxNodesPerRead === 0) {
+  if (!serverLimit) {
     return readBatchSize;
   }
-  if (readBatchSize > limit) {
-    const suffix = serverLimit ? ' (capabilities.maxNodesPerRead)' : '';
-    throw userFacingError(`readBatchSize must be <= ${limit}${suffix}`);
+  if (readBatchSize > serverLimit) {
+    throw userFacingError(`readBatchSize must be <= ${serverLimit} (capabilities.maxNodesPerRead)`);
   }
   return readBatchSize;
 }
@@ -455,7 +454,7 @@ function detectOpcuaCapabilities(client) {
         capabilities.maxNodesPerReadSource = 'server';
         return {
           capabilities,
-          readBatchSize: maxNodesPerRead === 0 ? OPCUA_DEFAULT_READ_BATCH_SIZE : maxNodesPerRead,
+          readBatchSize: maxNodesPerRead > 0 ? Math.min(maxNodesPerRead, OPCUA_DEFAULT_READ_BATCH_SIZE) : OPCUA_DEFAULT_READ_BATCH_SIZE,
         };
       }
     }
@@ -466,6 +465,18 @@ function detectOpcuaCapabilities(client) {
     capabilities,
     readBatchSize: OPCUA_DEFAULT_READ_BATCH_SIZE,
   };
+}
+
+function verifyOpcuaBrowse(config) {
+  const client = new OpcuaClient(config);
+  if (!client.open()) {
+    throw client.lastError || new Error('connect failed');
+  }
+  try {
+    _browseDescendants(client, OPCUA_ROOT_NODE_ID, 0);
+  } finally {
+    client.close();
+  }
 }
 
 function validatePemText(value, label, marker) {
@@ -790,6 +801,7 @@ function cleanupTemporaryOpcuaConnectSecurity(name) {
 function applyDirectOpcuaConnectSecurity(resolved, request) {
   if (!resolved) return null;
   if (!request || typeof request !== 'object' || !hasOwn(request, 'security')) return null;
+  if (request.security === undefined || request.security === null) return null;
 
   const tempName = temporaryOpcuaConnectSecurityName();
   try {
@@ -1979,8 +1991,7 @@ function normalizeAssetTreeNodes(nodes, schema, depth = 0) {
 function normalizeAssetHierarchy(value) {
   const parsed = parseJsonObject(value);
   if (!parsed || !Array.isArray(parsed.schema) || !Array.isArray(parsed.tree)) return null;
-  const column = normalizeText(parsed.column);
-  if (!column) return null;
+  const column = normalizeText(parsed.column) || 'asset';
   const schema = parsed.schema.map((key) => normalizeText(key)).filter(Boolean);
   if (schema.length !== parsed.schema.length || schema.length === 0) return null;
   if (new Set(schema).size !== schema.length) return null;
@@ -1999,6 +2010,7 @@ function findAssetHierarchy(row, columns) {
   for (const [key, value] of Object.entries(row || {})) {
     const columnName = normalizeText(key).toUpperCase();
     if (!metadataColumns.has(columnName)) continue;
+    if (typeof value !== 'string' || !value.trim().startsWith('{')) continue;
     const hierarchy = normalizeAssetHierarchy(value);
     if (!hierarchy) continue;
     const hierarchyColumn = normalizeText(hierarchy.column).toUpperCase();
@@ -2302,6 +2314,8 @@ function opcuaConnect(endpointOrRequest, readRetryInterval, reply) {
   }
   try {
     const capabilityInfo = detectOpcuaCapabilities(client);
+    client.close();
+    verifyOpcuaBrowse(opcuaClientConfig(resolved, readRetryInterval));
     reply({
       ok: true,
       data: {
@@ -2311,6 +2325,11 @@ function opcuaConnect(endpointOrRequest, readRetryInterval, reply) {
         readBatchSize: capabilityInfo.readBatchSize,
         capabilities: capabilityInfo.capabilities,
       },
+    });
+  } catch (e) {
+    reply({
+      ok: false,
+      reason: opcuaConnectFailedReason(endpoint, { lastError: e }),
     });
   } finally {
     client.close();

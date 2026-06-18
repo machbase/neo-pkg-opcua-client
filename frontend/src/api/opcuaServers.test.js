@@ -68,7 +68,7 @@ test("mapOpcuaServerListItem defaults read batch capability for old profiles", (
         {
             name: "legacy-opc",
             endpoint: "opc.tcp://127.0.0.1:4840",
-            readBatchSize: 32,
+            readBatchSize: 300,
             capabilities: {
                 maxNodesPerRead: null,
                 maxNodesPerReadSource: "default",
