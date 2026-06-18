@@ -6,6 +6,7 @@ import {
     buildOpcuaDirectConnectionRequest,
     buildOpcuaServerPayload,
     mapOpcuaServerListItem,
+    resolveReadBatchSizeAfterConnection,
 } from "./opcuaServerModel.js";
 
 test("mapOpcuaServerListItem flattens API config for the UI", () => {
@@ -162,6 +163,39 @@ test("buildOpcuaServerPayload treats maxNodesPerRead zero as unlimited", () => {
             },
             security: { enabled: false },
         }
+    );
+});
+
+test("resolveReadBatchSizeAfterConnection keeps current value when maxNodesPerRead is null", () => {
+    assert.equal(
+        resolveReadBatchSizeAfterConnection("300", {
+            maxNodesPerRead: null,
+            maxNodesPerReadSource: "default",
+            checkedAt: "2026-06-09T01:53:51.003Z",
+        }),
+        300
+    );
+});
+
+test("resolveReadBatchSizeAfterConnection keeps current value when maxNodesPerRead is zero", () => {
+    assert.equal(
+        resolveReadBatchSizeAfterConnection("300", {
+            maxNodesPerRead: 0,
+            maxNodesPerReadSource: "server",
+            checkedAt: "2026-06-09T01:53:51.003Z",
+        }),
+        300
+    );
+});
+
+test("resolveReadBatchSizeAfterConnection clamps current value only when server returns a positive limit", () => {
+    assert.equal(
+        resolveReadBatchSizeAfterConnection("300", {
+            maxNodesPerRead: 32,
+            maxNodesPerReadSource: "server",
+            checkedAt: "2026-06-09T01:53:51.003Z",
+        }),
+        32
     );
 });
 

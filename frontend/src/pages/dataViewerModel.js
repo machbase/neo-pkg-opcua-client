@@ -258,8 +258,7 @@ export function hasAssetHierarchy(assetHierarchy) {
         Array.isArray(assetHierarchy.schema) &&
         assetHierarchy.schema.length > 0 &&
         assetHierarchy.schema.every((key) => typeof key === "string" && key.trim()) &&
-        Array.isArray(assetHierarchy.tree) &&
-        assetHierarchy.tree.length > 0
+        Array.isArray(assetHierarchy.tree)
     );
 }
 

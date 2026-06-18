@@ -1414,8 +1414,8 @@ runner.run('Handler: dbTableTags', {
         t.assertEqual(result.data.assetHierarchy.schema[0], 'country');
         t.assertEqual(result.data.assetHierarchy.tree[0].value, 'Korea');
         t.assert(
-            mockMachbaseClient.queries.some((q) => q.sql.includes('SELECT _ID, NAME, ASSET_PATH')),
-            'should query the hierarchy-declared metadata column'
+            mockMachbaseClient.queries.some((q) => q.sql.includes('SELECT * FROM')),
+            'should query all metadata cells like neo-web data viewer'
         );
     },
 
@@ -1466,8 +1466,8 @@ runner.run('Handler: dbTableTags', {
         t.assertEqual(result.data.assetHierarchy.column, 'asset');
         t.assertEqual(result.data.tags[0].asset.country, 'Korea');
         t.assert(
-            mockMachbaseClient.queries.some((q) => q.sql.includes('SELECT _ID, NAME, ASSET')),
-            'should query the asset metadata column'
+            mockMachbaseClient.queries.some((q) => q.sql.includes('SELECT * FROM')),
+            'should query all metadata cells like neo-web data viewer'
         );
     },
 
@@ -1517,8 +1517,8 @@ runner.run('Handler: dbTableTags', {
         t.assertEqual(result.data.assetHierarchy.column, 'asset');
         t.assertEqual(result.data.tags[0].asset.city, 'Seoul');
         t.assert(
-            mockMachbaseClient.queries.some((q) => q.sql.includes('SELECT _ID, NAME, ASSET')),
-            'should query the default asset metadata column'
+            mockMachbaseClient.queries.some((q) => q.sql.includes('SELECT * FROM')),
+            'should query all metadata cells like neo-web data viewer'
         );
     },
 
@@ -1636,8 +1636,8 @@ runner.run('Handler: dbTableTags', {
         t.assertEqual(result.data.assetHierarchy.column, 'asset');
         t.assertEqual(result.data.assetHierarchy.schema[0], 'country');
         t.assert(
-            mockMachbaseClient.queries.some((q) => q.sql.includes('SELECT _ID, NAME, ASSET FROM')),
-            'should query the first valid hierarchy column'
+            mockMachbaseClient.queries.some((q) => q.sql.includes('SELECT * FROM')),
+            'should query all metadata cells like neo-web data viewer'
         );
     },
 
@@ -1694,7 +1694,7 @@ runner.run('Handler: dbTableTags', {
         t.assertEqual(result.data.assetHierarchy.schema[0], 'country');
     },
 
-    'ignores hierarchy row when declared column does not exist': (t) => {
+    'finds hierarchy JSON by content even when stored column is not flagged as metadata': (t) => {
         const H = makeHandler();
         mockMachbaseClient.users = [{ USER_ID: 1, NAME: 'SYS' }];
         mockMachbaseClient.tableMeta = { ID: 10, TYPE: 6, NAME: 'TAG' };
@@ -1706,16 +1706,16 @@ runner.run('Handler: dbTableTags', {
                 {
                     _ID: 1,
                     NAME: '__machbase_hierarchy__',
-                    ASSET: JSON.stringify({
-                        column: 'asset_path',
-                        schema: ['country'],
+                    NOTE: JSON.stringify({
+                        column: 'asset',
+                        schema: ['country', 'city'],
                         tree: [{ key: 'country', value: 'Korea', children: [] }],
                     }),
                 },
             ],
             [
-                { _ID: 1, NAME: '__machbase_hierarchy__' },
-                { _ID: 2, NAME: 'sensor.a' },
+                { _ID: 1, NAME: '__machbase_hierarchy__', NOTE: JSON.stringify({ schema: ['country', 'city'], tree: [] }) },
+                { _ID: 2, NAME: 'sensor.a', ASSET: '{"country":"Korea"}' },
             ],
         ];
 
@@ -1730,13 +1730,54 @@ runner.run('Handler: dbTableTags', {
         }, (r) => { result = r; });
 
         t.assert(result.ok, 'should be ok');
-        t.assertEqual(result.data.assetHierarchy, null);
+        t.assertEqual(result.data.assetHierarchy.column, 'asset');
         t.assertEqual(result.data.tags.length, 1);
-        t.assertEqual(result.data.tags[0].asset, undefined);
+        t.assertEqual(result.data.tags[0].asset.country, 'Korea');
         t.assert(
-            mockMachbaseClient.queries.some((q) => q.sql.includes('SELECT _ID, NAME FROM')),
-            'should not query a missing metadata column'
+            mockMachbaseClient.queries.some((q) => q.sql.includes('SELECT * FROM')),
+            'should query all metadata cells like neo-web data viewer'
         );
+    },
+
+    'returns asset hierarchy even when hierarchy tree is empty': (t) => {
+        const H = makeHandler();
+        mockMachbaseClient.users = [{ USER_ID: 1, NAME: 'SYS' }];
+        mockMachbaseClient.tableMeta = { ID: 10, TYPE: 6, NAME: 'TAG' };
+        mockMachbaseClient.columns = [
+            { NAME: 'ASSET', TYPE: 0, ID: 3, FLAG: 0x4000000, LENGTH: 0 },
+        ];
+        mockMachbaseClient.queryResults = [
+            [
+                {
+                    _ID: 1,
+                    NAME: '__machbase_hierarchy__',
+                    ASSET: JSON.stringify({
+                        column: 'asset',
+                        schema: ['country', 'city'],
+                        tree: [],
+                    }),
+                },
+            ],
+            [
+                { _ID: 1, NAME: '__machbase_hierarchy__', ASSET: JSON.stringify({ schema: ['country', 'city'], tree: [] }) },
+                { _ID: 2, NAME: 'sensor.a', ASSET: '{"country":"Korea","city":"Seoul"}' },
+            ],
+        ];
+
+        let result;
+        H.dbTableTags({
+            host: 'h',
+            port: 5656,
+            user: 'sys',
+            password: 'p',
+        }, {
+            table: 'TAG',
+        }, (r) => { result = r; });
+
+        t.assert(result.ok, 'should be ok');
+        t.assertEqual(result.data.assetHierarchy.column, 'asset');
+        t.assertEqual(result.data.assetHierarchy.tree.length, 0);
+        t.assertEqual(result.data.tags[0].asset.city, 'Seoul');
     },
 
     'returns null asset hierarchy for invalid hierarchy metadata': (t) => {

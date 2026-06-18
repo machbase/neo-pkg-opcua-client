@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import Icon from "../common/Icon";
 import { koToEn } from "../../utils/korean";
+import { resolveReadBatchSizeAfterConnection } from "../../api/opcuaServerModel";
 
 const DEFAULT_CAPABILITIES = {
     maxNodesPerRead: null,
@@ -153,9 +154,7 @@ export default function OpcuaServerForm({ server, onSave, onConnectionTest, onCl
         try {
             const result = await onConnectionTest({ ...form, existingName: server?.name || "" });
             const capabilities = result?.capabilities || DEFAULT_CAPABILITIES;
-            const readBatchSize = Number(result?.readBatchSize) > 0
-                ? Number(result.readBatchSize)
-                : getDefaultReadBatchSize(capabilities);
+            const readBatchSize = resolveReadBatchSizeAfterConnection(form.readBatchSize, capabilities);
             update({ readBatchSize, capabilities });
             setConnectionReady(true);
             setActiveTab("server");

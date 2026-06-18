@@ -16,7 +16,7 @@ const DEFAULTS = {
   opcua: {
     server: '',
     endpoint: '',
-    interval: 5000,
+    interval: 3000,
     readRetryInterval: 100,
     nodes: [],
   },
