@@ -67,6 +67,7 @@ class MachbaseStream {
     this.stringValueColumnName = null;
     this.stringValueColumnType = null;
     this.stringValueColumnFamily = null;
+    this.stringValueColumnLength = 0;
     this.stringOnly = false;
   }
 
@@ -181,6 +182,7 @@ class MachbaseStream {
       this.stringValueColumnName = stringColumnMeta ? stringColumnMeta.name : null;
       this.stringValueColumnType = stringColumnMeta ? stringColumnMeta.type : null;
       this.stringValueColumnFamily = stringColumnMeta ? stringColumnMeta.family : null;
+      this.stringValueColumnLength = stringColumnMeta ? stringColumnMeta.length : 0;
       this.stringOnly = stringOnly;
       this.stream = client.openAppender(table);
       return null;
