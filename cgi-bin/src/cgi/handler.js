@@ -260,6 +260,7 @@ const AUTO_TABLE_VALUE_COLUMN = 'VALUE';
 const AUTO_TABLE_STRING_COLUMN = 'STR_VALUE';
 const AUTO_TABLE_NAME_MIN_LENGTH = 80;
 const AUTO_TABLE_STRING_LENGTH = 1024;
+const AUTO_TABLE_NAME_LENGTH_STEP = 5;
 
 function normalizeIdentifier(value, label) {
   const normalized = String(value || '').trim().toUpperCase();
@@ -296,7 +297,7 @@ function autoCreateTableNameLength(config) {
       maxLen = name.length;
     }
   }
-  return maxLen;
+  return Math.ceil(maxLen / AUTO_TABLE_NAME_LENGTH_STEP) * AUTO_TABLE_NAME_LENGTH_STEP;
 }
 
 function buildAutoCreateTableSchema(tableName, nameLength) {
@@ -836,6 +837,65 @@ function applyAutoCreateConfig(config, tableName) {
   config.stringOnly = false;
 }
 
+function maxTagNameLengthForConfig(collectorName, config, columns) {
+  const valueColumn = String(config && config.valueColumn ? config.valueColumn : AUTO_TABLE_VALUE_COLUMN).toUpperCase();
+  const selectedValueColumn = (columns || []).find((col) => String(col.NAME || '').toUpperCase() === valueColumn);
+  const isJsonMode = selectedValueColumn && ColumnType.fromCode(selectedValueColumn.TYPE) === ColumnType.JSON;
+  if (isJsonMode) {
+    return String(collectorName || '').length;
+  }
+
+  const nodes = config && config.opcua && Array.isArray(config.opcua.nodes)
+    ? config.opcua.nodes
+    : [];
+  let maxLen = 0;
+  for (const node of nodes) {
+    const tagName = node && node.name != null ? String(node.name) : '';
+    if (tagName.length > maxLen) {
+      maxLen = tagName.length;
+    }
+  }
+  return maxLen;
+}
+
+function validateCollectorTagNameLength(name, config) {
+  if (!config || !config.db || !config.dbTable) {
+    return;
+  }
+
+  const db = CGI.getServerConfig(config.db);
+  if (!db) {
+    throw userFacingError(`server '${config.db}' not found`);
+  }
+
+  const tableName = normalizeIdentifier(config.dbTable, 'config.dbTable');
+  const client = new MachbaseClient(db);
+  try {
+    client.connect();
+    const userId = findUserId(client, db.user);
+    const tableMeta = client.selectTableMeta(tableName, userId);
+    if (!tableMeta) {
+      throw userFacingError(`table '${tableName}' not found`);
+    }
+    const columns = client.selectColumnsByTableId(tableMeta.ID);
+    const primaryColumn = (columns || []).find((col) => Number(col.FLAG || 0) & FLAG_PRIMARY)
+      || (columns || []).find((col) => String(col.NAME || '').toUpperCase() === 'NAME');
+    if (!primaryColumn) {
+      throw userFacingError(`table '${tableName}' primary column not found`);
+    }
+    const length = Number(primaryColumn.LENGTH || 0);
+    if (!length) {
+      return;
+    }
+    const maxLen = maxTagNameLengthForConfig(name, config, columns);
+    if (maxLen > length) {
+      throw userFacingError(`tag name length ${maxLen} exceeds ${primaryColumn.NAME} VARCHAR(${length}) in table '${tableName}'`);
+    }
+  } finally {
+    client.close();
+  }
+}
+
 function createAutoCollectorTable(config) {
   const request = prepareAutoCreateTableRequest(config);
   const db = CGI.getServerConfig(request.dbName);
@@ -950,6 +1010,17 @@ function collectorPost(name, config, reply) {
       });
       return;
     }
+  } else {
+    try {
+      validateCollectorTagNameLength(name, config);
+    } catch (err) {
+      rollbackAutoCreatedOpcuaServer(autoCreatedOpcuaServer);
+      reply({
+        ok: false,
+        reason: errorMessage(err),
+      });
+      return;
+    }
   }
 
   try {
@@ -1033,7 +1104,9 @@ function collectorPut(name, body, reply) {
   let autoCreatedOpcuaServer = null;
   try {
     autoCreatedOpcuaServer = prepareCollectorOpcuaServerConfig(name, nextConfig);
+    validateCollectorTagNameLength(name, nextConfig);
   } catch (err) {
+    rollbackAutoCreatedOpcuaServer(autoCreatedOpcuaServer);
     reply({
       ok: false,
       reason: errorMessage(err),

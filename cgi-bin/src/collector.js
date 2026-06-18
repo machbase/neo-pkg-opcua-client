@@ -51,6 +51,45 @@ const NUMERIC_DATA_TYPES = new Set([
 ]);
 const STRING_DATA_TYPES = new Set(['String']);
 
+function _utf8ByteLength(text) {
+    let bytes = 0;
+    for (let i = 0; i < text.length; i++) {
+        const code = text.codePointAt(i);
+        if (code <= 0x7f) {
+            bytes += 1;
+        } else if (code <= 0x7ff) {
+            bytes += 2;
+        } else if (code <= 0xffff) {
+            bytes += 3;
+        } else {
+            bytes += 4;
+            i++;
+        }
+    }
+    return bytes;
+}
+
+function _truncateUtf8Bytes(text, maxBytes) {
+    if (!Number.isFinite(maxBytes) || maxBytes <= 0) {
+        return '';
+    }
+    let bytes = 0;
+    let out = '';
+    for (let i = 0; i < text.length; i++) {
+        const code = text.codePointAt(i);
+        const size = code <= 0x7f ? 1 : (code <= 0x7ff ? 2 : (code <= 0xffff ? 3 : 4));
+        if (bytes + size > maxBytes) {
+            break;
+        }
+        out += String.fromCodePoint(code);
+        bytes += size;
+        if (code > 0xffff) {
+            i++;
+        }
+    }
+    return out;
+}
+
 class Collector {
     constructor(config, { opcuaClient, db, collectorName, lastCollectedAtWriter, logger } = {}) {
         const dbConf = CGI.getServerConfig(config.db);
@@ -86,6 +125,7 @@ class Collector {
         this._valueColumnFamily = null;
         this._valueColumnType = null;
         this._stringValueColumnType = null;
+        this._stringValueColumnLength = 0;
         this._primaryColumnName = 'NAME';
         this._baseTimeColumnName = 'TIME';
         this._warnStates = {};
@@ -141,11 +181,25 @@ class Collector {
         this._previousValues[name] = this._snapshotValue(value);
     }
 
-    _coerceStringValue(value) {
+    _coerceStringValue(value, node) {
         if (value === undefined || value === null) {
             return null;
         }
-        return String(value);
+        const text = String(value);
+        const limit = Number(this._stringValueColumnLength || 0);
+        if (!limit || _utf8ByteLength(text) <= limit) {
+            return text;
+        }
+        const truncated = _truncateUtf8Bytes(text, limit);
+        this._warnRepeated(this._nodeWarnKey('string-value-truncated', node), "string value truncated", {
+            nodeId: node && node.nodeId,
+            name: node && node.name,
+            column: this._stringValueColumn,
+            maxBytes: limit,
+            originalBytes: _utf8ByteLength(text),
+            storedBytes: _utf8ByteLength(truncated),
+        });
+        return truncated;
     }
 
     _nodeDataTypeHint(node) {
@@ -298,7 +352,7 @@ class Collector {
         let storedValue;
 
         if (this._stringOnly) {
-            stringValue = this._coerceStringValue(rawValue);
+            stringValue = this._coerceStringValue(rawValue, node);
             if (stringValue === null) {
                 this._warnRepeated(this._nodeWarnKey('unsupported-string-only-empty', node), "unsupported empty value for string-only column", {
                     nodeId: node.nodeId,
@@ -329,7 +383,7 @@ class Collector {
                 });
                 return { skipped: true, ts, rawValue, value: null, stringValue: null, reason: 'unsupported' };
             }
-            stringValue = this._coerceStringValue(rawValue);
+            stringValue = this._coerceStringValue(rawValue, node);
             if (stringValue === null) {
                 this._warnRepeated(this._nodeWarnKey('unsupported-string-empty', node), "unsupported empty value for string column", {
                     nodeId: node.nodeId,
@@ -346,7 +400,7 @@ class Collector {
             numericValue = this._normalizeValue(rawValue, node);
             storedValue = numericValue;
         } else if (this._stringValueColumn) {
-            stringValue = this._coerceStringValue(rawValue);
+            stringValue = this._coerceStringValue(rawValue, node);
             if (stringValue === null) {
                 this._warnRepeated(this._nodeWarnKey('unsupported-string-empty', node), "unsupported empty value for string column", {
                     nodeId: node.nodeId,
@@ -435,6 +489,7 @@ class Collector {
             this._valueColumnFamily = this._dbStream.valueColumnFamily || null;
             this._valueColumnType = this._dbStream.valueColumnType || null;
             this._stringValueColumnType = this._dbStream.stringValueColumnType || null;
+            this._stringValueColumnLength = this._dbStream.stringValueColumnLength || 0;
             this._primaryColumnName = this._dbStream.primaryColumnName || 'NAME';
             this._baseTimeColumnName = this._dbStream.baseTimeColumnName || 'TIME';
             const openedFields = {
@@ -481,6 +536,7 @@ class Collector {
             this._valueColumnFamily = this._dbStream.valueColumnFamily || null;
             this._valueColumnType = this._dbStream.valueColumnType || null;
             this._stringValueColumnType = this._dbStream.stringValueColumnType || null;
+            this._stringValueColumnLength = this._dbStream.stringValueColumnLength || 0;
             this._primaryColumnName = this._dbStream.primaryColumnName || 'NAME';
             this._baseTimeColumnName = this._dbStream.baseTimeColumnName || 'TIME';
             const openedFields = {
@@ -527,6 +583,7 @@ class Collector {
         this._valueColumnFamily = null;
         this._valueColumnType = null;
         this._stringValueColumnType = null;
+        this._stringValueColumnLength = 0;
         this._primaryColumnName = 'NAME';
         this._baseTimeColumnName = 'TIME';
         if (wasOpen) {

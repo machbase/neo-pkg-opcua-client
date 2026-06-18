@@ -61,6 +61,7 @@ class MockMachbaseStream {
         this.valueColumnFamily = 'NUMERIC';
         this.valueColumnType = 'DOUBLE';
         this.stringValueColumnType = null;
+        this.stringValueColumnLength = 0;
         this.stringOnly = false;
     }
     open(_client, _table, valueColumn, stringValueColumn, options) {
@@ -84,8 +85,10 @@ class MockMachbaseStream {
         if (this.openedStringValueColumn) {
             this.columnNames.push(this.openedStringValueColumn);
             this.stringValueColumnType = 'VARCHAR(400)';
+            this.stringValueColumnLength = this.stringValueColumnLength || 400;
         } else {
             this.stringValueColumnType = null;
+            this.stringValueColumnLength = 0;
         }
         return null;
     }
@@ -352,6 +355,29 @@ runner.run('Collector.collect — stringValueColumn', {
         t.assertEqual(dbStream.appended[0].value, 0, 'numeric column should use placeholder 0');
         t.assertEqual(dbStream.appended[0].stringValue, '12001');
         clearInterval(c.timer);
+    },
+
+    'string values are truncated to string column byte length': (t) => {
+        const config = {
+            ...baseConfig,
+            stringValueColumn: 'TEXT_VALUE',
+            opcua: {
+                ...baseConfig.opcua,
+                nodes: [{ nodeId: 'ns=1;s=Text', name: 'sensor.text' }],
+            },
+        };
+        const dbStream = new MockMachbaseStream();
+        dbStream.stringValueColumnLength = 5;
+        const logger = new MockLogger();
+        const { c, dbStream: openedStream } = makeCollector(config, { dbStream, logger });
+        c.start();
+        c.opcua.readResult = [{ value: 'abc한def', sourceTimestamp: Date.now() }];
+        openedStream.appended = [];
+        c.collect();
+        t.assertEqual(openedStream.appended.length, 1, 'string row should be appended');
+        t.assertEqual(openedStream.appended[0].stringValue, 'abc', 'string should be truncated by utf-8 byte length');
+        t.assert(logger.entries.some((entry) => entry.stage === 'string value truncated'), 'truncation should be logged');
+        clearTimeout(c.timer);
     },
 
     'unsupported string values are skipped without auxiliary column': (t) => {

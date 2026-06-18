@@ -356,7 +356,7 @@ runner.run('Handler: collectorPost', {
         t.assertEqual(created.table, 'AUTO_TAG');
         t.assertEqual(created.options.rollup, undefined, 'rollup should not be enabled');
         t.assertEqual(created.schema.columns[0].name, 'NAME');
-        t.assertEqual(created.schema.columns[0].length, longName.length);
+        t.assertEqual(created.schema.columns[0].length, 95);
         t.assertEqual(created.schema.columns[2].name, 'VALUE');
         t.assertEqual(created.schema.columns[2].flag, 0x2000000);
         t.assertEqual(created.schema.columns[3].name, 'STR_VALUE');
@@ -367,6 +367,90 @@ runner.run('Handler: collectorPost', {
         t.assertEqual(mockCGI._configs['col-a'].stringOnly, false);
         t.assertEqual(mockCGI._configs['col-a'].autoCreateTable, undefined);
         t.assert(mockService._installed['col-a'], 'service should be installed');
+    },
+
+    'rejects existing table when tag name exceeds primary column length': (t) => {
+        const H = makeHandler();
+        mockCGI._servers['server-a'] = { host: 'h', port: 5656, user: 'SYS', password: 'pw' };
+        mockMachbaseClient.tableMeta = { ID: 10, TYPE: 6, NAME: 'TAG' };
+        mockMachbaseClient.columns = [
+            { NAME: 'NAME', TYPE: 5, ID: 0, FLAG: 0x8000000, LENGTH: 5 },
+            { NAME: 'TIME', TYPE: 6, ID: 1, FLAG: 0x1000000, LENGTH: 8 },
+            { NAME: 'VALUE', TYPE: 20, ID: 2, FLAG: 0x2000000, LENGTH: 8 },
+        ];
+
+        let result;
+        H.collectorPost('col-a', {
+            db: 'server-a',
+            dbTable: 'TAG',
+            opcua: {
+                interval: 1000,
+                endpoint: 'opc.tcp://h:4840',
+                nodes: [{ nodeId: 'ns=1;s=too-long', name: 'TOO_LONG' }],
+            },
+        }, (r) => { result = r; });
+
+        t.assert(!result.ok, 'should not be ok');
+        t.assert(result.reason.includes('tag name length 8 exceeds NAME VARCHAR(5)'), 'reason should explain tag name length');
+        t.assert(!mockCGI._configs['col-a'], 'config should not be written');
+        t.assert(!mockCGI._opcuaServers['col-a-opcua'], 'auto-created opcua server should be rolled back');
+    },
+
+    'allows long node names in JSON mode when collector name fits primary column': (t) => {
+        const H = makeHandler();
+        mockCGI._servers['server-a'] = { host: 'h', port: 5656, user: 'SYS', password: 'pw' };
+        mockMachbaseClient.tableMeta = { ID: 10, TYPE: 6, NAME: 'TAG' };
+        mockMachbaseClient.columns = [
+            { NAME: 'NAME', TYPE: 5, ID: 0, FLAG: 0x8000000, LENGTH: 10 },
+            { NAME: 'TIME', TYPE: 6, ID: 1, FLAG: 0x1000000, LENGTH: 8 },
+            { NAME: 'PAYLOAD', TYPE: 61, ID: 2, FLAG: 0, LENGTH: 0 },
+        ];
+
+        let result;
+        H.collectorPost('col-a', {
+            db: 'server-a',
+            dbTable: 'TAG',
+            valueColumn: 'PAYLOAD',
+            opcua: {
+                interval: 1000,
+                endpoint: 'opc.tcp://h:4840',
+                nodes: [{ nodeId: 'ns=1;s=long', name: 'NODE_' + 'X'.repeat(100) }],
+            },
+        }, (r) => { result = r; });
+
+        t.assert(result.ok, 'should be ok');
+        t.assert(mockCGI._configs['col-a'], 'config should be written');
+    },
+
+    'update rejects existing table when tag name exceeds primary column length': (t) => {
+        const H = makeHandler();
+        mockCGI._configs['col-a'] = {
+            db: 'server-a',
+            dbTable: 'TAG',
+            opcua: { server: 'opc-main', nodes: [{ nodeId: 'ns=1;s=a', name: 'OK' }] },
+        };
+        mockCGI._opcuaServers['opc-main'] = { endpoint: 'opc.tcp://profile:4840' };
+        mockCGI._servers['server-a'] = { host: 'h', port: 5656, user: 'SYS', password: 'pw' };
+        mockMachbaseClient.tableMeta = { ID: 10, TYPE: 6, NAME: 'TAG' };
+        mockMachbaseClient.columns = [
+            { NAME: 'NAME', TYPE: 5, ID: 0, FLAG: 0x8000000, LENGTH: 5 },
+            { NAME: 'TIME', TYPE: 6, ID: 1, FLAG: 0x1000000, LENGTH: 8 },
+            { NAME: 'VALUE', TYPE: 20, ID: 2, FLAG: 0x2000000, LENGTH: 8 },
+        ];
+
+        let result;
+        H.collectorPut('col-a', {
+            db: 'server-a',
+            dbTable: 'TAG',
+            opcua: {
+                server: 'opc-main',
+                nodes: [{ nodeId: 'ns=1;s=too-long', name: 'TOO_LONG' }],
+            },
+        }, (r) => { result = r; });
+
+        t.assert(!result.ok, 'should not be ok');
+        t.assert(result.reason.includes('tag name length 8 exceeds NAME VARCHAR(5)'), 'reason should explain tag name length');
+        t.assertEqual(mockCGI._configs['col-a'].opcua.nodes[0].name, 'OK', 'existing config should remain unchanged');
     },
 
     'auto-create fails when current user already has the table': (t) => {

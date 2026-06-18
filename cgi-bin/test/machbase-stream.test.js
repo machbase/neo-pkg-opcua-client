@@ -78,6 +78,7 @@ runner.run("MachbaseStream", {
         t.assertEqual(stream.stringValueColumnName, "TEXT_VALUE");
         t.assertEqual(stream.stringValueColumnFamily, "VARCHAR");
         t.assertEqual(stream.stringValueColumnType, "VARCHAR(400)");
+        t.assertEqual(stream.stringValueColumnLength, 400);
     },
 
     "open() supports stringOnly with only VARCHAR value storage": (t) => {
