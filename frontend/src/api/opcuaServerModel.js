@@ -42,6 +42,10 @@ function normalizeReadBatchSize(value, capabilities) {
     return limit ? Math.min(batchSize, limit) : batchSize;
 }
 
+export function resolveReadBatchSizeAfterConnection(currentValue, capabilities) {
+    return normalizeReadBatchSize(currentValue, normalizeCapabilities(capabilities || DEFAULT_CAPABILITIES));
+}
+
 export function mapOpcuaServerListItem(item) {
     const config = item?.config || {};
     const security = config.security || {};

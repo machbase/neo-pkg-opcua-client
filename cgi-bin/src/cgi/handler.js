@@ -2046,48 +2046,24 @@ function parseJsonObject(value) {
   }
 }
 
-function normalizeAssetTreeNodes(nodes, schema, depth = 0) {
-  if (!Array.isArray(nodes) || depth >= schema.length) return null;
-  const normalized = [];
-  for (const node of nodes) {
-    if (!node || typeof node !== 'object' || Array.isArray(node)) return null;
-    const key = normalizeText(node.key);
-    const value = normalizeText(node.value);
-    if (!key || !value || key !== schema[depth]) return null;
-    const children = normalizeAssetTreeNodes(node.children || [], schema, depth + 1);
-    if (!children) return null;
-    normalized.push({ key, value, children });
-  }
-  return normalized;
-}
-
 function normalizeAssetHierarchy(value) {
   const parsed = parseJsonObject(value);
-  if (!parsed || !Array.isArray(parsed.schema) || !Array.isArray(parsed.tree)) return null;
+  if (!parsed || !Array.isArray(parsed.schema)) return null;
   const column = normalizeText(parsed.column) || 'asset';
   const schema = parsed.schema.map((key) => normalizeText(key)).filter(Boolean);
   if (schema.length !== parsed.schema.length || schema.length === 0) return null;
   if (new Set(schema).size !== schema.length) return null;
-  const tree = normalizeAssetTreeNodes(parsed.tree, schema);
-  if (!tree || tree.length === 0) return null;
+  const tree = Array.isArray(parsed.tree) ? parsed.tree : null;
+  if (!tree) return null;
   return { column, schema, tree };
 }
 
-function findAssetHierarchy(row, columns) {
+function findAssetHierarchy(row) {
   if (!row) return null;
-  const metadataColumns = new Set((columns || [])
-    .filter((col) => Number(col.FLAG || col.flag || 0) & FLAG_METADATA)
-    .map((col) => normalizeText(col.NAME || col.name).toUpperCase())
-    .filter(Boolean));
-
-  for (const [key, value] of Object.entries(row || {})) {
-    const columnName = normalizeText(key).toUpperCase();
-    if (!metadataColumns.has(columnName)) continue;
+  for (const value of Object.values(row || {})) {
     if (typeof value !== 'string' || !value.trim().startsWith('{')) continue;
     const hierarchy = normalizeAssetHierarchy(value);
     if (!hierarchy) continue;
-    const hierarchyColumn = normalizeText(hierarchy.column).toUpperCase();
-    if (!metadataColumns.has(hierarchyColumn)) continue;
     return hierarchy;
   }
 
@@ -2222,9 +2198,11 @@ function dbTableTags(db, params, reply) {
     const tagMetaTable = buildTagMetaTableRef(req);
     const columns = client.selectColumnsByTableId(meta.ID);
     const hierarchyRows = client.query(`SELECT * FROM ${tagMetaTable} WHERE NAME = ?`, [HIERARCHY_TAG_NAME]);
-    const assetHierarchy = findAssetHierarchy(hierarchyRows && hierarchyRows[0], columns);
-    const assetColumn = findMetadataColumnName(columns, assetHierarchy && assetHierarchy.column);
-    const rows = client.query(`SELECT _ID, NAME${assetColumn ? `, ${assetColumn}` : ''} FROM ${tagMetaTable} ORDER BY NAME`);
+    const assetHierarchy = findAssetHierarchy(hierarchyRows && hierarchyRows[0]);
+    const assetColumn = assetHierarchy ? normalizeText(assetHierarchy.column) : '';
+    const rows = client.query(assetHierarchy
+      ? `SELECT * FROM ${tagMetaTable} ORDER BY NAME`
+      : `SELECT _ID, NAME${assetColumn ? `, ${assetColumn}` : ''} FROM ${tagMetaTable} ORDER BY NAME`);
     const tagMeta = mapTagMetaResponse(rows, assetColumn, assetHierarchy);
     reply({
       ok: true,

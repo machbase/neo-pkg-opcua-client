@@ -270,7 +270,7 @@ test("hasAssetHierarchy returns true for valid asset hierarchy even with configu
 
     assert.equal(hasAssetHierarchy(assetHierarchy), true);
     assert.equal(hasAssetHierarchy(null), false);
-    assert.equal(hasAssetHierarchy({ schema: ["country"], tree: [] }), false);
+    assert.equal(hasAssetHierarchy({ schema: ["country"], tree: [] }), true);
 });
 
 test("buildAssetRows renders hierarchy folders and matching tag leaves", () => {

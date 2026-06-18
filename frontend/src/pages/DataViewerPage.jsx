@@ -936,7 +936,7 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
                                         className={`data-viewer-tag-tab${activeTagTab === "asset" ? " is-active" : ""}`}
                                         onClick={() => setActiveTagTab("asset")}
                                     >
-                                        Asset
+                                        Hierarchy
                                     </button>
                                 </div>
                             )}
