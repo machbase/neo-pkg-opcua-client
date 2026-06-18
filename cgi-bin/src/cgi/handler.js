@@ -279,11 +279,17 @@ function findUserId(client, userName) {
     throw new Error('db user is required');
   }
   const users = client.selectUsers();
-  const found = users.find((u) => String(u.NAME || '').toUpperCase() === normalizedUser);
+  const found = findUserRow(users, normalizedUser);
   if (!found) {
     throw new Error(`user '${normalizedUser}' not found`);
   }
   return found.USER_ID;
+}
+
+function findUserRow(users, userName) {
+  const normalizedUser = String(userName || '').trim().toUpperCase();
+  if (!normalizedUser) return null;
+  return (users || []).find((u) => String(u.NAME || '').toUpperCase() === normalizedUser) || null;
 }
 
 function autoCreateTableNameLength(config) {
@@ -1850,7 +1856,7 @@ function dbTableList(db, reply) {
     client.connect();
     const users = client.selectUsers();
     if (db.user) {
-      const found = users.find((u) => u.NAME === db.user);
+      const found = findUserRow(users, db.user);
       if (!found) {
         reply({ ok: false, reason: `user '${db.user}' not found` });
         return;
@@ -1900,7 +1906,7 @@ function dbTableColumns(db, table, reply) {
     let userId = null;
     const lookupUser = tableUser || db.user;
     if (lookupUser) {
-      const found = users.find((u) => u.NAME === lookupUser);
+      const found = findUserRow(users, lookupUser);
       if (!found) {
         reply({ ok: false, reason: `user '${lookupUser}' not found` });
         return;

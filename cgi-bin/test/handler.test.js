@@ -1264,6 +1264,19 @@ runner.run('Handler: dbTableList', {
         t.assert(result.reason.includes('not found'));
     },
 
+    'matches db user case-insensitively': (t) => {
+        const H = makeHandler();
+        mockMachbaseClient.users = [{ USER_ID: 1, NAME: 'SYS' }];
+        mockMachbaseClient.tables = [
+            { NAME: 'TAG1', TYPE: 6, ID: 10, USER_ID: 1 },
+        ];
+        let result;
+        H.dbTableList({ host: 'h', port: 5656, user: 'sys', password: 'pw' }, (r) => { result = r; });
+        t.assert(result.ok, 'should be ok');
+        t.assertEqual(result.data.length, 1);
+        t.assertEqual(result.data[0].user, 'SYS');
+    },
+
     'returns null user when USER_ID has no match': (t) => {
         const H = makeHandler();
         mockMachbaseClient.users = [{ USER_ID: 1, NAME: 'SYS' }];
@@ -1298,6 +1311,21 @@ runner.run('Handler: dbTableColumns', {
         t.assert(result.data.columns[1].basetime, 'TIME should be basetime');
         t.assert(result.data.columns[2].summarized, 'VALUE should be summarized');
         t.assert(mockMachbaseClient.closed, 'client should be closed');
+    },
+
+    'matches db user case-insensitively for columns': (t) => {
+        const H = makeHandler();
+        mockMachbaseClient.users = [{ USER_ID: 1, NAME: 'SYS' }];
+        mockMachbaseClient.tableMeta = { ID: 10, TYPE: 6, NAME: 'TAG' };
+        mockMachbaseClient.columns = [
+            { NAME: 'NAME', TYPE: 5, ID: 0, FLAG: 0x8000000, LENGTH: 100 },
+            { NAME: 'TIME', TYPE: 6, ID: 1, FLAG: 0x1000000, LENGTH: 0 },
+            { NAME: 'VALUE', TYPE: 20, ID: 2, FLAG: 0x2000000, LENGTH: 0 },
+        ];
+        let result;
+        H.dbTableColumns({ host: 'h', port: 5656, user: 'sys', password: 'p' }, 'TAG', (r) => { result = r; });
+        t.assert(result.ok, 'should be ok');
+        t.assertEqual(result.data.table, 'TAG');
     },
 
     'returns error when user not found': (t) => {
