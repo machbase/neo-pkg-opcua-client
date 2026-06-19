@@ -17,9 +17,6 @@ function _enumValue(group, key, label) {
 }
 
 function _authModeValue(authMode) {
-    if (authMode === "UserName") {
-        return undefined;
-    }
     if (!opcua.AuthMode) {
         return undefined;
     }

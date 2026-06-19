@@ -131,7 +131,7 @@ runner.run('OpcuaClient read batching', {
         ]);
     },
 
-    'passes username credentials without forcing UserName authMode': (t) => {
+    'passes UserName authMode with username credentials': (t) => {
         resetNativeMock();
         const client = makeClient({
             security: {
@@ -144,7 +144,7 @@ runner.run('OpcuaClient read batching', {
             },
         });
         const nativeClient = MockNativeClient.instances[0];
-        t.assertEqual(nativeClient.options.authMode, undefined);
+        t.assertEqual(nativeClient.options.authMode, require.cache['opcua'].exports.AuthMode.UserName);
         t.assertEqual(nativeClient.options.username, 'test');
         t.assertEqual(nativeClient.options.password, 'machbasemachbase');
         client.close();
