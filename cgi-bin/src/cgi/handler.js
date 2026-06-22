@@ -2119,9 +2119,34 @@ function findMetadataColumnName(columns, requestedName) {
   return found ? normalizeText(found.NAME || found.name) : '';
 }
 
+function parseTagDataNames(params) {
+  const rawNames = params && params.names;
+  const names = [];
+
+  if (Array.isArray(rawNames)) {
+    for (const value of rawNames) {
+      const name = String(value || '').trim();
+      if (name) names.push(name);
+    }
+  } else if (rawNames !== undefined && rawNames !== null) {
+    for (const value of String(rawNames).split(',')) {
+      const name = value.trim();
+      if (name) names.push(name);
+    }
+  }
+
+  if (names.length === 0) {
+    const legacyName = String((params && params.name) || '').trim();
+    if (legacyName) names.push(legacyName);
+  }
+
+  return names;
+}
+
 function buildTagDataWhere(params, primaryColumn, timeColumn) {
-  const clauses = [`${primaryColumn} = ?`];
-  const values = [params.name];
+  const placeholders = params.names.map(() => '?').join(', ');
+  const clauses = [`${primaryColumn} IN (${placeholders})`];
+  const values = params.names.slice();
   if (params.from) {
     clauses.push(`${timeColumn} >= ?`);
     values.push(params.from);
@@ -2138,9 +2163,11 @@ function buildTagDataWhere(params, primaryColumn, timeColumn) {
 
 function parseTagDataRequest(params) {
   const table = parseQualifiedTagTable(params && params.table);
+  const names = parseTagDataNames(params);
   const req = {
     ...table,
-    name: String((params && params.name) || '').trim(),
+    name: names[0] || '',
+    names,
     primaryColumn: normalizeIdentifier((params && params.primaryColumn) || 'NAME', 'primaryColumn'),
     timeColumn: normalizeIdentifier((params && params.timeColumn) || 'TIME', 'timeColumn'),
     valueColumn: normalizeIdentifier((params && params.valueColumn) || 'VALUE', 'valueColumn'),
@@ -2231,6 +2258,7 @@ function dbTableTags(db, params, reply) {
  * @param {{
  *   table: string,
  *   name: string,
+ *   names?: string|string[],
  *   valueColumn?: string,
  *   stringValueColumn?: string,
  *   primaryColumn?: string,
@@ -2264,7 +2292,7 @@ function dbTableData(db, params, reply) {
     const orderDir = req.direction === 'oldest' ? 'ASC' : 'DESC';
     const dataRows = client.query(
       `SELECT /*+ ${scan}(${req.tableRef}) */ * ` +
-      `FROM ${req.tableRef} WHERE ${where.sql} ORDER BY ${req.timeColumn} ${orderDir} LIMIT ?`,
+      `FROM ${req.tableRef} WHERE ${where.sql} ORDER BY ${req.timeColumn} ${orderDir}, ${req.primaryColumn} ASC LIMIT ?`,
       [...where.values, fetchLimit]
     );
     const rows = (dataRows || []).slice(offset, offset + req.pageSize).map((row) => normalizeTagDataRow(row, req));
@@ -2274,6 +2302,7 @@ function dbTableData(db, params, reply) {
       data: {
         table: req.tableRef,
         name: req.name,
+        names: req.names,
         direction: req.direction,
         page: req.page,
         pageSize: req.pageSize,
@@ -2303,7 +2332,7 @@ function dbTableDataTotal(db, params, reply) {
 
     const where = buildTagDataWhere(req, req.primaryColumn, req.timeColumn);
     let total = null;
-    if (!req.from && !req.to) {
+    if (req.names.length === 1 && !req.from && !req.to) {
       try {
         const rows = client.query(
           `SELECT ROW_COUNT FROM ${buildTagStatViewRef(req)} WHERE NAME = ?`,
@@ -2328,6 +2357,7 @@ function dbTableDataTotal(db, params, reply) {
       data: {
         table: req.tableRef,
         name: req.name,
+        names: req.names,
         total,
         pageSize: req.pageSize,
         lastPage: Math.max(1, Math.ceil(total / req.pageSize)),

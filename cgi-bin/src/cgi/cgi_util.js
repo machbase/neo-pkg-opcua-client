@@ -384,14 +384,26 @@ class CGI {
 
   /**
    * QUERY_STRING 환경변수를 파싱하여 키-값 객체로 반환한다.
-   * @returns {Record<string, string>}
+   * 기본 동작은 기존 CGI API와 같게 반복 키의 마지막 값을 사용한다.
+   * @param {{ arrayKeys?: string[] }} [options]
+   * @returns {Record<string, string|string[]>}
    */
-  static parseQuery() {
+  static parseQuery(options = {}) {
     const qs = getEnv('QUERY_STRING') || '';
     const result = {};
+    const arrayKeys = new Set(Array.isArray(options.arrayKeys) ? options.arrayKeys : []);
     for (const part of qs.split('&')) {
       const [k, v] = part.split('=');
-      if (k) result[decodeQueryComponent(k)] = decodeQueryComponent(v || '');
+      if (k) {
+        const key = decodeQueryComponent(k);
+        const value = decodeQueryComponent(v || '');
+        if (arrayKeys.has(key) && Object.prototype.hasOwnProperty.call(result, key)) {
+          if (Array.isArray(result[key])) result[key].push(value);
+          else result[key] = [result[key], value];
+        } else {
+          result[key] = value;
+        }
+      }
     }
     return result;
   }

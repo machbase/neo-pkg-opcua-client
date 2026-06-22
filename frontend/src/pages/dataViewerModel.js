@@ -472,6 +472,55 @@ export function defaultSelectedTag(rows = []) {
     return rows.find((row) => row.type === "tag")?.tag || null;
 }
 
+function cleanTagName(name) {
+    return String(name ?? "").trim();
+}
+
+function getSelectableTagNames(rows = []) {
+    const names = [];
+    const seen = new Set();
+
+    for (const row of rows) {
+        if (row?.type !== "tag" || row.selectable === false) continue;
+        const name = cleanTagName(row?.tag?.name);
+        if (!name || seen.has(name)) continue;
+        seen.add(name);
+        names.push(name);
+    }
+
+    return names;
+}
+
+export function normalizeSelectedTagNames(selectedNames = [], selectableRows = []) {
+    const selectableNames = getSelectableTagNames(selectableRows);
+    if (selectableNames.length === 0) return [];
+
+    const selectable = new Set(selectableNames);
+    const seen = new Set();
+    const normalized = (Array.isArray(selectedNames) ? selectedNames : [])
+        .map(cleanTagName)
+        .filter((name) => {
+            if (!name || !selectable.has(name) || seen.has(name)) return false;
+            seen.add(name);
+            return true;
+        });
+
+    return normalized.length > 0 ? normalized : [selectableNames[0]];
+}
+
+export function toggleSelectedTagName(selectedNames = [], tagName = "") {
+    const name = cleanTagName(tagName);
+    const current = (Array.isArray(selectedNames) ? selectedNames : [])
+        .map(cleanTagName)
+        .filter(Boolean);
+
+    if (!name) return current;
+    if (current.includes(name)) {
+        return current.filter((selectedName) => selectedName !== name);
+    }
+    return [...current, name];
+}
+
 function pad(value, len = 2) {
     return String(value).padStart(len, "0");
 }

@@ -10,7 +10,7 @@ export function listTableTags({ server, table }) {
 export function queryTagData({
     server,
     table,
-    name,
+    names,
     valueColumn,
     stringValueColumn,
     direction,
@@ -22,7 +22,7 @@ export function queryTagData({
     const params = encodeDataViewerQuery({
         server,
         table,
-        name,
+        names,
         valueColumn,
         stringValueColumn,
         direction,
@@ -38,7 +38,7 @@ export function queryTagData({
 export function queryTagDataTotal({
     server,
     table,
-    name,
+    names,
     valueColumn,
     stringValueColumn,
     direction,
@@ -49,7 +49,7 @@ export function queryTagDataTotal({
     const params = encodeDataViewerQuery({
         server,
         table,
-        name,
+        names,
         includeTotal: "true",
         valueColumn,
         stringValueColumn,

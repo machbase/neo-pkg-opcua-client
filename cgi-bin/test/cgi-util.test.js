@@ -34,6 +34,20 @@ runner.run('CGI util', {
         });
     },
 
+    'parseQuery uses the last value for repeated keys by default': (t) => {
+        withQueryString('names=area%2C1&names=sensor.b', () => {
+            const query = CGI.parseQuery();
+            t.assertEqual(query.names, 'sensor.b');
+        });
+    },
+
+    'parseQuery preserves repeated array keys when requested': (t) => {
+        withQueryString('names=area%2C1&names=sensor.b', () => {
+            const query = CGI.parseQuery({ arrayKeys: ['names'] });
+            t.assertDeepEqual(query.names, ['area,1', 'sensor.b']);
+        });
+    },
+
     'resolveLogFilePath returns absolute log path': (t) => {
         const filePath = CGI.resolveLogFilePath('collector-a.log');
         t.assert(path.isAbsolute(filePath), 'path should be absolute');

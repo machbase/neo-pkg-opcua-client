@@ -19,10 +19,12 @@ import {
     getScanDirectionLabel,
     getVisibleTagRows,
     hasAssetHierarchy,
+    normalizeSelectedTagNames,
     QUICK_TIME_RANGE_GROUPS,
     resolveTimeRangeInput,
     resolveTagNodes,
     showsDataViewerTimeControls,
+    toggleSelectedTagName,
 } from "./dataViewerModel.js";
 
 test("buildDataViewerPath encodes collector id for route navigation", () => {
@@ -344,6 +346,34 @@ test("defaultSelectedTag returns the first selectable tag", () => {
     ]);
 
     assert.equal(defaultSelectedTag(rows).name, "Line1_Temperature");
+});
+
+test("normalizeSelectedTagNames keeps existing selected tags and drops missing tags", () => {
+    const rows = buildTagRows([
+        { name: "sensor.a" },
+        { name: "sensor.b" },
+        { name: "sensor.c" },
+    ]);
+
+    assert.deepEqual(
+        normalizeSelectedTagNames(["sensor.c", "sensor.missing", "sensor.a"], rows),
+        ["sensor.c", "sensor.a"]
+    );
+});
+
+test("normalizeSelectedTagNames selects the first selectable tag when none remain", () => {
+    const rows = buildTagRows([
+        { name: "sensor.a" },
+        { name: "sensor.b" },
+    ]);
+
+    assert.deepEqual(normalizeSelectedTagNames(["sensor.missing"], rows), ["sensor.a"]);
+    assert.deepEqual(normalizeSelectedTagNames([], []), []);
+});
+
+test("toggleSelectedTagName removes existing tags or appends new tags", () => {
+    assert.deepEqual(toggleSelectedTagName(["sensor.a", "sensor.b"], "sensor.a"), ["sensor.b"]);
+    assert.deepEqual(toggleSelectedTagName(["sensor.a"], "sensor.b"), ["sensor.a", "sensor.b"]);
 });
 
 test("resolveTagNodes falls back to DB tag names when collector nodes are empty", () => {

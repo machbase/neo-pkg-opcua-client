@@ -19,7 +19,6 @@ import {
     buildRawResultColumns,
     buildTagChartSeries,
     buildTagRows,
-    defaultSelectedTag,
     formatDataViewerAxisTime,
     formatDataViewerTime,
     formatTimeRangeInput,
@@ -30,9 +29,11 @@ import {
     getTimeZoneLabel,
     getVisibleTagRows,
     hasAssetHierarchy,
+    normalizeSelectedTagNames,
     resolveTimeRangeInput,
     resolveTagNodes,
     showsDataViewerTimeControls,
+    toggleSelectedTagName,
 } from "./dataViewerModel";
 
 if (typeof HighchartsBoost === "function") {
@@ -670,7 +671,7 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
     const [activeTagTab, setActiveTagTab] = useState("tags");
     const [tagFilter, setTagFilter] = useState("");
     const [collapsedTagFolders, setCollapsedTagFolders] = useState(() => new Set());
-    const [selectedTagName, setSelectedTagName] = useState("");
+    const [selectedTagNames, setSelectedTagNames] = useState([]);
     const [mode, setMode] = useState("raw");
     const [resultPage, setResultPage] = useState(1);
     const [range, setRange] = useState({ from: "", to: "" });
@@ -684,11 +685,9 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
     const [error, setError] = useState("");
     const [result, setResult] = useState({ rows: [], total: 0, page: 1, pageSize: RESULT_PAGE_SIZE });
     const [chartTimeRange, setChartTimeRange] = useState({ from: "", to: "" });
-
-    const selectedTag = useMemo(
-        () => nodes.find((node) => node.name === selectedTagName) || null,
-        [nodes, selectedTagName]
-    );
+    const rowsRequestRef = useRef(0);
+    const endPageRequestRef = useRef(0);
+    const selectedTagKey = selectedTagNames.join("\n");
 
     useEffect(() => {
         let alive = true;
@@ -742,19 +741,24 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
     }, [activeTagTab, showAssetTab]);
 
     useEffect(() => {
-        const fallback = defaultSelectedTag(tagRows) || defaultSelectedTag(assetRows);
-        if (!selectedTagName || !selectableRows.some((row) => row.tag.name === selectedTagName)) {
-            setSelectedTagName(fallback?.name || "");
+        const next = normalizeSelectedTagNames(selectedTagNames, selectableRows);
+        if (next.join("\n") !== selectedTagKey) {
+            rowsRequestRef.current += 1;
+            endPageRequestRef.current += 1;
+            setSelectedTagNames(next);
+            setResultPage(1);
         }
-    }, [assetRows, selectableRows, selectedTagName, tagRows]);
+    }, [selectableRows, selectedTagKey, selectedTagNames]);
 
     useEffect(() => {
         setCollapsedTagFolders((prev) => (prev.size === 0 ? prev : new Set()));
     }, [selectedCollectorId, activeTagRows]);
 
     useEffect(() => {
+        rowsRequestRef.current += 1;
+        endPageRequestRef.current += 1;
         setResultPage(1);
-    }, [selectedTagName, range.from, range.to, selectedCollectorId]);
+    }, [selectedCollectorId]);
 
     const filteredTagRows = useMemo(() => {
         const q = tagFilter.trim().toLowerCase();
@@ -773,7 +777,7 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
         () => getVisibleTagRows(filteredTagRows, collapsedTagFolders),
         [collapsedTagFolders, filteredTagRows]
     );
-    const canQuery = Boolean(dbServer && dbTable && selectedTagName);
+    const canQuery = Boolean(dbServer && dbTable && selectedTagNames.length > 0);
     const toggleTagFolder = useCallback((key) => {
         setCollapsedTagFolders((prev) => {
             const next = new Set(prev);
@@ -782,11 +786,20 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
             return next;
         });
     }, []);
+    const handleTagSelectionChange = useCallback((tagName) => {
+        rowsRequestRef.current += 1;
+        endPageRequestRef.current += 1;
+        setSelectedTagNames((current) => toggleSelectedTagName(current, tagName));
+        setResultPage(1);
+    }, []);
 
     const fetchRows = useCallback(async () => {
+        const requestId = rowsRequestRef.current + 1;
+        rowsRequestRef.current = requestId;
         if (!canQuery) {
             setResult({ rows: [], total: 0, page: 1, pageSize: RESULT_PAGE_SIZE });
             setChartTimeRange({ from: "", to: "" });
+            setLoading(false);
             return;
         }
         setLoading(true);
@@ -796,17 +809,19 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
             const queryFrom = resolveTimeRangeInput(range.from, baseDate);
             const queryTo = resolveTimeRangeInput(range.to, baseDate);
             if (queryFrom === null || queryTo === null) {
+                if (rowsRequestRef.current !== requestId) return;
                 setError("Please check the entered time.");
                 setResult({ rows: [], total: 0, page: resultPage, pageSize: RESULT_PAGE_SIZE });
                 setChartTimeRange({ from: "", to: "" });
                 return;
             }
+            if (rowsRequestRef.current !== requestId) return;
             setChartTimeRange({ from: queryFrom || "", to: queryTo || "" });
 
             const data = await queryTagData({
                 server: dbServer,
                 table: dbTable,
-                name: selectedTagName,
+                names: selectedTagNames,
                 valueColumn,
                 stringValueColumn,
                 direction: backwardScan ? "latest" : "oldest",
@@ -815,17 +830,21 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
                 page: resultPage,
                 pageSize: RESULT_PAGE_SIZE,
             });
+            if (rowsRequestRef.current !== requestId) return;
             setResult(data || { rows: [], total: 0, page: resultPage, pageSize: RESULT_PAGE_SIZE });
         } catch (e) {
+            if (rowsRequestRef.current !== requestId) return;
             const message = e.reason || e.message || "Failed to load data";
             setError(message);
             notify(message, "error");
             setResult({ rows: [], total: 0, page: resultPage, pageSize: RESULT_PAGE_SIZE });
             setChartTimeRange({ from: "", to: "" });
         } finally {
-            setLoading(false);
+            if (rowsRequestRef.current === requestId) {
+                setLoading(false);
+            }
         }
-    }, [backwardScan, canQuery, dbServer, dbTable, notify, range.from, range.to, resultPage, selectedTagName, stringValueColumn, valueColumn]);
+    }, [backwardScan, canQuery, dbServer, dbTable, notify, range.from, range.to, resultPage, selectedTagNames, stringValueColumn, valueColumn]);
 
     useEffect(() => {
         fetchRows();
@@ -848,11 +867,22 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
         hiddenKeys: showAssetTab ? [assetHierarchy?.column || "asset"] : [],
     });
     const handleScanDirectionChange = (nextBackwardScan) => {
+        rowsRequestRef.current += 1;
+        endPageRequestRef.current += 1;
         setBackwardScan(nextBackwardScan);
         setResultPage(1);
     };
+    const handleRangeApply = (next) => {
+        rowsRequestRef.current += 1;
+        endPageRequestRef.current += 1;
+        setRange(next);
+        setResultPage(1);
+        setRangeOpen(false);
+    };
     const handleEndPage = async () => {
         if (!canQuery || endLoading) return;
+        const requestId = endPageRequestRef.current + 1;
+        endPageRequestRef.current = requestId;
         setEndLoading(true);
         setError("");
         try {
@@ -860,13 +890,14 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
             const queryFrom = resolveTimeRangeInput(range.from, baseDate);
             const queryTo = resolveTimeRangeInput(range.to, baseDate);
             if (queryFrom === null || queryTo === null) {
+                if (endPageRequestRef.current !== requestId) return;
                 setError("Please check the entered time.");
                 return;
             }
             const data = await queryTagDataTotal({
                 server: dbServer,
                 table: dbTable,
-                name: selectedTagName,
+                names: selectedTagNames,
                 valueColumn,
                 stringValueColumn,
                 direction: backwardScan ? "latest" : "oldest",
@@ -874,14 +905,18 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
                 to: queryTo,
                 pageSize: RESULT_PAGE_SIZE,
             });
+            if (endPageRequestRef.current !== requestId) return;
             const lastPage = Number(data?.lastPage || 1);
             setResultPage(Number.isFinite(lastPage) ? Math.max(1, Math.floor(lastPage)) : 1);
         } catch (e) {
+            if (endPageRequestRef.current !== requestId) return;
             const message = e.reason || e.message || "Failed to calculate end page";
             setError(message);
             notify(message, "error");
         } finally {
-            setEndLoading(false);
+            if (endPageRequestRef.current === requestId) {
+                setEndLoading(false);
+            }
         }
     };
 
@@ -969,7 +1004,7 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
                                             </div>
                                         );
                                     }
-                                    const checked = selectedTagName === row.tag.name;
+                                    const checked = selectedTagNames.includes(row.tag.name);
                                     return (
                                         <label
                                             key={row.key}
@@ -981,7 +1016,7 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
                                                 <input
                                                     type="checkbox"
                                                     checked={checked}
-                                                    onChange={() => setSelectedTagName(row.tag.name)}
+                                                    onChange={() => handleTagSelectionChange(row.tag.name)}
                                                     aria-label={`${row.tag.name} select`}
                                                 />
                                             </span>
@@ -1103,10 +1138,7 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
                 <TimeRangeModal
                     range={range}
                     onClose={() => setRangeOpen(false)}
-                    onApply={(next) => {
-                        setRange(next);
-                        setRangeOpen(false);
-                    }}
+                    onApply={handleRangeApply}
                 />
             )}
             {formatOpen && (

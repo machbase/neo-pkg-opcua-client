@@ -1,5 +1,6 @@
 /**
  * GET /cgi-bin/api/db/table/data?server=xxx&table=xxx&name=xxx
+ * GET /cgi-bin/api/db/table/data?server=xxx&table=xxx&names=xxx,yyy
  */
 
 const path = require('path');
@@ -9,7 +10,7 @@ const ROOT = _argv.slice(0, _argv.lastIndexOf('/cgi-bin/') + '/cgi-bin'.length);
 const { CGI } = require(path.join(ROOT, 'src', 'cgi', 'cgi_util.js'));
 const Handler = require(path.join(ROOT, 'src', 'cgi', 'handler.js'));
 
-const query = CGI.parseQuery();
+const query = CGI.parseQuery({ arrayKeys: ['names'] });
 const reply = (r) => CGI.reply(r);
 
 const handlers = {
@@ -22,7 +23,7 @@ const handlers = {
       reply({ ok: false, reason: 'table is required' });
       return;
     }
-    if (!query.name) {
+    if (!query.name && !query.names) {
       reply({ ok: false, reason: 'name is required' });
       return;
     }
@@ -34,6 +35,7 @@ const handlers = {
     const params = {
       table: query.table,
       name: query.name,
+      names: query.names,
       valueColumn: query.valueColumn,
       stringValueColumn: query.stringValueColumn,
       primaryColumn: query.primaryColumn,
