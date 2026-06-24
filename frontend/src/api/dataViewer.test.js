@@ -1,6 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
+import {
+    buildSeriesFromChartRows,
+    buildDataViewerChartQueryPath,
+    queryTagChartData,
+} from "./dataViewer.js";
 import { encodeDataViewerQuery } from "./dataViewerQuery.js";
 
 test("encodeDataViewerQuery uses percent encoding instead of plus for spaces", () => {
@@ -45,4 +50,112 @@ test("encodeDataViewerQuery preserves commas inside tag names", () => {
         }),
         "names=area%2C1"
     );
+});
+
+test("buildDataViewerChartQueryPath uses chart endpoint with repeated names", () => {
+    assert.equal(
+        buildDataViewerChartQueryPath({
+            server: "local",
+            table: "TAG",
+            names: ["sensor.a", "sensor.b"],
+            from: "2026-06-01T00:00:00.000Z",
+            to: "2026-06-01T01:00:00.000Z",
+        }),
+        "/cgi-bin/api/db/table/chart?server=local&table=TAG&names=sensor.a&names=sensor.b&from=2026-06-01T00%3A00%3A00.000Z&to=2026-06-01T01%3A00%3A00.000Z"
+    );
+});
+
+test("buildSeriesFromChartRows groups web query rows by tag name", () => {
+    assert.deepEqual(
+        buildSeriesFromChartRows([
+            ["2026-06-01T00:02:00.000Z", "sensor.a", 12.5],
+            ["2026-06-01T00:01:00.000Z", "sensor.a", 11.5],
+            ["2026-06-01T00:02:00.000Z", "sensor.b", null],
+        ]),
+        [
+            {
+                name: "sensor.a",
+                data: [
+                    [Date.parse("2026-06-01T00:01:00.000Z"), 11.5],
+                    [Date.parse("2026-06-01T00:02:00.000Z"), 12.5],
+                ],
+            },
+            {
+                name: "sensor.b",
+                data: [[Date.parse("2026-06-01T00:02:00.000Z"), null]],
+            },
+        ]
+    );
+});
+
+test("queryTagChartData loads chart rows through web api query instead of db tql", async () => {
+    const originalFetch = globalThis.fetch;
+    const calls = [];
+    globalThis.localStorage = {
+        getItem(key) {
+            return key === "accessToken" ? "test-token" : "";
+        },
+    };
+    globalThis.fetch = async (url, options = {}) => {
+        calls.push({ url: String(url), options });
+        if (String(url).includes("/cgi-bin/api/db/table/chart?")) {
+            return {
+                status: 200,
+                text: async () => JSON.stringify({
+                    ok: true,
+                    data: {
+                        type: "query",
+                        query: "SELECT TIME AS TIME, NAME AS NAME, VALUE AS VALUE FROM TAG",
+                        range: {},
+                    },
+                }),
+            };
+        }
+        if (String(url).startsWith("/web/api/query?")) {
+            return {
+                ok: true,
+                status: 200,
+                text: async () => JSON.stringify({
+                    success: true,
+                    data: {
+                        columns: ["TIME", "NAME", "VALUE"],
+                        rows: [
+                            ["2026-06-01T00:00:00.000Z", "sensor.a", 10],
+                            ["2026-06-01T00:01:00.000Z", "sensor.a", 11],
+                        ],
+                    },
+                }),
+            };
+        }
+        return {
+            ok: false,
+            status: 404,
+            text: async () => "not found",
+        };
+    };
+
+    try {
+        const result = await queryTagChartData({
+            server: "local",
+            table: "TAG",
+            names: ["sensor.a"],
+        });
+
+        assert.deepEqual(result.series, [
+            {
+                name: "sensor.a",
+                data: [
+                    [Date.parse("2026-06-01T00:00:00.000Z"), 10],
+                    [Date.parse("2026-06-01T00:01:00.000Z"), 11],
+                ],
+            },
+        ]);
+        assert.equal(calls.some((call) => call.url === "/db/tql"), false);
+        const queryCall = calls.find((call) => call.url.startsWith("/web/api/query?"));
+        assert.ok(queryCall, "should call web api query");
+        assert.equal(queryCall.options.headers.Authorization, "Bearer test-token");
+    } finally {
+        globalThis.fetch = originalFetch;
+        delete globalThis.localStorage;
+    }
 });

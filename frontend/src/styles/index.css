@@ -3904,22 +3904,91 @@ label.switch input:checked + .switch-slider::before {
     flex: 1;
     width: 100%;
     height: 100%;
-    min-height: 0;
+    min-height: 260px;
     padding: 0;
     background-color: #252525;
 }
 
+.data-viewer-chart-stack {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-12);
+    min-height: 0;
+}
+
+.data-viewer-chart-panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--spacing-12);
+    padding: var(--spacing-8) var(--spacing-12);
+    border-bottom: 1px solid var(--color-border);
+}
+
+.data-viewer-chart-panel-title {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+    gap: var(--spacing-8);
+    color: var(--color-on-surface);
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-semibold);
+}
+
+.data-viewer-chart-panel-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: var(--spacing-8);
+    min-width: 0;
+}
+
 .data-viewer-chart-card .table-card-body {
     display: flex;
+    min-height: 320px;
     overflow: hidden;
 }
 
-.data-viewer-chart > div,
-.data-viewer-chart .highcharts-container,
-.data-viewer-chart .highcharts-root {
+.data-viewer-chart canvas {
     width: 100%;
     height: 100%;
     min-height: 0;
+}
+
+.data-viewer-split-modal {
+    max-width: 520px;
+}
+
+.data-viewer-split-body {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-12);
+}
+
+.data-viewer-split-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-6);
+    max-height: 360px;
+    overflow: auto;
+}
+
+.data-viewer-split-row {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-8);
+    min-height: 36px;
+    padding: var(--spacing-6) var(--spacing-8);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-base);
+    color: var(--color-on-surface);
+    cursor: pointer;
+}
+
+.data-viewer-split-row:hover,
+.data-viewer-split-row.is-active {
+    border-color: var(--color-primary);
+    background-color: var(--color-primary-muted);
 }
 
 @media (max-width: 960px) {

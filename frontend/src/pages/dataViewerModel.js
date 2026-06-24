@@ -116,6 +116,71 @@ export function showsDataViewerTimeControls(mode) {
     return mode === "raw" || mode === "chart";
 }
 
+export function buildDataViewerChartGroups({
+    selectedTagNames = [],
+    splitGroups = [],
+    splitTagNames = [],
+    globalRange = { from: "", to: "" },
+    splitRanges = {},
+} = {}) {
+    const selected = [];
+    const selectedSet = new Set();
+    for (const name of selectedTagNames) {
+        const tagName = String(name || "").trim();
+        if (!tagName || selectedSet.has(tagName)) continue;
+        selectedSet.add(tagName);
+        selected.push(tagName);
+    }
+
+    const normalizedSplitGroups = [];
+    const splitSet = new Set();
+    const sourceSplitGroups = splitGroups.length > 0
+        ? splitGroups
+        : splitTagNames.map((name) => ({ id: `split:${name}`, tagNames: [name] }));
+
+    for (const group of sourceSplitGroups) {
+        const groupNames = [];
+        for (const name of group?.tagNames || []) {
+            const tagName = String(name || "").trim();
+            if (!tagName || !selectedSet.has(tagName) || splitSet.has(tagName)) continue;
+            splitSet.add(tagName);
+            groupNames.push(tagName);
+        }
+        if (groupNames.length === 0) continue;
+        const id = String(group?.id || `split:${groupNames.join("|")}`).trim();
+        normalizedSplitGroups.push({
+            id,
+            title: group?.title || groupNames.join(", "),
+            tagNames: groupNames,
+        });
+    }
+
+    const range = globalRange || { from: "", to: "" };
+    const groups = [];
+    const defaultNames = selected.filter((name) => !splitSet.has(name));
+    if (defaultNames.length > 0) {
+        groups.push({
+            id: "default",
+            title: "Selected Tags",
+            tagNames: defaultNames,
+            range,
+            split: false,
+        });
+    }
+
+    for (const group of normalizedSplitGroups) {
+        groups.push({
+            id: group.id,
+            title: group.title,
+            tagNames: group.tagNames,
+            range: splitRanges?.[group.id] || range,
+            split: true,
+        });
+    }
+
+    return groups;
+}
+
 export const QUICK_TIME_RANGE_GROUPS = [
     [
         { key: "now-5s", name: "Last 5 seconds", value: ["now-5s", "now"] },
@@ -465,6 +530,447 @@ export function buildDataViewerChartXAxis(points = [], range = {}) {
         min,
         max,
         tickInterval: chooseTimeTickInterval(max - min),
+    };
+}
+
+const PANEL_LEGEND_TOP = 6;
+const PANEL_GRID_BOTTOM = 20;
+const PANEL_GRID_SIDE = 35;
+const PANEL_NAVIGATOR_GRID_SIDE = 58;
+const PANEL_SLIDER_HEIGHT = 26;
+const PANEL_MAIN_TOP_WITH_LEGEND = 40;
+const PANEL_MAIN_HEIGHT = 178;
+const PANEL_MAIN_SERIES_ID_PREFIX = "main-series-";
+const PANEL_COLORS = ["#5470c6", "#91cc75", "#fac858", "#ee6666", "#73c0de", "#3ba272", "#fc8452", "#9a60b4", "#ea7ccc"];
+
+const AXIS_LINE_STYLE = { lineStyle: { color: "#323333" } };
+const AXIS_SPLIT_LINE_STYLE = { color: "#323333", width: 1 };
+const PANEL_AXIS_LABEL_STYLE = { color: "#f8f8f8", fontSize: 10 };
+const Y_AXIS_LABEL_STYLE = {
+    color: "#afb5bc",
+    fontSize: 10,
+    formatter: formatYAxisLabel,
+};
+
+function formatYAxisLabel(value) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return String(value);
+    const units = [
+        { value: 1_000_000_000_000, suffix: "T" },
+        { value: 1_000_000_000, suffix: "B" },
+        { value: 1_000_000, suffix: "M" },
+        { value: 1_000, suffix: "K" },
+    ];
+    const normalized = Object.is(numeric, -0) ? 0 : numeric;
+    const abs = Math.abs(normalized);
+    const unit = units.find((item) => abs >= item.value);
+    if (!unit) {
+        return new Intl.NumberFormat("en-US", { maximumFractionDigits: 4 }).format(normalized);
+    }
+    return `${new Intl.NumberFormat("en-US", { maximumFractionDigits: 1 }).format(normalized / unit.value)}${unit.suffix}`;
+}
+
+function getPanelRange(points, timeRange) {
+    const axis = buildDataViewerChartXAxis(points, timeRange);
+    const now = Date.now();
+    return {
+        startTime: Number.isFinite(axis.min) ? axis.min : now - 60 * 60 * 1000,
+        endTime: Number.isFinite(axis.max) ? axis.max : now,
+    };
+}
+
+export function getDataViewerChartRangeMs(points = [], timeRange = {}) {
+    return getPanelRange(points, timeRange);
+}
+
+function getPrimaryDataZoomEventItem(zoomData = {}) {
+    return Array.isArray(zoomData?.batch) ? zoomData.batch[0] : zoomData;
+}
+
+function hasExplicitDataZoomRange(dataZoomState = {}) {
+    return (
+        (dataZoomState.startValue !== undefined && dataZoomState.endValue !== undefined) ||
+        (dataZoomState.start !== undefined && dataZoomState.end !== undefined)
+    );
+}
+
+function getExplicitDataZoomRange(zoomData = {}) {
+    const startValue = zoomData.startValue;
+    const endValue = zoomData.endValue;
+
+    if (startValue === undefined || endValue === undefined) {
+        return undefined;
+    }
+
+    const startTime = Number(startValue);
+    const endTime = Number(endValue);
+
+    if (!Number.isFinite(startTime) || !Number.isFinite(endTime)) {
+        return undefined;
+    }
+
+    return {
+        startTime,
+        endTime,
+    };
+}
+
+export function extractDataViewerDataZoomRange(params = {}, currentRange = {}, axisRange = currentRange) {
+    const zoomData = getPrimaryDataZoomEventItem(params);
+    if (!zoomData) return undefined;
+
+    const explicitRange = getExplicitDataZoomRange(zoomData);
+    if (explicitRange) return explicitRange;
+
+    const axisStartTime = Number(axisRange.startTime);
+    const axisEndTime = Number(axisRange.endTime);
+    const axisSpan = axisEndTime - axisStartTime;
+    if (
+        typeof zoomData.start === "number" &&
+        typeof zoomData.end === "number" &&
+        Number.isFinite(axisSpan) &&
+        axisSpan > 0
+    ) {
+        return {
+            startTime: axisStartTime + (axisSpan * zoomData.start) / 100,
+            endTime: axisStartTime + (axisSpan * zoomData.end) / 100,
+        };
+    }
+
+    return undefined;
+}
+
+export function hasExplicitDataViewerDataZoomEventRange(params = {}) {
+    const zoomData = getPrimaryDataZoomEventItem(params);
+    return zoomData ? hasExplicitDataZoomRange(zoomData) : false;
+}
+
+export function isSameDataViewerChartRange(a = {}, b = {}) {
+    const aStart = Number(a.startTime);
+    const aEnd = Number(a.endTime);
+    const bStart = Number(b.startTime);
+    const bEnd = Number(b.endTime);
+    if (![aStart, aEnd, bStart, bEnd].every(Number.isFinite)) return false;
+    return Math.floor(aStart) === Math.floor(bStart) && Math.ceil(aEnd) === Math.ceil(bEnd);
+}
+
+function getRoundedAxisStep(axisRangeValue) {
+    const reference = Math.max(Math.abs(axisRangeValue) / 5, Number.MIN_VALUE);
+    const exponent = Math.floor(Math.log10(reference));
+    const magnitude = 10 ** exponent;
+    const fraction = reference / magnitude;
+    if (fraction <= 1) return magnitude;
+    if (fraction <= 2) return 2 * magnitude;
+    if (fraction <= 5) return 5 * magnitude;
+    return 10 * magnitude;
+}
+
+function getYAxisRange(series, panelRange) {
+    const values = [];
+    series.forEach((item) => {
+        (item.data || []).forEach(([x, y]) => {
+            if (x >= panelRange.startTime && x <= panelRange.endTime && typeof y === "number" && Number.isFinite(y)) {
+                values.push(y);
+            }
+        });
+    });
+    if (values.length === 0) return { min: undefined, max: undefined };
+    const rawMin = Math.min(...values);
+    const rawMax = Math.max(...values);
+    const range = rawMax - rawMin;
+    const fallback = Math.max(Math.abs(rawMax), Math.abs(rawMin), 1);
+    const step = getRoundedAxisStep(range > 0 ? range : fallback);
+    const min = Math.floor(rawMin / step) * step;
+    const max = Math.ceil(rawMax / step) * step;
+    return {
+        min: Number(min.toPrecision(12)),
+        max: Number((max > min ? max : min + step).toPrecision(12)),
+    };
+}
+
+function buildNeoLikeTooltipFormatter(params, timeFormat, timeZone) {
+    const items = (Array.isArray(params) ? params : [params])
+        .filter((item) => String(item?.seriesId || "").startsWith(PANEL_MAIN_SERIES_ID_PREFIX));
+    if (items.length === 0) return "";
+    const firstValue = Array.isArray(items[0].value) ? items[0].value : [];
+    const time = formatDataViewerTime(Number(firstValue[0] ?? items[0].axisValue), timeFormat, timeZone);
+    return `<div>
+        <div style="min-width:0;padding-left:10px;font-size:10px;color:#afb5bc">${time}</div>
+        <div style="padding:6px 0 0 10px">
+        ${items.map((item) => {
+            const value = Array.isArray(item.value) ? item.value[1] : "";
+            const colorStyle = typeof item.color === "string" ? `color:${item.color};` : "";
+            return `<div style="${colorStyle}margin:0;padding:0;white-space:nowrap">${item.seriesName} : ${value ?? ""}</div>`;
+        }).join("")}
+        </div>
+    </div>`;
+}
+
+export function buildDataViewerEChartOption({
+    series = [],
+    timeRange = {},
+    displayRange,
+    timeFormat = DEFAULT_TIME_FORMAT,
+    timeZone = DEFAULT_TIME_ZONE,
+} = {}) {
+    const allPoints = series.flatMap((item) => Array.isArray(item?.data) ? item.data : []);
+    const panelRange = getPanelRange(allPoints, displayRange || timeRange);
+    const navigatorRange = getPanelRange(allPoints, {});
+    const yAxisRange = getYAxisRange(series, panelRange);
+
+    return {
+        backgroundColor: "#252525",
+        animation: false,
+        textStyle: {
+            fontFamily: "Open Sans, Helvetica, Arial, sans-serif",
+        },
+        color: PANEL_COLORS,
+        grid: [
+            {
+                id: "panel-main-grid",
+                left: PANEL_GRID_SIDE,
+                right: PANEL_GRID_SIDE,
+                top: PANEL_MAIN_TOP_WITH_LEGEND,
+                height: PANEL_MAIN_HEIGHT,
+                containLabel: true,
+            },
+            {
+                id: "panel-navigator-grid",
+                left: PANEL_NAVIGATOR_GRID_SIDE,
+                right: PANEL_NAVIGATOR_GRID_SIDE,
+                bottom: PANEL_GRID_BOTTOM,
+                height: PANEL_SLIDER_HEIGHT,
+            },
+        ],
+        legend: {
+            show: true,
+            left: 10,
+            top: PANEL_LEGEND_TOP,
+            itemGap: 15,
+            textStyle: {
+                color: "#e7e8ea",
+                fontSize: 10,
+            },
+        },
+        tooltip: {
+            trigger: "axis",
+            confine: true,
+            backgroundColor: "#1f1d1d",
+            borderColor: "#292929",
+            borderWidth: 1,
+            textStyle: {
+                color: "#afb5bc",
+                fontSize: 10,
+            },
+            axisPointer: { type: "line", snap: false },
+            formatter: (params) => buildNeoLikeTooltipFormatter(params, timeFormat, timeZone),
+        },
+        xAxis: [
+            {
+                id: "panel-main-x-axis",
+                type: "time",
+                gridIndex: 0,
+                min: panelRange.startTime,
+                max: panelRange.endTime,
+                axisLine: AXIS_LINE_STYLE,
+                axisTick: AXIS_LINE_STYLE,
+                axisLabel: {
+                    ...PANEL_AXIS_LABEL_STYLE,
+                    formatter: (value) => formatDataViewerAxisTime(value, { min: panelRange.startTime, max: panelRange.endTime }, timeZone),
+                },
+                splitLine: {
+                    show: true,
+                    lineStyle: AXIS_SPLIT_LINE_STYLE,
+                },
+                axisPointer: {
+                    label: { show: false },
+                },
+            },
+            {
+                id: "panel-navigator-x-axis",
+                type: "time",
+                gridIndex: 1,
+                min: navigatorRange.startTime,
+                max: navigatorRange.endTime,
+                axisLine: { show: false },
+                axisTick: { show: false },
+                axisLabel: { show: false },
+                splitLine: { show: false },
+                axisPointer: { show: false, label: { show: false } },
+            },
+            {
+                id: "panel-navigator-data-x-axis",
+                type: "time",
+                gridIndex: 1,
+                min: navigatorRange.startTime,
+                max: navigatorRange.endTime,
+                axisLine: { show: false },
+                axisTick: { show: false },
+                axisLabel: { show: false },
+                splitLine: { show: false },
+                axisPointer: { show: false, label: { show: false } },
+            },
+        ],
+        yAxis: [
+            {
+                id: "panel-left-y-axis",
+                type: "value",
+                gridIndex: 0,
+                min: yAxisRange.min,
+                max: yAxisRange.max,
+                axisLine: AXIS_LINE_STYLE,
+                axisLabel: Y_AXIS_LABEL_STYLE,
+                splitLine: {
+                    show: true,
+                    lineStyle: AXIS_SPLIT_LINE_STYLE,
+                },
+                minInterval: 0,
+                scale: true,
+            },
+            {
+                id: "panel-right-y-axis",
+                type: "value",
+                gridIndex: 0,
+                position: "left",
+                axisLine: AXIS_LINE_STYLE,
+                axisLabel: { ...Y_AXIS_LABEL_STYLE, show: false },
+                splitLine: {
+                    show: true,
+                    lineStyle: AXIS_SPLIT_LINE_STYLE,
+                },
+                minInterval: 0,
+                scale: true,
+            },
+            {
+                id: "panel-navigator-y-axis",
+                type: "value",
+                gridIndex: 1,
+                boundaryGap: ["18%", "18%"],
+                axisLine: { show: false },
+                axisTick: { show: false },
+                axisLabel: { show: false },
+                splitLine: { show: false },
+                axisPointer: { show: false, label: { show: false } },
+                scale: true,
+            },
+        ],
+        dataZoom: [
+            {
+                id: "panel-inside-data-zoom",
+                type: "inside",
+                xAxisIndex: [1],
+                filterMode: "none",
+                startValue: panelRange.startTime,
+                endValue: panelRange.endTime,
+                zoomOnMouseWheel: true,
+                moveOnMouseMove: false,
+                moveOnMouseWheel: false,
+                preventDefaultMouseMove: true,
+            },
+            {
+                id: "panel-slider-data-zoom",
+                type: "slider",
+                xAxisIndex: [1],
+                filterMode: "none",
+                startValue: panelRange.startTime,
+                endValue: panelRange.endTime,
+                realtime: false,
+                left: PANEL_NAVIGATOR_GRID_SIDE,
+                right: PANEL_NAVIGATOR_GRID_SIDE,
+                bottom: PANEL_GRID_BOTTOM,
+                height: PANEL_SLIDER_HEIGHT,
+                showDetail: false,
+                brushSelect: false,
+                backgroundColor: "rgba(0, 0, 0, 0)",
+                borderColor: "#7a828c",
+                fillerColor: "rgba(104, 119, 138, 0.28)",
+                showDataShadow: false,
+                dataBackground: {
+                    lineStyle: { color: "#c0c7d0", opacity: 0.8 },
+                    areaStyle: { color: "#a8b0ba", opacity: 0.28 },
+                },
+                selectedDataBackground: {
+                    lineStyle: { color: "#a8b3c1", opacity: 0.62 },
+                    areaStyle: { color: "#7f8da0", opacity: 0.18 },
+                },
+                handleSize: 24,
+                handleStyle: {
+                    color: "rgba(245, 247, 250, 0.78)",
+                    borderColor: "#8a939e",
+                },
+                moveHandleStyle: {
+                    color: "rgba(245, 247, 250, 0.32)",
+                    opacity: 0.75,
+                },
+            },
+        ],
+        brush: {
+            toolbox: [],
+            xAxisIndex: 0,
+            brushMode: "single",
+            throttleType: "debounce",
+            throttleDelay: 150,
+            brushStyle: {
+                color: "rgba(68, 170, 213, 0.28)",
+                borderColor: "rgba(68, 170, 213, 0.85)",
+                borderWidth: 2,
+            },
+        },
+        toolbox: { show: false },
+        title: { show: false },
+        series: [
+            ...series.map((item, index) => ({
+                id: `${PANEL_MAIN_SERIES_ID_PREFIX}${index}`,
+                name: item.name,
+                type: "line",
+                legendHoverLink: false,
+                data: Array.isArray(item.data) ? item.data : [],
+                xAxisIndex: 0,
+                yAxisIndex: 0,
+                symbol: "circle",
+                showSymbol: false,
+                symbolSize: 6,
+                animation: false,
+                sampling: item.data?.length > 1000 ? "lttb" : undefined,
+                lineStyle: {
+                    width: 1,
+                    color: PANEL_COLORS[index % PANEL_COLORS.length],
+                    opacity: 1,
+                },
+                itemStyle: {
+                    color: PANEL_COLORS[index % PANEL_COLORS.length],
+                    opacity: 1,
+                },
+                connectNulls: false,
+                triggerEvent: true,
+                z: 2,
+            })),
+            ...series.map((item, index) => ({
+                id: `navigator-series-${index}`,
+                name: item.name,
+                type: "line",
+                legendHoverLink: false,
+                data: Array.isArray(item.data) ? item.data : [],
+                xAxisIndex: 2,
+                yAxisIndex: 2,
+                showSymbol: false,
+                silent: true,
+                tooltip: { show: false },
+                animation: false,
+                sampling: item.data?.length > 1000 ? "lttb" : undefined,
+                lineStyle: {
+                    width: 1,
+                    color: PANEL_COLORS[index % PANEL_COLORS.length],
+                    opacity: 0.85,
+                },
+                itemStyle: {
+                    color: PANEL_COLORS[index % PANEL_COLORS.length],
+                    opacity: 0.85,
+                },
+                emphasis: { disabled: true },
+                z: 1,
+            })),
+        ],
     };
 }
 

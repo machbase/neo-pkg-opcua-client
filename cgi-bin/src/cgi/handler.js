@@ -2161,6 +2161,80 @@ function buildTagDataWhere(params, primaryColumn, timeColumn) {
   };
 }
 
+function escapeSqlString(value) {
+  return String(value === undefined || value === null ? '' : value).replace(/'/g, "''");
+}
+
+function formatSqlDateLiteral(value) {
+  if (!(value instanceof Date)) return '';
+  const iso = value.toISOString().replace('T', ' ').replace('Z', '');
+  return `to_date('${escapeSqlString(iso)}')`;
+}
+
+function buildTagChartTqlWhere(req) {
+  const names = req.names.map((name) => `'${escapeSqlString(name)}'`).join(', ');
+  const clauses = [`${req.primaryColumn} IN (${names})`];
+  if (req.from) {
+    clauses.push(`${req.timeColumn} >= ${formatSqlDateLiteral(req.from)}`);
+  }
+  if (req.to) {
+    clauses.push(`${req.timeColumn} <= ${formatSqlDateLiteral(req.to)}`);
+  }
+  return clauses.join(' AND ');
+}
+
+function buildTagChartSelect(req) {
+  const queryWhere = buildTagChartTqlWhere(req);
+  const query =
+    `SELECT ${req.timeColumn} AS TIME, ${req.primaryColumn} AS NAME, ${req.valueColumn} AS VALUE ` +
+    `FROM ${req.tableRef} WHERE ${queryWhere} ORDER BY ${req.timeColumn} ASC, ${req.primaryColumn} ASC`;
+  return {
+    query,
+  };
+}
+
+function normalizeChartPointTime(value) {
+  if (value instanceof Date) return value.getTime();
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) return Number.NaN;
+    if (Math.abs(value) > 100000000000000) return value / 1000000;
+    return value;
+  }
+
+  const text = String(value === undefined || value === null ? '' : value).trim();
+  if (!text) return Number.NaN;
+  const numeric = Number(text);
+  if (Number.isFinite(numeric)) return normalizeChartPointTime(numeric);
+  return Date.parse(text);
+}
+
+function normalizeChartPointValue(value) {
+  if (value === undefined || value === null || value === '') return null;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
+function buildTagChartSeries(rows) {
+  const seriesByName = new Map();
+  for (const row of rows || []) {
+    const name = String(pickRowValue(row || {}, ['NAME', 'name']) || '').trim();
+    const time = normalizeChartPointTime(pickRowValue(row || {}, ['TIME', 'time']));
+    if (!name || !Number.isFinite(time)) continue;
+    if (!seriesByName.has(name)) {
+      seriesByName.set(name, []);
+    }
+    seriesByName.get(name).push([
+      time,
+      normalizeChartPointValue(pickRowValue(row || {}, ['VALUE', 'value'])),
+    ]);
+  }
+
+  return Array.from(seriesByName.entries()).map(([name, data]) => ({
+    name,
+    data: data.sort((a, b) => a[0] - b[0]),
+  }));
+}
+
 function parseTagDataRequest(params) {
   const table = parseQualifiedTagTable(params && params.table);
   const names = parseTagDataNames(params);
@@ -2361,6 +2435,43 @@ function dbTableDataTotal(db, params, reply) {
         total,
         pageSize: req.pageSize,
         lastPage: Math.max(1, Math.ceil(total / req.pageSize)),
+      },
+    });
+  } catch (err) {
+    reply({ ok: false, reason: errorMessage(err) });
+  } finally {
+    client.close();
+  }
+}
+
+function dbTableChart(db, params, reply) {
+  let req;
+  try {
+    req = parseTagDataRequest(params);
+  } catch (err) {
+    reply({ ok: false, reason: errorMessage(err) });
+    return;
+  }
+
+  const client = new MachbaseClient(db);
+  try {
+    client.connect();
+    validateTagDataTable(client, req, db);
+
+    const query = buildTagChartSelect(req);
+
+    reply({
+      ok: true,
+      data: {
+        type: 'query',
+        table: req.tableRef,
+        name: req.name,
+        names: req.names,
+        range: {
+          from: req.from ? req.from.toISOString() : '',
+          to: req.to ? req.to.toISOString() : '',
+        },
+        query: query.query,
       },
     });
   } catch (err) {
@@ -2630,6 +2741,7 @@ module.exports = {
   dbTableTags,
   dbTableData,
   dbTableDataTotal,
+  dbTableChart,
   nodeDescendants,
   opcuaConnect,
   opcuaRead,

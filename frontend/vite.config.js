@@ -26,6 +26,8 @@ export default defineConfig({
     server: {
         proxy: {
             "/public/neo-pkg-opcua-client": "http://localhost:5654",
+            "/api": "http://localhost:5654",
+            "/web": "http://localhost:5654",
         },
     },
 });

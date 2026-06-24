@@ -2150,6 +2150,41 @@ runner.run('Handler: dbTableData', {
         t.assert(!result.ok, 'should not be ok');
         t.assertEqual(result.reason, 'name is required');
     },
+
+    'returns executable web api query payload without raw paging': (t) => {
+        const H = makeHandler();
+        mockMachbaseClient.users = [{ USER_ID: 1, NAME: 'SYS' }];
+        mockMachbaseClient.tableMeta = { ID: 10, TYPE: 6, NAME: 'TAG' };
+
+        let result;
+        H.dbTableChart({
+            host: 'h',
+            port: 5656,
+            user: 'SYS',
+            password: 'p',
+        }, {
+            table: 'TAG',
+            names: ['sensor.a', 'sensor.b'],
+            valueColumn: 'VALUE',
+            from: '2026-06-01T00:00:00.000Z',
+            to: '2026-06-01T00:10:00.000Z',
+        }, (r) => { result = r; });
+
+        t.assert(result.ok, 'should be ok');
+        t.assertEqual(result.data.type, 'query');
+        t.assertEqual(result.data.table, 'TAG');
+        t.assertDeepEqual(result.data.names, ['sensor.a', 'sensor.b']);
+        t.assert(!Object.prototype.hasOwnProperty.call(result.data, 'page'), 'chart should not expose raw paging');
+        t.assertEqual(mockMachbaseClient.queries.length, 0, 'chart endpoint should not fetch data directly');
+        t.assert(result.data.query.includes('SELECT TIME AS TIME, NAME AS NAME, VALUE AS VALUE'), 'chart query should request only time/name/value columns');
+        t.assert(result.data.query.includes("WHERE NAME IN ('sensor.a', 'sensor.b')"), 'chart query should include selected tags');
+        t.assert(result.data.query.includes("TIME >= to_date('2026-06-01 00:00:00.000')"), 'chart query should include from time');
+        t.assert(result.data.query.includes("TIME <= to_date('2026-06-01 00:10:00.000')"), 'chart query should include to time');
+        t.assert(result.data.query.includes('ORDER BY TIME ASC, NAME ASC'), 'chart query should be ordered for series rendering');
+        t.assert(!result.data.query.includes('?'), 'query payload should be executable without bind placeholders');
+        t.assert(!Object.prototype.hasOwnProperty.call(result.data, 'tql'), 'chart endpoint should not expose tql payload');
+        t.assert(!Object.prototype.hasOwnProperty.call(result.data, 'series'), 'series should come from web api query execution');
+    },
 });
 
 // ── opcuaConnect ──────────────────────────────────────────────────────────────

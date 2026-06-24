@@ -5,20 +5,26 @@ import {
     DATA_VIEWER_BACK_PATH,
     buildAssetRows,
     buildDataViewerChartXAxis,
+    buildDataViewerChartGroups,
+    buildDataViewerEChartOption,
     buildTagRows,
     buildTagChartSeries,
     buildDataViewerPath,
     buildDataViewerHeaderLabels,
     buildRawResultColumns,
     defaultSelectedTag,
+    extractDataViewerDataZoomRange,
     formatDataViewerAxisTime,
     formatDataViewerTime,
     formatTimeRangeInput,
     formatTimeRangeLabel,
+    getDataViewerChartRangeMs,
     getResultHeading,
     getScanDirectionLabel,
     getVisibleTagRows,
+    hasExplicitDataViewerDataZoomEventRange,
     hasAssetHierarchy,
+    isSameDataViewerChartRange,
     normalizeSelectedTagNames,
     QUICK_TIME_RANGE_GROUPS,
     resolveTimeRangeInput,
@@ -427,6 +433,130 @@ test("buildDataViewerChartXAxis falls back to data extent when range is empty", 
 
     assert.equal(axis.min, first);
     assert.equal(axis.max, last);
+});
+
+test("buildDataViewerChartGroups keeps one default chart and splits selected tag groups", () => {
+    const groups = buildDataViewerChartGroups({
+        selectedTagNames: ["sensor.a", "sensor.b", "sensor.c", "sensor.d"],
+        splitGroups: [
+            { id: "split:bc", title: "B and C", tagNames: ["sensor.b", "sensor.c"] },
+        ],
+        globalRange: { from: "now-1h", to: "now" },
+        splitRanges: {
+            "split:bc": { from: "2026-06-01 00:00:00", to: "2026-06-01 01:00:00" },
+        },
+    });
+
+    assert.deepEqual(groups, [
+        {
+            id: "default",
+            title: "Selected Tags",
+            tagNames: ["sensor.a", "sensor.d"],
+            range: { from: "now-1h", to: "now" },
+            split: false,
+        },
+        {
+            id: "split:bc",
+            title: "B and C",
+            tagNames: ["sensor.b", "sensor.c"],
+            range: { from: "2026-06-01 00:00:00", to: "2026-06-01 01:00:00" },
+            split: true,
+        },
+    ]);
+});
+
+test("buildDataViewerEChartOption creates line chart options with data zoom", () => {
+    const option = buildDataViewerEChartOption({
+        series: [
+            {
+                name: "sensor.a",
+                data: [
+                    [Date.parse("2026-06-01T00:00:00Z"), 10],
+                    [Date.parse("2026-06-01T00:01:00Z"), 11],
+                ],
+            },
+        ],
+        timeRange: {
+            from: "2026-06-01T00:00:00.000Z",
+            to: "2026-06-01T00:10:00.000Z",
+        },
+        timeFormat: "2006-01-02 15:04:05",
+        timeZone: "UTC",
+    });
+
+    assert.equal(option.backgroundColor, "#252525");
+    assert.equal(option.grid.length, 2);
+    assert.equal(option.xAxis.length, 3);
+    assert.equal(option.yAxis.length, 3);
+    assert.equal(option.xAxis[0].type, "time");
+    assert.equal(option.xAxis[0].min, Date.parse("2026-06-01T00:00:00.000Z"));
+    assert.equal(option.xAxis[0].max, Date.parse("2026-06-01T00:10:00.000Z"));
+    assert.equal(option.series[0].type, "line");
+    assert.equal(option.series[0].id, "main-series-0");
+    assert.equal(option.series[0].name, "sensor.a");
+    assert.equal(option.series[1].id, "navigator-series-0");
+    assert.equal(option.series[1].yAxisIndex, 2);
+    assert.equal(option.series[1].tooltip.show, false);
+    assert.equal(option.dataZoom.length, 2);
+    assert.deepEqual(option.dataZoom.map((zoom) => zoom.type), ["inside", "slider"]);
+    assert.deepEqual(option.dataZoom.map((zoom) => zoom.xAxisIndex), [[1], [1]]);
+});
+
+test("buildDataViewerEChartOption can show a zoomed display range over a wider navigator range", () => {
+    const option = buildDataViewerEChartOption({
+        series: [
+            {
+                name: "sensor.a",
+                data: [
+                    [Date.parse("2026-06-01T00:00:00Z"), 10],
+                    [Date.parse("2026-06-01T00:10:00Z"), 20],
+                ],
+            },
+        ],
+        timeRange: {
+            from: "2026-06-01T00:00:00.000Z",
+            to: "2026-06-01T00:10:00.000Z",
+        },
+        displayRange: {
+            from: "2026-06-01T00:02:00.000Z",
+            to: "2026-06-01T00:04:00.000Z",
+        },
+        timeZone: "UTC",
+    });
+
+    assert.equal(option.xAxis[0].min, Date.parse("2026-06-01T00:02:00.000Z"));
+    assert.equal(option.xAxis[0].max, Date.parse("2026-06-01T00:04:00.000Z"));
+    assert.equal(option.xAxis[1].min, Date.parse("2026-06-01T00:00:00.000Z"));
+    assert.equal(option.xAxis[1].max, Date.parse("2026-06-01T00:10:00.000Z"));
+    assert.equal(option.dataZoom[0].startValue, Date.parse("2026-06-01T00:02:00.000Z"));
+    assert.equal(option.dataZoom[0].endValue, Date.parse("2026-06-01T00:04:00.000Z"));
+});
+
+test("extractDataViewerDataZoomRange maps navigator percentage into timestamps", () => {
+    const range = extractDataViewerDataZoomRange(
+        { start: 20, end: 40 },
+        { startTime: 0, endTime: 100 },
+        { startTime: 1000, endTime: 2000 }
+    );
+
+    assert.deepEqual(range, { startTime: 1200, endTime: 1400 });
+    assert.equal(hasExplicitDataViewerDataZoomEventRange({ batch: [{ startValue: 10, endValue: 20 }] }), true);
+    assert.equal(isSameDataViewerChartRange({ startTime: 10.4, endTime: 20.2 }, { startTime: 10.1, endTime: 20.9 }), true);
+});
+
+test("getDataViewerChartRangeMs resolves explicit and data-driven chart ranges", () => {
+    const points = [
+        [Date.parse("2026-06-01T00:00:00Z"), 10],
+        [Date.parse("2026-06-01T00:10:00Z"), 20],
+    ];
+
+    assert.deepEqual(getDataViewerChartRangeMs(points, {
+        from: "2026-06-01T00:01:00.000Z",
+        to: "2026-06-01T00:02:00.000Z",
+    }), {
+        startTime: Date.parse("2026-06-01T00:01:00.000Z"),
+        endTime: Date.parse("2026-06-01T00:02:00.000Z"),
+    });
 });
 
 test("formatDataViewerTime supports default millisecond format", () => {

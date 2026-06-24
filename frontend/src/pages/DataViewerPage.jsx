@@ -1,11 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router";
-import Highcharts from "highcharts/highstock";
-import HighchartsBoost from "highcharts/modules/boost";
-import HighchartsReact from "highcharts-react-official";
+import * as echarts from "echarts";
 import Icon from "../components/common/Icon";
 import { useApp } from "../context/AppContext";
-import { listTableTags, queryTagData, queryTagDataTotal } from "../api/dataViewer";
+import { listTableTags, queryTagChartData, queryTagData, queryTagDataTotal } from "../api/dataViewer";
 import {
     DATA_VIEWER_BACK_PATH,
     DEFAULT_TIME_FORMAT,
@@ -14,21 +12,24 @@ import {
     TIME_FORMATS,
     TIME_ZONE_OPTIONS,
     buildAssetRows,
-    buildDataViewerChartXAxis,
+    buildDataViewerChartGroups,
+    buildDataViewerEChartOption,
     buildDataViewerHeaderLabels,
     buildRawResultColumns,
-    buildTagChartSeries,
     buildTagRows,
-    formatDataViewerAxisTime,
+    extractDataViewerDataZoomRange,
     formatDataViewerTime,
     formatTimeRangeInput,
     formatTimeRangeLabel,
+    getDataViewerChartRangeMs,
     getResultHeading,
     getScanDirectionLabel,
     getTimeFormatLabel,
     getTimeZoneLabel,
     getVisibleTagRows,
+    hasExplicitDataViewerDataZoomEventRange,
     hasAssetHierarchy,
+    isSameDataViewerChartRange,
     normalizeSelectedTagNames,
     resolveTimeRangeInput,
     resolveTagNodes,
@@ -36,12 +37,7 @@ import {
     toggleSelectedTagName,
 } from "./dataViewerModel";
 
-if (typeof HighchartsBoost === "function") {
-    HighchartsBoost(Highcharts);
-}
-
 const RESULT_PAGE_SIZE = 100;
-const MIN_CHART_HEIGHT = 260;
 const WEEKDAY_LABELS = ["S", "M", "T", "W", "T", "F", "S"];
 const MONTH_LABELS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
@@ -438,209 +434,131 @@ function FormatTimezoneModal({ timeFormat, timeZone, onApply, onClose }) {
     );
 }
 
-function TagLineChart({ rows, timeFormat, timeZone, timeRange }) {
-    const chartRef = useRef(null);
+function SplitChartModal({ tagNames, onApply, onClose }) {
+    const [checkedNames, setCheckedNames] = useState([]);
+    const selectedSet = useMemo(() => new Set(checkedNames), [checkedNames]);
+    const canApply = checkedNames.length > 0;
+
+    const toggleName = (name) => {
+        setCheckedNames((current) => (
+            current.includes(name)
+                ? current.filter((item) => item !== name)
+                : [...current, name]
+        ));
+    };
+
+    return (
+        <div className="modal-overlay data-viewer-time-overlay">
+            <div className="modal modal-md data-viewer-time-modal data-viewer-split-modal animate-fade-in">
+                <div className="modal-header">
+                    <div className="modal-header-title">
+                        <Icon name="call_split" className="icon-sm text-primary" />
+                        <span>Split Tags</span>
+                    </div>
+                    <button type="button" className="btn-icon-sm" onClick={onClose}>
+                        <Icon name="close" className="icon-sm" />
+                    </button>
+                </div>
+
+                <div className="modal-body data-viewer-split-body">
+                    <div className="data-viewer-split-list">
+                        {tagNames.map((name) => (
+                            <label key={name} className={`data-viewer-split-row${selectedSet.has(name) ? " is-active" : ""}`}>
+                                <input
+                                    type="checkbox"
+                                    checked={selectedSet.has(name)}
+                                    onChange={() => toggleName(name)}
+                                    aria-label={`${name} split select`}
+                                />
+                                <span className="truncate">{name}</span>
+                            </label>
+                        ))}
+                    </div>
+                </div>
+
+                <div className="modal-footer">
+                    <button type="button" className="btn btn-primary" disabled={!canApply} onClick={() => onApply(checkedNames)}>
+                        Split
+                    </button>
+                    <button type="button" className="btn btn-secondary" onClick={onClose}>
+                        Cancel
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+}
+
+function TagEChart({ series, timeFormat, timeZone, timeRange, displayRange, onDisplayRangeChange }) {
     const containerRef = useRef(null);
-    const [chartSize, setChartSize] = useState({ width: 0, height: MIN_CHART_HEIGHT });
-    const series = useMemo(() => buildTagChartSeries(rows), [rows]);
+    const chartRef = useRef(null);
     const allPoints = useMemo(() => series.flatMap((item) => item.data), [series]);
+    const options = useMemo(
+        () => buildDataViewerEChartOption({ series, timeFormat, timeZone, timeRange, displayRange }),
+        [displayRange, series, timeFormat, timeRange, timeZone]
+    );
+    const currentRange = useMemo(
+        () => getDataViewerChartRangeMs(allPoints, displayRange || timeRange),
+        [allPoints, displayRange, timeRange]
+    );
+    const navigatorRange = useMemo(
+        () => getDataViewerChartRangeMs(allPoints, {}),
+        [allPoints]
+    );
 
     useEffect(() => {
         const container = containerRef.current;
-        if (!container || typeof ResizeObserver === "undefined") return undefined;
+        if (!container) return undefined;
 
-        const updateSize = (entry) => {
-            const rect = entry?.contentRect || container.getBoundingClientRect();
-            const width = Math.floor(rect.width);
-            const height = Math.max(MIN_CHART_HEIGHT, Math.floor(rect.height));
+        const chart = echarts.init(container, null, { renderer: "canvas" });
+        chartRef.current = chart;
+        chart.setOption(options, true);
+        const handleDataZoom = (params) => {
+            const dataZoomState = chart.getOption?.()?.dataZoom?.[0];
+            const nextRange = hasExplicitDataViewerDataZoomEventRange(params)
+                ? extractDataViewerDataZoomRange(params, currentRange, navigatorRange)
+                : extractDataViewerDataZoomRange({ ...dataZoomState, ...params }, currentRange, navigatorRange);
 
-            setChartSize((prev) => (prev.width === width && prev.height === height ? prev : { width, height }));
+            if (!nextRange || isSameDataViewerChartRange(nextRange, currentRange)) return;
+            onDisplayRangeChange?.({
+                from: new Date(nextRange.startTime).toISOString(),
+                to: new Date(nextRange.endTime).toISOString(),
+            });
         };
+        chart.on("datazoom", handleDataZoom);
 
-        const observer = new ResizeObserver((entries) => {
-            updateSize(entries[0]);
-        });
+        const resize = () => chart.resize();
+        let observer;
+        if (typeof ResizeObserver !== "undefined") {
+            observer = new ResizeObserver(resize);
+            observer.observe(container);
+        } else {
+            window.addEventListener("resize", resize);
+        }
+        resize();
 
-        observer.observe(container);
-        updateSize();
-
-        return () => observer.disconnect();
-    }, []);
-
-    const options = useMemo(() => {
-        if (allPoints.length === 0) return null;
-
-        const xAxisRange = buildDataViewerChartXAxis(allPoints, timeRange);
-        const yValues = allPoints.map((point) => point[1]);
-        const yMin = Math.floor(Math.min(...yValues) * 1000) / 1000;
-        const yMax = Math.ceil(Math.max(...yValues) * 1000) / 1000;
-        const yPadding = yMin === yMax ? Math.max(1, Math.abs(yMin) * 0.1) : 0;
-
-        return {
-            accessibility: { enabled: false },
-            chart: {
-                backgroundColor: "#252525",
-                height: chartSize.height,
-                width: chartSize.width || undefined,
-                spacing: [10, 10, 15, 10],
-                type: "line",
-                animation: false,
-                style: {
-                    fontFamily: "Open Sans, Helvetica, Arial, sans-serif",
-                },
-            },
-            time: {
-                useUTC: false,
-            },
-            series: series.map((item) => ({
-                name: item.name,
-                data: item.data,
-                yAxis: 0,
-                marker: { symbol: "circle", lineColor: null, lineWidth: 1 },
-            })),
-            plotOptions: {
-                boost: {
-                    useGPUTranslations: true,
-                    seriesThreshold: 5,
-                },
-                series: {
-                    boostThreshold: 5000,
-                    showInNavigator: false,
-                    lineWidth: 1,
-                    fillOpacity: 0,
-                    cursor: "pointer",
-                    marker: {
-                        enabled: false,
-                        radius: 0,
-                    },
-                    states: {
-                        hover: {
-                            enabled: true,
-                            lineWidthPlus: 0,
-                            lineWidth: 0,
-                        },
-                    },
-                    dataGrouping: {
-                        enabled: false,
-                    },
-                },
-            },
-            scrollbar: {
-                liveRedraw: false,
-                enabled: false,
-            },
-            rangeSelector: {
-                buttons: [],
-                allButtonsEnabled: false,
-                selected: 1,
-                inputEnabled: false,
-            },
-            navigator: {
-                enabled: false,
-            },
-            xAxis: {
-                type: "datetime",
-                ordinal: false,
-                gridLineWidth: 1,
-                gridLineColor: "#323333",
-                lineColor: "#323333",
-                min: xAxisRange.min,
-                max: xAxisRange.max,
-                tickInterval: xAxisRange.tickInterval,
-                crosshair: {
-                    snap: false,
-                    width: 0.5,
-                    color: "red",
-                },
-                labels: {
-                    align: "center",
-                    formatter: function () {
-                        return formatDataViewerAxisTime(this.value, xAxisRange, timeZone);
-                    },
-                    style: {
-                        color: "#f8f8f8",
-                        fontSize: "10px",
-                    },
-                    y: 35,
-                },
-                tickColor: "#323333",
-            },
-            yAxis: [
-                {
-                    tickAmount: 5,
-                    min: yMin - yPadding,
-                    max: yMax + yPadding,
-                    gridLineWidth: 1,
-                    gridLineColor: "#323333",
-                    lineColor: "#323333",
-                    startOnTick: true,
-                    endOnTick: true,
-                    labels: {
-                        align: "center",
-                        style: {
-                            color: "#afb5bc",
-                            fontSize: "10px",
-                        },
-                        x: -5,
-                        y: 3,
-                    },
-                    opposite: false,
-                },
-            ],
-            tooltip: {
-                split: false,
-                shared: true,
-                followPointer: true,
-                backgroundColor: "#1f1d1d",
-                borderColor: "#292929",
-                borderWidth: 1,
-                style: {
-                    color: "#f8f8f8",
-                    fontSize: "11px",
-                },
-                formatter: function () {
-                    const points = this.points || (this.point ? [this.point] : []);
-                    const header = `<span style="color:#f8f8f8;font-size:10px">${formatDataViewerTime(this.x, timeFormat, timeZone)}</span><br/>`;
-                    return header + points.map((point) => (
-                        `<span style="color:${point.color}">\u25cf</span> <span style="color:#f8f8f8">${point.series.name}: <b>${point.y}</b></span><br/>`
-                    )).join("");
-                },
-            },
-            legend: {
-                enabled: true,
-                align: "left",
-                itemDistance: 15,
-                squareSymbol: true,
-                symbolRadius: 1,
-                itemHoverStyle: {
-                    color: "#23527c",
-                    textDecoration: "underline",
-                },
-                itemStyle: {
-                    color: "#e7e8ea",
-                    cursor: "pointer",
-                    fontSize: "10px",
-                    fontWeight: "normal",
-                    fontFamily: "Open Sans, Helvetica, Arial, sans-serif",
-                    textOverflow: "ellipsis",
-                    textDecoration: "none",
-                },
-                margin: 20,
-            },
-            credits: {
-                enabled: false,
-            },
+        return () => {
+            chart.off("datazoom", handleDataZoom);
+            if (observer) observer.disconnect();
+            else window.removeEventListener("resize", resize);
+            chart.dispose();
+            chartRef.current = null;
         };
-    }, [allPoints, chartSize.height, chartSize.width, series, timeFormat, timeRange, timeZone]);
+    }, [currentRange, navigatorRange, onDisplayRangeChange, options]);
 
-    if (!options) {
-        return <div className="empty-state">No numeric data on this page</div>;
+    if (allPoints.length === 0) {
+        return <div className="empty-state">No chart data</div>;
     }
 
     return (
-        <div ref={containerRef} className="data-viewer-chart">
-            <HighchartsReact ref={chartRef} highcharts={Highcharts} constructorType="stockChart" options={options} />
-        </div>
+        <div
+            ref={containerRef}
+            className="data-viewer-chart"
+            data-display-from={Number.isFinite(currentRange.startTime) ? String(Math.floor(currentRange.startTime)) : ""}
+            data-display-to={Number.isFinite(currentRange.endTime) ? String(Math.ceil(currentRange.endTime)) : ""}
+            data-navigator-from={Number.isFinite(navigatorRange.startTime) ? String(Math.floor(navigatorRange.startTime)) : ""}
+            data-navigator-to={Number.isFinite(navigatorRange.endTime) ? String(Math.ceil(navigatorRange.endTime)) : ""}
+        />
     );
 }
 
@@ -675,17 +593,24 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
     const [mode, setMode] = useState("raw");
     const [resultPage, setResultPage] = useState(1);
     const [range, setRange] = useState({ from: "", to: "" });
-    const [rangeOpen, setRangeOpen] = useState(false);
+    const [rangeEditor, setRangeEditor] = useState(null);
+    const [splitChartGroups, setSplitChartGroups] = useState([]);
+    const [splitChartRanges, setSplitChartRanges] = useState({});
+    const [chartViewRanges, setChartViewRanges] = useState({});
+    const [chartResults, setChartResults] = useState({});
+    const [chartLoading, setChartLoading] = useState(false);
+    const [chartError, setChartError] = useState("");
     const [backwardScan, setBackwardScan] = useState(true);
     const [timeFormat, setTimeFormat] = useState(DEFAULT_TIME_FORMAT);
     const [timeZone, setTimeZone] = useState(DEFAULT_TIME_ZONE);
     const [formatOpen, setFormatOpen] = useState(false);
+    const [splitModalOpen, setSplitModalOpen] = useState(false);
     const [loading, setLoading] = useState(false);
     const [endLoading, setEndLoading] = useState(false);
     const [error, setError] = useState("");
     const [result, setResult] = useState({ rows: [], total: 0, page: 1, pageSize: RESULT_PAGE_SIZE });
-    const [chartTimeRange, setChartTimeRange] = useState({ from: "", to: "" });
     const rowsRequestRef = useRef(0);
+    const chartRequestRef = useRef(0);
     const endPageRequestRef = useRef(0);
     const selectedTagKey = selectedTagNames.join("\n");
 
@@ -744,11 +669,29 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
         const next = normalizeSelectedTagNames(selectedTagNames, selectableRows);
         if (next.join("\n") !== selectedTagKey) {
             rowsRequestRef.current += 1;
+            chartRequestRef.current += 1;
             endPageRequestRef.current += 1;
             setSelectedTagNames(next);
             setResultPage(1);
         }
     }, [selectableRows, selectedTagKey, selectedTagNames]);
+
+    useEffect(() => {
+        const selected = new Set(selectedTagNames);
+        setSplitChartGroups((current) => {
+            const next = current
+                .map((group) => ({
+                    ...group,
+                    tagNames: (group.tagNames || []).filter((name) => selected.has(name)),
+                }))
+                .filter((group) => group.tagNames.length > 0);
+            const same = next.length === current.length && next.every((group, index) => (
+                group.id === current[index].id &&
+                group.tagNames.join("\n") === (current[index].tagNames || []).join("\n")
+            ));
+            return same ? current : next;
+        });
+    }, [selectedTagNames]);
 
     useEffect(() => {
         setCollapsedTagFolders((prev) => (prev.size === 0 ? prev : new Set()));
@@ -778,6 +721,38 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
         [collapsedTagFolders, filteredTagRows]
     );
     const canQuery = Boolean(dbServer && dbTable && selectedTagNames.length > 0);
+    const chartGroups = useMemo(
+        () => buildDataViewerChartGroups({
+            selectedTagNames,
+            splitGroups: splitChartGroups,
+            globalRange: range,
+            splitRanges: splitChartRanges,
+        }),
+        [range, selectedTagNames, splitChartGroups, splitChartRanges]
+    );
+    const splitAssignedNames = useMemo(() => new Set(splitChartGroups.flatMap((group) => group.tagNames || [])), [splitChartGroups]);
+    const splitAvailableTagNames = useMemo(
+        () => selectedTagNames.filter((name) => !splitAssignedNames.has(name)),
+        [selectedTagNames, splitAssignedNames]
+    );
+
+    useEffect(() => {
+        const validGroupIds = new Set(chartGroups.map((group) => group.id));
+        setChartViewRanges((current) => {
+            const next = {};
+            for (const [id, value] of Object.entries(current)) {
+                if (validGroupIds.has(id)) next[id] = value;
+            }
+            return Object.keys(next).length === Object.keys(current).length ? current : next;
+        });
+        setSplitChartRanges((current) => {
+            const next = {};
+            for (const [id, value] of Object.entries(current)) {
+                if (validGroupIds.has(id)) next[id] = value;
+            }
+            return Object.keys(next).length === Object.keys(current).length ? current : next;
+        });
+    }, [chartGroups]);
     const toggleTagFolder = useCallback((key) => {
         setCollapsedTagFolders((prev) => {
             const next = new Set(prev);
@@ -788,17 +763,53 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
     }, []);
     const handleTagSelectionChange = useCallback((tagName) => {
         rowsRequestRef.current += 1;
+        chartRequestRef.current += 1;
         endPageRequestRef.current += 1;
+        setChartViewRanges({});
         setSelectedTagNames((current) => toggleSelectedTagName(current, tagName));
         setResultPage(1);
+    }, []);
+
+    const handleCreateSplitChart = useCallback((tagNames) => {
+        const cleaned = [];
+        const seen = new Set();
+        for (const name of tagNames || []) {
+            const tagName = String(name || "").trim();
+            if (!tagName || seen.has(tagName) || splitAssignedNames.has(tagName) || !selectedTagNames.includes(tagName)) continue;
+            seen.add(tagName);
+            cleaned.push(tagName);
+        }
+        if (cleaned.length === 0) return;
+        chartRequestRef.current += 1;
+        setChartViewRanges({});
+        setSplitChartGroups((current) => ([
+            ...current,
+            {
+                id: `split:${Date.now()}:${cleaned.join("|")}`,
+                title: cleaned.join(", "),
+                tagNames: cleaned,
+            },
+        ]));
+        setSplitModalOpen(false);
+    }, [selectedTagNames, splitAssignedNames]);
+
+    const handleMergeSplitChart = useCallback((groupId) => {
+        chartRequestRef.current += 1;
+        setChartViewRanges({});
+        setSplitChartGroups((current) => current.filter((group) => group.id !== groupId));
+        setSplitChartRanges((current) => {
+            if (!Object.prototype.hasOwnProperty.call(current, groupId)) return current;
+            const next = { ...current };
+            delete next[groupId];
+            return next;
+        });
     }, []);
 
     const fetchRows = useCallback(async () => {
         const requestId = rowsRequestRef.current + 1;
         rowsRequestRef.current = requestId;
-        if (!canQuery) {
+        if (!canQuery || mode !== "raw") {
             setResult({ rows: [], total: 0, page: 1, pageSize: RESULT_PAGE_SIZE });
-            setChartTimeRange({ from: "", to: "" });
             setLoading(false);
             return;
         }
@@ -812,11 +823,8 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
                 if (rowsRequestRef.current !== requestId) return;
                 setError("Please check the entered time.");
                 setResult({ rows: [], total: 0, page: resultPage, pageSize: RESULT_PAGE_SIZE });
-                setChartTimeRange({ from: "", to: "" });
                 return;
             }
-            if (rowsRequestRef.current !== requestId) return;
-            setChartTimeRange({ from: queryFrom || "", to: queryTo || "" });
 
             const data = await queryTagData({
                 server: dbServer,
@@ -838,17 +846,75 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
             setError(message);
             notify(message, "error");
             setResult({ rows: [], total: 0, page: resultPage, pageSize: RESULT_PAGE_SIZE });
-            setChartTimeRange({ from: "", to: "" });
         } finally {
             if (rowsRequestRef.current === requestId) {
                 setLoading(false);
             }
         }
-    }, [backwardScan, canQuery, dbServer, dbTable, notify, range.from, range.to, resultPage, selectedTagNames, stringValueColumn, valueColumn]);
+    }, [backwardScan, canQuery, dbServer, dbTable, mode, notify, range.from, range.to, resultPage, selectedTagNames, stringValueColumn, valueColumn]);
 
     useEffect(() => {
         fetchRows();
     }, [fetchRows]);
+
+    useEffect(() => {
+        const requestId = chartRequestRef.current + 1;
+        chartRequestRef.current = requestId;
+
+        if (!canQuery || mode !== "chart") {
+            setChartResults({});
+            setChartError("");
+            setChartLoading(false);
+            return undefined;
+        }
+
+        let alive = true;
+        const fetchCharts = async () => {
+            setChartLoading(true);
+            setChartError("");
+            try {
+                const baseDate = new Date();
+                const nextResults = {};
+                await Promise.all(chartGroups.map(async (group) => {
+                    const queryFrom = resolveTimeRangeInput(group.range?.from, baseDate);
+                    const queryTo = resolveTimeRangeInput(group.range?.to, baseDate);
+                    if (queryFrom === null || queryTo === null) {
+                        throw new Error("Please check the entered time.");
+                    }
+                    const data = await queryTagChartData({
+                        server: dbServer,
+                        table: dbTable,
+                        names: group.tagNames,
+                        valueColumn,
+                        stringValueColumn,
+                        from: queryFrom,
+                        to: queryTo,
+                    });
+                    nextResults[group.id] = {
+                        range: { from: queryFrom || "", to: queryTo || "" },
+                        series: data?.series || [],
+                    };
+                }));
+                if (!alive || chartRequestRef.current !== requestId) return;
+                setChartResults(nextResults);
+            } catch (e) {
+                if (!alive || chartRequestRef.current !== requestId) return;
+                const message = e.reason || e.message || "Failed to load chart data";
+                setChartError(message);
+                notify(message, "error");
+                setChartResults({});
+            } finally {
+                if (alive && chartRequestRef.current === requestId) {
+                    setChartLoading(false);
+                }
+            }
+        };
+
+        fetchCharts();
+        return () => {
+            alive = false;
+        };
+    }, [canQuery, chartGroups, dbServer, dbTable, mode, notify, stringValueColumn, valueColumn]);
 
     if (!collector) {
         return (
@@ -874,10 +940,19 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
     };
     const handleRangeApply = (next) => {
         rowsRequestRef.current += 1;
+        chartRequestRef.current += 1;
         endPageRequestRef.current += 1;
-        setRange(next);
+        setChartViewRanges({});
+        if (rangeEditor?.type === "split" && rangeEditor.groupId) {
+            setSplitChartRanges((current) => ({
+                ...current,
+                [rangeEditor.groupId]: next,
+            }));
+        } else {
+            setRange(next);
+        }
         setResultPage(1);
-        setRangeOpen(false);
+        setRangeEditor(null);
     };
     const handleEndPage = async () => {
         if (!canQuery || endLoading) return;
@@ -1062,6 +1137,19 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
                                         )}
                                         {showsDataViewerTimeControls(mode) && (
                                             <div className="data-viewer-query-controls">
+                                                {mode === "chart" && (
+                                                    <button
+                                                        type="button"
+                                                        aria-label="Split selected tags"
+                                                        title="Split selected tags"
+                                                        className="btn btn-sm btn-ghost data-viewer-split-tags-button"
+                                                        disabled={splitAvailableTagNames.length < 2}
+                                                        onClick={() => setSplitModalOpen(true)}
+                                                    >
+                                                        <Icon name="call_split" className="icon-sm" />
+                                                        <span>Split tags</span>
+                                                    </button>
+                                                )}
                                                 <button
                                                     type="button"
                                                     aria-label="Set time format and timezone"
@@ -1071,7 +1159,7 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
                                                 >
                                                     <Icon name="public" className="icon-sm" />
                                                 </button>
-                                                <button type="button" aria-label="Set time range" title={timeRangeButtonText} className="btn btn-sm btn-ghost data-viewer-time-range-button" onClick={() => setRangeOpen(true)}>
+                                                <button type="button" aria-label="Set time range" title={timeRangeButtonText} className="btn btn-sm btn-ghost data-viewer-time-range-button" onClick={() => setRangeEditor({ type: "global" })}>
                                                     <Icon name="calendar_month" className="icon-sm" />
                                                     <span>{timeRangeButtonText}</span>
                                                 </button>
@@ -1123,22 +1211,78 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
                                 </div>
                             )}
                             {canQuery && mode === "chart" && (
-                                <div className="table-card data-viewer-chart-card">
-                                    <div className="table-card-body">
-                                        {loading ? <div className="empty-state">Loading...</div> : <TagLineChart rows={result.rows} timeFormat={timeFormat} timeZone={timeZone} timeRange={chartTimeRange} />}
-                                    </div>
-                                    <ResultPagination page={resultPage} pageSize={RESULT_PAGE_SIZE} rowCount={result.rows.length} loading={loading} endLoading={endLoading} onPage={setResultPage} onEndPage={handleEndPage} />
+                                <div className="data-viewer-chart-stack">
+                                    {chartError && <div className="error-box">{chartError}</div>}
+                                    {chartLoading && <div className="empty-state">Loading...</div>}
+                                    {!chartLoading && chartGroups.map((group) => {
+                                        const chartData = chartResults[group.id] || { series: [], range: group.range };
+                                        return (
+                                            <div key={group.id} className="table-card data-viewer-chart-card">
+                                                <div className="data-viewer-chart-panel-header">
+                                                    <div className="data-viewer-chart-panel-title">
+                                                        <Icon name={group.split ? "call_split" : "query_stats"} className="icon-sm text-primary" />
+                                                        <span className="truncate">{group.title}</span>
+                                                        <span className="badge badge-muted">{group.tagNames.length}</span>
+                                                    </div>
+                                                    {group.split && (
+                                                        <div className="data-viewer-chart-panel-actions">
+                                                            <button
+                                                                type="button"
+                                                                className="btn btn-sm btn-ghost"
+                                                                title="Merge back"
+                                                                onClick={() => handleMergeSplitChart(group.id)}
+                                                            >
+                                                                <Icon name="call_merge" className="icon-sm" />
+                                                                <span>Merge back</span>
+                                                            </button>
+                                                            <button
+                                                                type="button"
+                                                                className="btn btn-sm btn-ghost data-viewer-time-range-button"
+                                                                title={formatTimeRangeLabel(group.range?.from, group.range?.to)}
+                                                                onClick={() => setRangeEditor({ type: "split", groupId: group.id })}
+                                                            >
+                                                                <Icon name="calendar_month" className="icon-sm" />
+                                                                <span>{formatTimeRangeLabel(group.range?.from, group.range?.to)}</span>
+                                                            </button>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                                <div className="table-card-body">
+                                                    <TagEChart
+                                                        series={chartData.series}
+                                                        timeFormat={timeFormat}
+                                                        timeZone={timeZone}
+                                                        timeRange={chartData.range}
+                                                        displayRange={chartViewRanges[group.id]}
+                                                        onDisplayRangeChange={(nextRange) => {
+                                                            setChartViewRanges((current) => ({
+                                                                ...current,
+                                                                [group.id]: nextRange,
+                                                            }));
+                                                        }}
+                                                    />
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
                                 </div>
                             )}
                         </section>
                     </div>
                 </div>
             </div>
-            {rangeOpen && (
+            {rangeEditor && (
                 <TimeRangeModal
-                    range={range}
-                    onClose={() => setRangeOpen(false)}
+                    range={rangeEditor.type === "split" ? (splitChartRanges[rangeEditor.groupId] || range) : range}
+                    onClose={() => setRangeEditor(null)}
                     onApply={handleRangeApply}
+                />
+            )}
+            {splitModalOpen && (
+                <SplitChartModal
+                    tagNames={splitAvailableTagNames}
+                    onClose={() => setSplitModalOpen(false)}
+                    onApply={handleCreateSplitChart}
                 />
             )}
             {formatOpen && (
