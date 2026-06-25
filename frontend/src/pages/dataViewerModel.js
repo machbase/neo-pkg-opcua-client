@@ -181,6 +181,39 @@ export function buildDataViewerChartGroups({
     return groups;
 }
 
+export function buildDataViewerSplitGroups({
+    tagNames = [],
+    selectedTagNames = [],
+    assignedTagNames = [],
+    createId = (name, index) => `split:${Date.now()}:${index}:${name}`,
+} = {}) {
+    const selectedSet = new Set(
+        selectedTagNames
+            .map((name) => String(name || "").trim())
+            .filter(Boolean)
+    );
+    const assignedSet = new Set(
+        assignedTagNames
+            .map((name) => String(name || "").trim())
+            .filter(Boolean)
+    );
+    const seen = new Set();
+    const groups = [];
+
+    for (const name of tagNames || []) {
+        const tagName = String(name || "").trim();
+        if (!tagName || seen.has(tagName) || assignedSet.has(tagName) || !selectedSet.has(tagName)) continue;
+        seen.add(tagName);
+        groups.push({
+            id: createId(tagName, groups.length),
+            title: tagName,
+            tagNames: [tagName],
+        });
+    }
+
+    return groups;
+}
+
 export const QUICK_TIME_RANGE_GROUPS = [
     [
         { key: "now-5s", name: "Last 5 seconds", value: ["now-5s", "now"] },
@@ -507,17 +540,21 @@ function chooseTimeTickInterval(duration) {
 }
 
 export function buildDataViewerChartXAxis(points = [], range = {}) {
-    const pointTimes = points
-        .map((point) => Array.isArray(point) ? point[0] : point?.x)
-        .filter((value) => Number.isFinite(value));
     const rangeFrom = toEpochMs(range?.from);
     const rangeTo = toEpochMs(range?.to);
 
     let min = Number.isFinite(rangeFrom) ? rangeFrom : undefined;
     let max = Number.isFinite(rangeTo) ? rangeTo : undefined;
 
-    if (min === undefined && pointTimes.length > 0) min = Math.min(...pointTimes);
-    if (max === undefined && pointTimes.length > 0) max = Math.max(...pointTimes);
+    if (min === undefined || max === undefined) {
+        for (const point of points) {
+            const value = Array.isArray(point) ? point[0] : point?.x;
+            if (!Number.isFinite(value)) continue;
+            if (min === undefined || value < min) min = value;
+            if (max === undefined || value > max) max = value;
+        }
+    }
+
     if (!Number.isFinite(min) || !Number.isFinite(max)) return {};
 
     if (min > max) {
@@ -666,17 +703,17 @@ function getRoundedAxisStep(axisRangeValue) {
 }
 
 function getYAxisRange(series, panelRange) {
-    const values = [];
+    let rawMin;
+    let rawMax;
     series.forEach((item) => {
         (item.data || []).forEach(([x, y]) => {
             if (x >= panelRange.startTime && x <= panelRange.endTime && typeof y === "number" && Number.isFinite(y)) {
-                values.push(y);
+                if (rawMin === undefined || y < rawMin) rawMin = y;
+                if (rawMax === undefined || y > rawMax) rawMax = y;
             }
         });
     });
-    if (values.length === 0) return { min: undefined, max: undefined };
-    const rawMin = Math.min(...values);
-    const rawMax = Math.max(...values);
+    if (rawMin === undefined || rawMax === undefined) return { min: undefined, max: undefined };
     const range = rawMax - rawMin;
     const fallback = Math.max(Math.abs(rawMax), Math.abs(rawMin), 1);
     const step = getRoundedAxisStep(range > 0 ? range : fallback);

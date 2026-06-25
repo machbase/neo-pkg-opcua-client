@@ -15,6 +15,7 @@ import {
     buildDataViewerChartGroups,
     buildDataViewerEChartOption,
     buildDataViewerHeaderLabels,
+    buildDataViewerSplitGroups,
     buildRawResultColumns,
     buildTagRows,
     extractDataViewerDataZoomRange,
@@ -438,6 +439,7 @@ function SplitChartModal({ tagNames, onApply, onClose }) {
     const [checkedNames, setCheckedNames] = useState([]);
     const selectedSet = useMemo(() => new Set(checkedNames), [checkedNames]);
     const canApply = checkedNames.length > 0;
+    const allChecked = tagNames.length > 0 && checkedNames.length === tagNames.length;
 
     const toggleName = (name) => {
         setCheckedNames((current) => (
@@ -446,6 +448,8 @@ function SplitChartModal({ tagNames, onApply, onClose }) {
                 : [...current, name]
         ));
     };
+    const selectAll = () => setCheckedNames(tagNames);
+    const clearAll = () => setCheckedNames([]);
 
     return (
         <div className="modal-overlay data-viewer-time-overlay">
@@ -461,6 +465,14 @@ function SplitChartModal({ tagNames, onApply, onClose }) {
                 </div>
 
                 <div className="modal-body data-viewer-split-body">
+                    <div className="data-viewer-split-actions">
+                        <button type="button" className="btn btn-sm btn-ghost" disabled={allChecked} onClick={selectAll}>
+                            Select all
+                        </button>
+                        <button type="button" className="btn btn-sm btn-ghost" disabled={checkedNames.length === 0} onClick={clearAll}>
+                            Clear
+                        </button>
+                    </div>
                     <div className="data-viewer-split-list">
                         {tagNames.map((name) => (
                             <label key={name} className={`data-viewer-split-row${selectedSet.has(name) ? " is-active" : ""}`}>
@@ -478,7 +490,7 @@ function SplitChartModal({ tagNames, onApply, onClose }) {
 
                 <div className="modal-footer">
                     <button type="button" className="btn btn-primary" disabled={!canApply} onClick={() => onApply(checkedNames)}>
-                        Split
+                        Split into charts
                     </button>
                     <button type="button" className="btn btn-secondary" onClick={onClose}>
                         Cancel
@@ -771,25 +783,15 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
     }, []);
 
     const handleCreateSplitChart = useCallback((tagNames) => {
-        const cleaned = [];
-        const seen = new Set();
-        for (const name of tagNames || []) {
-            const tagName = String(name || "").trim();
-            if (!tagName || seen.has(tagName) || splitAssignedNames.has(tagName) || !selectedTagNames.includes(tagName)) continue;
-            seen.add(tagName);
-            cleaned.push(tagName);
-        }
-        if (cleaned.length === 0) return;
+        const nextGroups = buildDataViewerSplitGroups({
+            tagNames,
+            selectedTagNames,
+            assignedTagNames: Array.from(splitAssignedNames),
+        });
+        if (nextGroups.length === 0) return;
         chartRequestRef.current += 1;
         setChartViewRanges({});
-        setSplitChartGroups((current) => ([
-            ...current,
-            {
-                id: `split:${Date.now()}:${cleaned.join("|")}`,
-                title: cleaned.join(", "),
-                tagNames: cleaned,
-            },
-        ]));
+        setSplitChartGroups((current) => ([...current, ...nextGroups]));
         setSplitModalOpen(false);
     }, [selectedTagNames, splitAssignedNames]);
 
@@ -1143,7 +1145,7 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
                                                         aria-label="Split selected tags"
                                                         title="Split selected tags"
                                                         className="btn btn-sm btn-ghost data-viewer-split-tags-button"
-                                                        disabled={splitAvailableTagNames.length < 2}
+                                                        disabled={selectedTagNames.length < 2 || splitAvailableTagNames.length < 1}
                                                         onClick={() => setSplitModalOpen(true)}
                                                     >
                                                         <Icon name="call_split" className="icon-sm" />

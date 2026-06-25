@@ -7,6 +7,7 @@ import {
     buildDataViewerChartXAxis,
     buildDataViewerChartGroups,
     buildDataViewerEChartOption,
+    buildDataViewerSplitGroups,
     buildTagRows,
     buildTagChartSeries,
     buildDataViewerPath,
@@ -435,6 +436,15 @@ test("buildDataViewerChartXAxis falls back to data extent when range is empty", 
     assert.equal(axis.max, last);
 });
 
+test("buildDataViewerChartXAxis handles large multi-tag point sets without stack overflow", () => {
+    const first = Date.parse("2026-06-17T00:00:00.000Z");
+    const points = Array.from({ length: 150000 }, (_, index) => [first + index * 1000, index % 100]);
+    const axis = buildDataViewerChartXAxis(points);
+
+    assert.equal(axis.min, first);
+    assert.equal(axis.max, first + 149999 * 1000);
+});
+
 test("buildDataViewerChartGroups keeps one default chart and splits selected tag groups", () => {
     const groups = buildDataViewerChartGroups({
         selectedTagNames: ["sensor.a", "sensor.b", "sensor.c", "sensor.d"],
@@ -462,6 +472,34 @@ test("buildDataViewerChartGroups keeps one default chart and splits selected tag
             range: { from: "2026-06-01 00:00:00", to: "2026-06-01 01:00:00" },
             split: true,
         },
+    ]);
+});
+
+test("buildDataViewerSplitGroups creates one split chart per selected tag", () => {
+    const groups = buildDataViewerSplitGroups({
+        tagNames: ["sensor.a", "sensor.b", "sensor.c"],
+        selectedTagNames: ["sensor.a", "sensor.b", "sensor.c"],
+        assignedTagNames: [],
+        createId: (name, index) => `split:${index}:${name}`,
+    });
+
+    assert.deepEqual(groups, [
+        { id: "split:0:sensor.a", title: "sensor.a", tagNames: ["sensor.a"] },
+        { id: "split:1:sensor.b", title: "sensor.b", tagNames: ["sensor.b"] },
+        { id: "split:2:sensor.c", title: "sensor.c", tagNames: ["sensor.c"] },
+    ]);
+});
+
+test("buildDataViewerSplitGroups skips duplicates, missing tags, and already split tags", () => {
+    const groups = buildDataViewerSplitGroups({
+        tagNames: ["sensor.a", "sensor.b", "sensor.a", "sensor.c", ""],
+        selectedTagNames: ["sensor.a", "sensor.b"],
+        assignedTagNames: ["sensor.b"],
+        createId: (name, index) => `split:${index}:${name}`,
+    });
+
+    assert.deepEqual(groups, [
+        { id: "split:0:sensor.a", title: "sensor.a", tagNames: ["sensor.a"] },
     ]);
 });
 
@@ -500,6 +538,34 @@ test("buildDataViewerEChartOption creates line chart options with data zoom", ()
     assert.equal(option.dataZoom.length, 2);
     assert.deepEqual(option.dataZoom.map((zoom) => zoom.type), ["inside", "slider"]);
     assert.deepEqual(option.dataZoom.map((zoom) => zoom.xAxisIndex), [[1], [1]]);
+});
+
+test("buildDataViewerEChartOption lays out large multi-tag data by time range", () => {
+    const start = Date.parse("2026-06-01T00:00:00.000Z");
+    const series = [
+        {
+            name: "sensor.a",
+            data: Array.from({ length: 75000 }, (_, index) => [start + index * 1000, index % 20]),
+        },
+        {
+            name: "sensor.b",
+            data: Array.from({ length: 75000 }, (_, index) => [start + index * 1000, 100 + (index % 20)]),
+        },
+    ];
+
+    const option = buildDataViewerEChartOption({
+        series,
+        timeRange: {
+            from: "2026-06-01T00:10:00.000Z",
+            to: "2026-06-01T00:20:00.000Z",
+        },
+        timeFormat: "2006-01-02 15:04:05",
+        timeZone: "UTC",
+    });
+
+    assert.equal(option.xAxis[0].min, Date.parse("2026-06-01T00:10:00.000Z"));
+    assert.equal(option.xAxis[0].max, Date.parse("2026-06-01T00:20:00.000Z"));
+    assert.equal(option.series.length, 4);
 });
 
 test("buildDataViewerEChartOption can show a zoomed display range over a wider navigator range", () => {
