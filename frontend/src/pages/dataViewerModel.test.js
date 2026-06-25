@@ -475,6 +475,61 @@ test("buildDataViewerChartGroups keeps one default chart and splits selected tag
     ]);
 });
 
+test("buildDataViewerChartGroups keeps the last remaining tag in the default chart", () => {
+    const groups = buildDataViewerChartGroups({
+        selectedTagNames: ["sensor.a", "sensor.b"],
+        splitGroups: [
+            { id: "split:a", title: "sensor.a", tagNames: ["sensor.a"] },
+        ],
+        globalRange: { from: "now-1h", to: "now" },
+    });
+
+    assert.deepEqual(groups, [
+        {
+            id: "default",
+            title: "Selected Tags",
+            tagNames: ["sensor.b"],
+            range: { from: "now-1h", to: "now" },
+            split: false,
+        },
+        {
+            id: "split:a",
+            title: "sensor.a",
+            tagNames: ["sensor.a"],
+            range: { from: "now-1h", to: "now" },
+            split: true,
+        },
+    ]);
+});
+
+test("buildDataViewerChartGroups omits the default chart when every tag is split", () => {
+    const groups = buildDataViewerChartGroups({
+        selectedTagNames: ["sensor.a", "sensor.b"],
+        splitGroups: [
+            { id: "split:a", title: "sensor.a", tagNames: ["sensor.a"] },
+            { id: "split:b", title: "sensor.b", tagNames: ["sensor.b"] },
+        ],
+        globalRange: { from: "now-1h", to: "now" },
+    });
+
+    assert.deepEqual(groups, [
+        {
+            id: "split:a",
+            title: "sensor.a",
+            tagNames: ["sensor.a"],
+            range: { from: "now-1h", to: "now" },
+            split: true,
+        },
+        {
+            id: "split:b",
+            title: "sensor.b",
+            tagNames: ["sensor.b"],
+            range: { from: "now-1h", to: "now" },
+            split: true,
+        },
+    ]);
+});
+
 test("buildDataViewerSplitGroups creates one split chart per selected tag", () => {
     const groups = buildDataViewerSplitGroups({
         tagNames: ["sensor.a", "sensor.b", "sensor.c"],

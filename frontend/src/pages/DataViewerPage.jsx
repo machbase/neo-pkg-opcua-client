@@ -435,72 +435,6 @@ function FormatTimezoneModal({ timeFormat, timeZone, onApply, onClose }) {
     );
 }
 
-function SplitChartModal({ tagNames, onApply, onClose }) {
-    const [checkedNames, setCheckedNames] = useState([]);
-    const selectedSet = useMemo(() => new Set(checkedNames), [checkedNames]);
-    const canApply = checkedNames.length > 0;
-    const allChecked = tagNames.length > 0 && checkedNames.length === tagNames.length;
-
-    const toggleName = (name) => {
-        setCheckedNames((current) => (
-            current.includes(name)
-                ? current.filter((item) => item !== name)
-                : [...current, name]
-        ));
-    };
-    const selectAll = () => setCheckedNames(tagNames);
-    const clearAll = () => setCheckedNames([]);
-
-    return (
-        <div className="modal-overlay data-viewer-time-overlay">
-            <div className="modal modal-md data-viewer-time-modal data-viewer-split-modal animate-fade-in">
-                <div className="modal-header">
-                    <div className="modal-header-title">
-                        <Icon name="call_split" className="icon-sm text-primary" />
-                        <span>Split Tags</span>
-                    </div>
-                    <button type="button" className="btn-icon-sm" onClick={onClose}>
-                        <Icon name="close" className="icon-sm" />
-                    </button>
-                </div>
-
-                <div className="modal-body data-viewer-split-body">
-                    <div className="data-viewer-split-actions">
-                        <button type="button" className="btn btn-sm btn-ghost" disabled={allChecked} onClick={selectAll}>
-                            Select all
-                        </button>
-                        <button type="button" className="btn btn-sm btn-ghost" disabled={checkedNames.length === 0} onClick={clearAll}>
-                            Clear
-                        </button>
-                    </div>
-                    <div className="data-viewer-split-list">
-                        {tagNames.map((name) => (
-                            <label key={name} className={`data-viewer-split-row${selectedSet.has(name) ? " is-active" : ""}`}>
-                                <input
-                                    type="checkbox"
-                                    checked={selectedSet.has(name)}
-                                    onChange={() => toggleName(name)}
-                                    aria-label={`${name} split select`}
-                                />
-                                <span className="truncate">{name}</span>
-                            </label>
-                        ))}
-                    </div>
-                </div>
-
-                <div className="modal-footer">
-                    <button type="button" className="btn btn-primary" disabled={!canApply} onClick={() => onApply(checkedNames)}>
-                        Split into charts
-                    </button>
-                    <button type="button" className="btn btn-secondary" onClick={onClose}>
-                        Cancel
-                    </button>
-                </div>
-            </div>
-        </div>
-    );
-}
-
 function TagEChart({ series, timeFormat, timeZone, timeRange, displayRange, onDisplayRangeChange }) {
     const containerRef = useRef(null);
     const chartRef = useRef(null);
@@ -616,7 +550,6 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
     const [timeFormat, setTimeFormat] = useState(DEFAULT_TIME_FORMAT);
     const [timeZone, setTimeZone] = useState(DEFAULT_TIME_ZONE);
     const [formatOpen, setFormatOpen] = useState(false);
-    const [splitModalOpen, setSplitModalOpen] = useState(false);
     const [loading, setLoading] = useState(false);
     const [endLoading, setEndLoading] = useState(false);
     const [error, setError] = useState("");
@@ -743,11 +676,6 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
         [range, selectedTagNames, splitChartGroups, splitChartRanges]
     );
     const splitAssignedNames = useMemo(() => new Set(splitChartGroups.flatMap((group) => group.tagNames || [])), [splitChartGroups]);
-    const splitAvailableTagNames = useMemo(
-        () => selectedTagNames.filter((name) => !splitAssignedNames.has(name)),
-        [selectedTagNames, splitAssignedNames]
-    );
-
     useEffect(() => {
         const validGroupIds = new Set(chartGroups.map((group) => group.id));
         setChartViewRanges((current) => {
@@ -792,7 +720,6 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
         chartRequestRef.current += 1;
         setChartViewRanges({});
         setSplitChartGroups((current) => ([...current, ...nextGroups]));
-        setSplitModalOpen(false);
     }, [selectedTagNames, splitAssignedNames]);
 
     const handleMergeSplitChart = useCallback((groupId) => {
@@ -1139,19 +1066,6 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
                                         )}
                                         {showsDataViewerTimeControls(mode) && (
                                             <div className="data-viewer-query-controls">
-                                                {mode === "chart" && (
-                                                    <button
-                                                        type="button"
-                                                        aria-label="Split selected tags"
-                                                        title="Split selected tags"
-                                                        className="btn btn-sm btn-ghost data-viewer-split-tags-button"
-                                                        disabled={selectedTagNames.length < 2 || splitAvailableTagNames.length < 1}
-                                                        onClick={() => setSplitModalOpen(true)}
-                                                    >
-                                                        <Icon name="call_split" className="icon-sm" />
-                                                        <span>Split tags</span>
-                                                    </button>
-                                                )}
                                                 <button
                                                     type="button"
                                                     aria-label="Set time format and timezone"
@@ -1231,11 +1145,11 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
                                                             <button
                                                                 type="button"
                                                                 className="btn btn-sm btn-ghost"
-                                                                title="Merge back"
+                                                                title="Group"
                                                                 onClick={() => handleMergeSplitChart(group.id)}
                                                             >
-                                                                <Icon name="call_merge" className="icon-sm" />
-                                                                <span>Merge back</span>
+                                                                <Icon name="join_inner" className="icon-sm" />
+                                                                <span>Group</span>
                                                             </button>
                                                             <button
                                                                 type="button"
@@ -1250,6 +1164,22 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
                                                     )}
                                                 </div>
                                                 <div className="table-card-body">
+                                                    {!group.split && group.tagNames.length > 0 && (group.tagNames.length > 1 || splitChartGroups.length > 0) && (
+                                                        <div className="data-viewer-chart-tag-actions" aria-label="Split individual tags">
+                                                            {group.tagNames.map((tagName) => (
+                                                                <button
+                                                                    key={tagName}
+                                                                    type="button"
+                                                                    className="data-viewer-chart-tag-chip"
+                                                                    title={`Split ${tagName}`}
+                                                                    onClick={() => handleCreateSplitChart([tagName])}
+                                                                >
+                                                                    <span className="truncate">{tagName}</span>
+                                                                    <Icon name="call_split" className="icon-sm" />
+                                                                </button>
+                                                            ))}
+                                                        </div>
+                                                    )}
                                                     <TagEChart
                                                         series={chartData.series}
                                                         timeFormat={timeFormat}
@@ -1278,13 +1208,6 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
                     range={rangeEditor.type === "split" ? (splitChartRanges[rangeEditor.groupId] || range) : range}
                     onClose={() => setRangeEditor(null)}
                     onApply={handleRangeApply}
-                />
-            )}
-            {splitModalOpen && (
-                <SplitChartModal
-                    tagNames={splitAvailableTagNames}
-                    onClose={() => setSplitModalOpen(false)}
-                    onApply={handleCreateSplitChart}
                 />
             )}
             {formatOpen && (
