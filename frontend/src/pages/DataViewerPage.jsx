@@ -1006,18 +1006,23 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
                                     )}
                                     <div className="data-viewer-title-actions">
                                         {mode === "raw" && (
-                                            <div className="data-viewer-scan-control" role="group" aria-label={`Scan direction: ${getScanDirectionLabel(backwardScan)}`}>
-                                                <span className={`data-viewer-scan-label ${backwardScan ? "is-active" : ""}`}>Backward</span>
+                                            <div className="data-viewer-segmented data-viewer-scan-control" role="group" aria-label="Scan direction">
                                                 <button
                                                     type="button"
-                                                    className={`switch data-viewer-scan-switch ${!backwardScan ? "active" : ""}`}
-                                                    onClick={() => handleScanDirectionChange(!backwardScan)}
-                                                    aria-label={`Scan direction: ${getScanDirectionLabel(backwardScan)}`}
+                                                    className={`data-viewer-segmented-item ${backwardScan ? "is-active" : ""}`}
+                                                    onClick={() => handleScanDirectionChange(true)}
+                                                    aria-pressed={backwardScan}
+                                                >
+                                                    Backward
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    className={`data-viewer-segmented-item ${!backwardScan ? "is-active" : ""}`}
+                                                    onClick={() => handleScanDirectionChange(false)}
                                                     aria-pressed={!backwardScan}
                                                 >
-                                                    <div className="switch-thumb" />
+                                                    Forward
                                                 </button>
-                                                <span className={`data-viewer-scan-label ${!backwardScan ? "is-active" : ""}`}>Forward</span>
                                             </div>
                                         )}
                                         {showsDataViewerTimeControls(mode) && (
@@ -1037,11 +1042,11 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
                                                 </button>
                                             </div>
                                         )}
-                                        <div className="log-level-group" role="tablist" aria-label="Result mode">
-                                            <button type="button" className={`log-level-item ${mode === "raw" ? "is-included" : "is-excluded"}`} onClick={() => setMode("raw")}>
+                                        <div className="data-viewer-segmented data-viewer-mode-control" role="tablist" aria-label="Result mode">
+                                            <button type="button" role="tab" aria-selected={mode === "raw"} className={`data-viewer-segmented-item ${mode === "raw" ? "is-active" : ""}`} onClick={() => setMode("raw")}>
                                                 Raw
                                             </button>
-                                            <button type="button" className={`log-level-item ${mode === "chart" ? "is-included" : "is-excluded"}`} onClick={() => setMode("chart")}>
+                                            <button type="button" role="tab" aria-selected={mode === "chart"} className={`data-viewer-segmented-item ${mode === "chart" ? "is-active" : ""}`} onClick={() => setMode("chart")}>
                                                 Chart
                                             </button>
                                         </div>
