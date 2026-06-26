@@ -8,6 +8,8 @@ import {
     buildDataViewerChartGroups,
     buildDataViewerEChartOption,
     buildDataViewerSplitGroups,
+    buildDataViewerWheelZoomRange,
+    buildDataViewerZoomControlRange,
     buildTagRows,
     buildTagChartSeries,
     buildDataViewerPath,
@@ -593,6 +595,7 @@ test("buildDataViewerEChartOption creates line chart options with data zoom", ()
     assert.equal(option.dataZoom.length, 2);
     assert.deepEqual(option.dataZoom.map((zoom) => zoom.type), ["inside", "slider"]);
     assert.deepEqual(option.dataZoom.map((zoom) => zoom.xAxisIndex), [[1], [1]]);
+    assert.equal(option.toolbox.show, false);
 });
 
 test("buildDataViewerEChartOption lays out large multi-tag data by time range", () => {
@@ -663,6 +666,50 @@ test("extractDataViewerDataZoomRange maps navigator percentage into timestamps",
     assert.deepEqual(range, { startTime: 1200, endTime: 1400 });
     assert.equal(hasExplicitDataViewerDataZoomEventRange({ batch: [{ startValue: 10, endValue: 20 }] }), true);
     assert.equal(isSameDataViewerChartRange({ startTime: 10.4, endTime: 20.2 }, { startTime: 10.1, endTime: 20.9 }), true);
+});
+
+test("buildDataViewerZoomControlRange matches Tag Analyzer zoom ratios within navigator bounds", () => {
+    const currentRange = { startTime: 200, endTime: 600 };
+    const navigatorRange = { startTime: 0, endTime: 1000 };
+
+    assert.deepEqual(buildDataViewerZoomControlRange("zoom-in", currentRange, navigatorRange, 0.4), {
+        startTime: 360,
+        endTime: 440,
+    });
+    assert.deepEqual(buildDataViewerZoomControlRange("zoom-out", currentRange, navigatorRange, 0.2), {
+        startTime: 120,
+        endTime: 680,
+    });
+    assert.deepEqual(buildDataViewerZoomControlRange("focus", currentRange, navigatorRange), {
+        startTime: 360,
+        endTime: 440,
+    });
+    assert.deepEqual(buildDataViewerZoomControlRange("pan-left", currentRange, navigatorRange), {
+        startTime: 0,
+        endTime: 400,
+    });
+    assert.deepEqual(buildDataViewerZoomControlRange("pan-right", currentRange, navigatorRange), {
+        startTime: 400,
+        endTime: 800,
+    });
+});
+
+test("buildDataViewerWheelZoomRange zooms around the pointer anchor", () => {
+    const currentRange = { startTime: 200, endTime: 600 };
+    const navigatorRange = { startTime: 0, endTime: 1000 };
+
+    assert.deepEqual(buildDataViewerWheelZoomRange(-100, 300, currentRange, navigatorRange), {
+        startTime: 218,
+        endTime: 546,
+    });
+    assert.deepEqual(buildDataViewerWheelZoomRange(100, 300, currentRange, navigatorRange), {
+        startTime: 178,
+        endTime: 666,
+    });
+    assert.deepEqual(buildDataViewerWheelZoomRange(100, 200, { startTime: 0, endTime: 900 }, navigatorRange), {
+        startTime: 0,
+        endTime: 1000,
+    });
 });
 
 test("getDataViewerChartRangeMs resolves explicit and data-driven chart ranges", () => {

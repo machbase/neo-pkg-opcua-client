@@ -4,6 +4,10 @@ import * as echarts from "echarts";
 import Icon from "../components/common/Icon";
 import { useApp } from "../context/AppContext";
 import { listTableTags, queryTagChartData, queryTagData, queryTagDataTotal } from "../api/dataViewer";
+import ZoomInTwo from "../assets/image/btn_zoom in x2@3x.png";
+import ZoomInFour from "../assets/image/btn_zoom in x4@3x.png";
+import ZoomOutTwo from "../assets/image/btn_zoom out x2@3x.png";
+import ZoomOutFour from "../assets/image/btn_zoom out x4@3x.png";
 import {
     DATA_VIEWER_BACK_PATH,
     DEFAULT_TIME_FORMAT,
@@ -16,6 +20,8 @@ import {
     buildDataViewerEChartOption,
     buildDataViewerHeaderLabels,
     buildDataViewerSplitGroups,
+    buildDataViewerWheelZoomRange,
+    buildDataViewerZoomControlRange,
     buildRawResultColumns,
     buildTagRows,
     extractDataViewerDataZoomRange,
@@ -438,6 +444,7 @@ function FormatTimezoneModal({ timeFormat, timeZone, onApply, onClose }) {
 function TagEChart({ series, timeFormat, timeZone, timeRange, displayRange, onDisplayRangeChange }) {
     const containerRef = useRef(null);
     const chartRef = useRef(null);
+    const rangeRef = useRef({ currentRange: {}, navigatorRange: {}, onDisplayRangeChange });
     const allPoints = useMemo(() => series.flatMap((item) => item.data), [series]);
     const options = useMemo(
         () => buildDataViewerEChartOption({ series, timeFormat, timeZone, timeRange, displayRange }),
@@ -453,25 +460,78 @@ function TagEChart({ series, timeFormat, timeZone, timeRange, displayRange, onDi
     );
 
     useEffect(() => {
+        rangeRef.current = { currentRange, navigatorRange, onDisplayRangeChange };
+    }, [currentRange, navigatorRange, onDisplayRangeChange]);
+
+    useEffect(() => {
         const container = containerRef.current;
         if (!container) return undefined;
 
         const chart = echarts.init(container, null, { renderer: "canvas" });
         chartRef.current = chart;
-        chart.setOption(options, true);
-        const handleDataZoom = (params) => {
-            const dataZoomState = chart.getOption?.()?.dataZoom?.[0];
-            const nextRange = hasExplicitDataViewerDataZoomEventRange(params)
-                ? extractDataViewerDataZoomRange(params, currentRange, navigatorRange)
-                : extractDataViewerDataZoomRange({ ...dataZoomState, ...params }, currentRange, navigatorRange);
+        const getDataZoomEventState = (params = {}) => {
+            const eventState = Array.isArray(params.batch) ? params.batch[0] : params;
+            const dataZoomOptions = chart.getOption?.()?.dataZoom || [];
+            const dataZoomIndex = Number(eventState?.dataZoomIndex);
+            const dataZoomId = eventState?.dataZoomId;
+            const optionState = dataZoomId
+                ? dataZoomOptions.find((item) => item?.id === dataZoomId)
+                : (Number.isFinite(dataZoomIndex) ? dataZoomOptions[dataZoomIndex] : undefined);
 
-            if (!nextRange || isSameDataViewerChartRange(nextRange, currentRange)) return;
-            onDisplayRangeChange?.({
+            return {
+                ...(optionState || dataZoomOptions[1] || dataZoomOptions[0] || {}),
+                ...(eventState || {}),
+            };
+        };
+        const convertMouseEventToTimestamp = (event) => {
+            const rect = container.getBoundingClientRect?.();
+            if (!rect) return undefined;
+
+            const pixel = [event.clientX - rect.left, event.clientY - rect.top];
+            if (!chart.containPixel?.({ gridIndex: 0 }, pixel)) return undefined;
+
+            const fromAxis = chart.convertFromPixel?.({ xAxisIndex: 0 }, pixel);
+            const fromGrid = chart.convertFromPixel?.({ gridIndex: 0 }, pixel);
+            const axisTime = Array.isArray(fromAxis) ? Number(fromAxis[0]) : Number(fromAxis);
+            if (Number.isFinite(axisTime)) return axisTime;
+
+            const gridTime = Array.isArray(fromGrid) ? Number(fromGrid[0]) : Number(fromGrid);
+            if (Number.isFinite(gridTime)) return gridTime;
+
+            const { currentRange: activeRange } = rangeRef.current;
+            const start = Number(activeRange?.startTime);
+            const end = Number(activeRange?.endTime);
+            return Number.isFinite(start) && Number.isFinite(end) ? start + (end - start) / 2 : undefined;
+        };
+        const handleMouseWheelZoom = (event) => {
+            if (event.deltaY === 0) return;
+            const { currentRange: activeRange, navigatorRange: activeNavigatorRange, onDisplayRangeChange: activeRangeChange } = rangeRef.current;
+            const anchorTime = convertMouseEventToTimestamp(event);
+            const nextRange = buildDataViewerWheelZoomRange(event.deltaY, anchorTime, activeRange, activeNavigatorRange);
+            if (!nextRange || isSameDataViewerChartRange(nextRange, activeRange)) return;
+
+            event.preventDefault();
+            event.stopPropagation();
+            activeRangeChange?.({
+                from: new Date(nextRange.startTime).toISOString(),
+                to: new Date(nextRange.endTime).toISOString(),
+            });
+        };
+        const handleDataZoom = (params) => {
+            const { currentRange: activeRange, navigatorRange: activeNavigatorRange, onDisplayRangeChange: activeRangeChange } = rangeRef.current;
+            const dataZoomState = getDataZoomEventState(params);
+            const nextRange = hasExplicitDataViewerDataZoomEventRange(params)
+                ? extractDataViewerDataZoomRange(params, activeRange, activeNavigatorRange)
+                : extractDataViewerDataZoomRange(dataZoomState, activeRange, activeNavigatorRange);
+
+            if (!nextRange || isSameDataViewerChartRange(nextRange, activeRange)) return;
+            activeRangeChange?.({
                 from: new Date(nextRange.startTime).toISOString(),
                 to: new Date(nextRange.endTime).toISOString(),
             });
         };
         chart.on("datazoom", handleDataZoom);
+        container.addEventListener("wheel", handleMouseWheelZoom, { passive: false, capture: true });
 
         const resize = () => chart.resize();
         let observer;
@@ -485,26 +545,92 @@ function TagEChart({ series, timeFormat, timeZone, timeRange, displayRange, onDi
 
         return () => {
             chart.off("datazoom", handleDataZoom);
+            container.removeEventListener("wheel", handleMouseWheelZoom, true);
             if (observer) observer.disconnect();
             else window.removeEventListener("resize", resize);
             chart.dispose();
             chartRef.current = null;
         };
-    }, [currentRange, navigatorRange, onDisplayRangeChange, options]);
+    }, []);
+
+    useEffect(() => {
+        if (!chartRef.current) return;
+        chartRef.current.setOption(options, true);
+        if (Number.isFinite(currentRange.startTime) && Number.isFinite(currentRange.endTime)) {
+            chartRef.current.dispatchAction?.({
+                type: "dataZoom",
+                dataZoomId: "panel-inside-data-zoom",
+                startValue: currentRange.startTime,
+                endValue: currentRange.endTime,
+            });
+            chartRef.current.dispatchAction?.({
+                type: "dataZoom",
+                dataZoomId: "panel-slider-data-zoom",
+                startValue: currentRange.startTime,
+                endValue: currentRange.endTime,
+            });
+        }
+        chartRef.current.resize();
+    }, [currentRange, options]);
+
+    const applyZoomControl = useCallback((action, zoom) => {
+        const nextRange = buildDataViewerZoomControlRange(action, currentRange, navigatorRange, zoom);
+        if (!nextRange || isSameDataViewerChartRange(nextRange, currentRange)) return;
+        onDisplayRangeChange?.({
+            from: new Date(nextRange.startTime).toISOString(),
+            to: new Date(nextRange.endTime).toISOString(),
+        });
+    }, [currentRange, navigatorRange, onDisplayRangeChange]);
+
+    const zoomControlsDisabled = !Number.isFinite(currentRange.startTime) ||
+        !Number.isFinite(currentRange.endTime) ||
+        !Number.isFinite(navigatorRange.startTime) ||
+        !Number.isFinite(navigatorRange.endTime);
 
     if (allPoints.length === 0) {
         return <div className="empty-state">No chart data</div>;
     }
 
     return (
-        <div
-            ref={containerRef}
-            className="data-viewer-chart"
-            data-display-from={Number.isFinite(currentRange.startTime) ? String(Math.floor(currentRange.startTime)) : ""}
-            data-display-to={Number.isFinite(currentRange.endTime) ? String(Math.ceil(currentRange.endTime)) : ""}
-            data-navigator-from={Number.isFinite(navigatorRange.startTime) ? String(Math.floor(navigatorRange.startTime)) : ""}
-            data-navigator-to={Number.isFinite(navigatorRange.endTime) ? String(Math.ceil(navigatorRange.endTime)) : ""}
-        />
+        <div className="data-viewer-chart-shell">
+            <div className="data-viewer-chart-footer-form" aria-label="Chart zoom controls">
+                <div className="data-viewer-chart-toolbar-controls">
+                    <div className="data-viewer-chart-toolbar-group">
+                        {[
+                            ["zoom-in", ZoomInFour, "Zoom in", 0.4],
+                            ["zoom-in", ZoomInTwo, "Zoom in", 0.2],
+                            ["focus", undefined, "Focus", undefined],
+                            ["zoom-out", ZoomOutTwo, "Zoom out", 0.2],
+                            ["zoom-out", ZoomOutFour, "Zoom out", 0.4],
+                        ].map(([action, image, label, zoom], index) => (
+                            <button
+                                key={`${action}-${index}`}
+                                type="button"
+                                className="data-viewer-chart-toolbar-button"
+                                title={label}
+                                aria-label={label}
+                                disabled={zoomControlsDisabled}
+                                onClick={() => applyZoomControl(action, zoom)}
+                            >
+                                {image ? (
+                                    <img src={image} alt="" className="data-viewer-chart-toolbar-image" />
+                                ) : (
+                                    <Icon name="center_focus_strong" className="data-viewer-chart-toolbar-icon" />
+                                )}
+                            </button>
+                        ))}
+                    </div>
+                </div>
+            </div>
+            <div
+                ref={containerRef}
+                className="data-viewer-chart"
+                data-display-from={Number.isFinite(currentRange.startTime) ? String(Math.floor(currentRange.startTime)) : ""}
+                data-display-to={Number.isFinite(currentRange.endTime) ? String(Math.ceil(currentRange.endTime)) : ""}
+                data-navigator-from={Number.isFinite(navigatorRange.startTime) ? String(Math.floor(navigatorRange.startTime)) : ""}
+                data-navigator-to={Number.isFinite(navigatorRange.endTime) ? String(Math.ceil(navigatorRange.endTime)) : ""}
+            />
+        </div>
     );
 }
 

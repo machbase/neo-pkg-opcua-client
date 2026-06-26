@@ -579,6 +579,8 @@ const PANEL_MAIN_TOP_WITH_LEGEND = 40;
 const PANEL_MAIN_HEIGHT = 178;
 const PANEL_MAIN_SERIES_ID_PREFIX = "main-series-";
 const PANEL_COLORS = ["#5470c6", "#91cc75", "#fac858", "#ee6666", "#73c0de", "#3ba272", "#fc8452", "#9a60b4", "#ea7ccc"];
+const PANEL_MOUSE_WHEEL_ZOOM_IN_FACTOR = 0.82;
+const PANEL_MOUSE_WHEEL_ZOOM_OUT_FACTOR = 1.22;
 
 const AXIS_LINE_STYLE = { lineStyle: { color: "#323333" } };
 const AXIS_SPLIT_LINE_STYLE = { color: "#323333", width: 1 };
@@ -689,6 +691,89 @@ export function isSameDataViewerChartRange(a = {}, b = {}) {
     const bEnd = Number(b.endTime);
     if (![aStart, aEnd, bStart, bEnd].every(Number.isFinite)) return false;
     return Math.floor(aStart) === Math.floor(bStart) && Math.ceil(aEnd) === Math.ceil(bEnd);
+}
+
+export function buildDataViewerZoomControlRange(action, currentRange = {}, navigatorRange = {}, zoom = 0.2) {
+    const currentStart = Number(currentRange.startTime);
+    const currentEnd = Number(currentRange.endTime);
+    const navigatorStart = Number(navigatorRange.startTime);
+    const navigatorEnd = Number(navigatorRange.endTime);
+    if (![currentStart, currentEnd, navigatorStart, navigatorEnd].every(Number.isFinite)) return undefined;
+    if (currentEnd <= currentStart || navigatorEnd <= navigatorStart) return undefined;
+
+    const currentSpan = currentEnd - currentStart;
+    const navigatorSpan = navigatorEnd - navigatorStart;
+    const center = currentStart + currentSpan / 2;
+    let nextStart = currentStart;
+    let nextEnd = currentEnd;
+
+    if (action === "zoom-in") {
+        const offset = currentSpan * zoom;
+        nextStart = currentStart + offset;
+        nextEnd = currentEnd - offset;
+    } else if (action === "zoom-out") {
+        const offset = currentSpan * zoom;
+        nextStart = currentStart - offset;
+        nextEnd = currentEnd + offset;
+    } else if (action === "focus") {
+        const nextSpan = Math.max(currentSpan * 0.2, 1);
+        nextStart = center - nextSpan / 2;
+        nextEnd = center + nextSpan / 2;
+    } else if (action === "pan-left") {
+        nextStart = currentStart - currentSpan / 2;
+        nextEnd = currentEnd - currentSpan / 2;
+    } else if (action === "pan-right") {
+        nextStart = currentStart + currentSpan / 2;
+        nextEnd = currentEnd + currentSpan / 2;
+    } else {
+        return undefined;
+    }
+
+    if (nextStart < navigatorStart) {
+        nextEnd += navigatorStart - nextStart;
+        nextStart = navigatorStart;
+    }
+    if (nextEnd > navigatorEnd) {
+        nextStart -= nextEnd - navigatorEnd;
+        nextEnd = navigatorEnd;
+    }
+    nextStart = Math.max(nextStart, navigatorStart);
+    nextEnd = Math.min(nextEnd, navigatorEnd);
+
+    if (nextEnd <= nextStart) return undefined;
+    return { startTime: nextStart, endTime: nextEnd };
+}
+
+export function buildDataViewerWheelZoomRange(deltaY, anchorTime, currentRange = {}, navigatorRange = {}) {
+    const currentStart = Number(currentRange.startTime);
+    const currentEnd = Number(currentRange.endTime);
+    const navigatorStart = Number(navigatorRange.startTime);
+    const navigatorEnd = Number(navigatorRange.endTime);
+    const anchor = Number(anchorTime);
+    if (![currentStart, currentEnd, navigatorStart, navigatorEnd, anchor, deltaY].every(Number.isFinite)) return undefined;
+    if (deltaY === 0 || currentEnd <= currentStart || navigatorEnd <= navigatorStart) return undefined;
+
+    const currentSpan = currentEnd - currentStart;
+    const navigatorSpan = navigatorEnd - navigatorStart;
+    const factor = deltaY < 0 ? PANEL_MOUSE_WHEEL_ZOOM_IN_FACTOR : PANEL_MOUSE_WHEEL_ZOOM_OUT_FACTOR;
+    const nextSpan = Math.min(Math.max(currentSpan * factor, 1), navigatorSpan);
+    const anchorRatio = Math.min(Math.max((anchor - currentStart) / currentSpan, 0), 1);
+    let nextStart = anchor - nextSpan * anchorRatio;
+    let nextEnd = nextStart + nextSpan;
+
+    if (nextStart < navigatorStart) {
+        nextEnd += navigatorStart - nextStart;
+        nextStart = navigatorStart;
+    }
+    if (nextEnd > navigatorEnd) {
+        nextStart -= nextEnd - navigatorEnd;
+        nextEnd = navigatorEnd;
+    }
+    nextStart = Math.max(nextStart, navigatorStart);
+    nextEnd = Math.min(nextEnd, navigatorEnd);
+
+    if (nextEnd <= nextStart) return undefined;
+    return { startTime: nextStart, endTime: nextEnd };
 }
 
 function getRoundedAxisStep(axisRangeValue) {
@@ -899,7 +984,7 @@ export function buildDataViewerEChartOption({
                 filterMode: "none",
                 startValue: panelRange.startTime,
                 endValue: panelRange.endTime,
-                zoomOnMouseWheel: true,
+                zoomOnMouseWheel: false,
                 moveOnMouseMove: false,
                 moveOnMouseWheel: false,
                 preventDefaultMouseMove: true,
