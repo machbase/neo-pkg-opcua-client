@@ -10,6 +10,8 @@ import {
     buildDataViewerSplitGroups,
     buildDataViewerWheelZoomRange,
     buildDataViewerZoomControlRange,
+    buildNeoWebTagAnalyzerMessage,
+    buildNeoWebTagAnalyzerRange,
     buildTagRows,
     buildTagChartSeries,
     buildDataViewerPath,
@@ -32,6 +34,7 @@ import {
     QUICK_TIME_RANGE_GROUPS,
     resolveTimeRangeInput,
     resolveTagNodes,
+    sendNeoWebTagAnalyzerMessage,
     showsDataViewerTimeControls,
     toggleSelectedTagName,
 } from "./dataViewerModel.js";
@@ -558,6 +561,86 @@ test("buildDataViewerSplitGroups skips duplicates, missing tags, and already spl
     assert.deepEqual(groups, [
         { id: "split:0:sensor.a", title: "sensor.a", tagNames: ["sensor.a"] },
     ]);
+});
+
+test("buildNeoWebTagAnalyzerRange prefers explicit units and rejects invalid ranges", () => {
+    assert.deepEqual(buildNeoWebTagAnalyzerRange({
+        from: "2026-06-01T00:00:00.000Z",
+        to: "2026-06-01T01:00:00.000Z",
+    }), {
+        startIso: "2026-06-01T00:00:00.000Z",
+        endIso: "2026-06-01T01:00:00.000Z",
+    });
+    assert.deepEqual(buildNeoWebTagAnalyzerRange({
+        startEpochMs: 1000,
+        endEpochMs: 2000,
+    }), {
+        startEpochMs: 1000,
+        endEpochMs: 2000,
+    });
+    assert.equal(buildNeoWebTagAnalyzerRange({ from: "bad", to: "2026-06-01T00:00:00.000Z" }), undefined);
+    assert.equal(buildNeoWebTagAnalyzerRange({ from: 2000, to: 1000 }), undefined);
+});
+
+test("buildNeoWebTagAnalyzerMessage builds chart-group scoped Tag Analyzer payload", () => {
+    const built = buildNeoWebTagAnalyzerMessage({
+        title: "Selected Tags",
+        table: "TAG",
+        tagNames: ["sensor.a", "sensor.b", "sensor.a", ""],
+        range: {
+            from: "2026-06-01T00:00:00.000Z",
+            to: "2026-06-01T01:00:00.000Z",
+        },
+        valueColumn: "VALUE",
+    });
+
+    assert.equal(built.ok, true);
+    assert.equal(built.message.source, "neo-package");
+    assert.equal(built.message.type, "neo.openTagAnalyzer");
+    assert.equal(built.message.version, 1);
+    assert.equal(built.message.appName, "neo-pkg-opcua-client");
+    assert.deepEqual(built.message.payload.range, {
+        startIso: "2026-06-01T00:00:00.000Z",
+        endIso: "2026-06-01T01:00:00.000Z",
+    });
+    assert.deepEqual(built.message.payload.tags.map((tag) => tag.tagName), ["sensor.a", "sensor.b"]);
+    assert.deepEqual(built.message.payload.tags[0], {
+        tagName: "sensor.a",
+        table: "TAG",
+        calculationMode: "avg",
+        alias: "",
+        weight: 1,
+        colName: {
+            name: "NAME",
+            time: "TIME",
+            value: "VALUE",
+            timeType: 6,
+            timeBaseTime: true,
+            jsonKey: "",
+        },
+    });
+});
+
+test("buildNeoWebTagAnalyzerMessage rejects unsupported payloads", () => {
+    assert.equal(buildNeoWebTagAnalyzerMessage({ table: "", tagNames: ["sensor.a"] }).ok, false);
+    assert.equal(buildNeoWebTagAnalyzerMessage({ table: "TAG", tagNames: [] }).ok, false);
+    assert.deepEqual(buildNeoWebTagAnalyzerMessage({ table: "TAG", tagNames: ["sensor.a"], stringOnly: true }), {
+        ok: false,
+        reason: "Tag Analyzer requires a numeric value column.",
+    });
+});
+
+test("sendNeoWebTagAnalyzerMessage posts to the provided parent window", () => {
+    const calls = [];
+    const targetWindow = {
+        postMessage: (message, origin) => calls.push({ message, origin }),
+    };
+    const message = { type: "neo.openTagAnalyzer" };
+
+    assert.equal(sendNeoWebTagAnalyzerMessage(message, targetWindow, "http://127.0.0.1:5654"), true);
+    assert.deepEqual(calls, [{ message, origin: "http://127.0.0.1:5654" }]);
+    assert.equal(sendNeoWebTagAnalyzerMessage(null, targetWindow, "x"), false);
+    assert.equal(sendNeoWebTagAnalyzerMessage(message, {}, "x"), false);
 });
 
 test("buildDataViewerEChartOption creates line chart options with data zoom", () => {

@@ -25,6 +25,11 @@ export const TIME_FORMATS = [
 
 export const DATA_VIEWER_ROUTE_BASE = "/data-viewer";
 export const DATA_VIEWER_BACK_PATH = "/";
+export const NEO_WEB_TAG_ANALYZER_MESSAGE_TYPE = "neo.openTagAnalyzer";
+export const NEO_WEB_TAG_ANALYZER_MESSAGE_SOURCE = "neo-package";
+export const NEO_WEB_TAG_ANALYZER_MESSAGE_VERSION = 1;
+export const NEO_WEB_TAG_ANALYZER_APP_NAME = "neo-pkg-opcua-client";
+const TAG_ANALYZER_DATETIME_COLUMN_TYPE = 6;
 
 const supportedTimeZones =
     typeof Intl !== "undefined" && typeof Intl.supportedValuesOf === "function"
@@ -58,6 +63,102 @@ export function buildDataViewerHeaderLabels(jobName, tableName) {
         title: job || table,
         detail: table,
     };
+}
+
+function normalizeTagAnalyzerRangeValue(value, keyPrefix) {
+    if (value instanceof Date) {
+        const time = value.getTime();
+        return Number.isFinite(time) ? { [`${keyPrefix}Iso`]: value.toISOString() } : {};
+    }
+    if (typeof value === "number") {
+        return Number.isFinite(value) ? { [`${keyPrefix}EpochMs`]: value } : {};
+    }
+
+    const text = String(value ?? "").trim();
+    if (!text) return {};
+
+    const parsed = Date.parse(text);
+    if (!Number.isFinite(parsed)) return {};
+    return { [`${keyPrefix}Iso`]: new Date(parsed).toISOString() };
+}
+
+export function buildNeoWebTagAnalyzerRange(range = {}) {
+    const start = normalizeTagAnalyzerRangeValue(range.from ?? range.start ?? range.startIso ?? range.startEpochMs, "start");
+    const end = normalizeTagAnalyzerRangeValue(range.to ?? range.end ?? range.endIso ?? range.endEpochMs, "end");
+    if (Object.keys(start).length === 0 || Object.keys(end).length === 0) return undefined;
+
+    const startMs = start.startEpochMs ?? Date.parse(start.startIso);
+    const endMs = end.endEpochMs ?? Date.parse(end.endIso);
+    if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) return undefined;
+    return { ...start, ...end };
+}
+
+export function buildNeoWebTagAnalyzerMessage({
+    appName = NEO_WEB_TAG_ANALYZER_APP_NAME,
+    title = "OPC UA Data Viewer",
+    table,
+    tagNames = [],
+    range,
+    valueColumn = "VALUE",
+    nameColumn = "NAME",
+    timeColumn = "TIME",
+    stringOnly = false,
+} = {}) {
+    const tableName = String(table || "").trim();
+    if (!tableName) return { ok: false, reason: "Database table is required." };
+    if (stringOnly) return { ok: false, reason: "Tag Analyzer requires a numeric value column." };
+
+    const value = String(valueColumn || "VALUE").trim();
+    const name = String(nameColumn || "NAME").trim();
+    const time = String(timeColumn || "TIME").trim();
+    if (!value || !name || !time) return { ok: false, reason: "Tag Analyzer column mapping is incomplete." };
+
+    const seen = new Set();
+    const tags = [];
+    for (const rawName of tagNames || []) {
+        const tagName = String(rawName || "").trim();
+        if (!tagName || seen.has(tagName)) continue;
+        seen.add(tagName);
+        tags.push({
+            tagName,
+            table: tableName,
+            calculationMode: "avg",
+            alias: "",
+            weight: 1,
+            colName: {
+                name,
+                time,
+                value,
+                timeType: TAG_ANALYZER_DATETIME_COLUMN_TYPE,
+                timeBaseTime: true,
+                jsonKey: "",
+            },
+        });
+    }
+
+    if (tags.length === 0) return { ok: false, reason: "Cannot open Tag Analyzer because there is no tag." };
+
+    const normalizedRange = buildNeoWebTagAnalyzerRange(range);
+    return {
+        ok: true,
+        message: {
+            source: NEO_WEB_TAG_ANALYZER_MESSAGE_SOURCE,
+            type: NEO_WEB_TAG_ANALYZER_MESSAGE_TYPE,
+            version: NEO_WEB_TAG_ANALYZER_MESSAGE_VERSION,
+            appName,
+            payload: {
+                title,
+                ...(normalizedRange ? { range: normalizedRange } : {}),
+                tags,
+            },
+        },
+    };
+}
+
+export function sendNeoWebTagAnalyzerMessage(message, targetWindow, targetOrigin) {
+    if (!message || typeof targetWindow?.postMessage !== "function") return false;
+    targetWindow.postMessage(message, targetOrigin);
+    return true;
 }
 
 const RAW_COLUMN_ORDER = ["time", "name", "value"];

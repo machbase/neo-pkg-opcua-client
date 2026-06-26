@@ -22,6 +22,7 @@ import {
     buildDataViewerSplitGroups,
     buildDataViewerWheelZoomRange,
     buildDataViewerZoomControlRange,
+    buildNeoWebTagAnalyzerMessage,
     buildRawResultColumns,
     buildTagRows,
     extractDataViewerDataZoomRange,
@@ -40,6 +41,7 @@ import {
     normalizeSelectedTagNames,
     resolveTimeRangeInput,
     resolveTagNodes,
+    sendNeoWebTagAnalyzerMessage,
     showsDataViewerTimeControls,
     toggleSelectedTagName,
 } from "./dataViewerModel";
@@ -1049,6 +1051,30 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
             }
         }
     };
+    const handleOpenTagAnalyzer = (group, chartData) => {
+        const built = buildNeoWebTagAnalyzerMessage({
+            title: group.title || "OPC UA Data Viewer",
+            table: dbTable,
+            tagNames: group.tagNames,
+            range: chartViewRanges[group.id] || chartData?.range || group.range,
+            valueColumn,
+            stringOnly: Boolean(config.stringOnly),
+        });
+        if (!built.ok) {
+            notify(built.reason || "Cannot open Tag Analyzer.", "error");
+            return;
+        }
+
+        const targetWindow = typeof window !== "undefined" ? window.parent : null;
+        if (!targetWindow || targetWindow === window) {
+            notify("Open this Data Viewer inside neo-web to use Tag Analyzer.", "error");
+            return;
+        }
+        const sent = sendNeoWebTagAnalyzerMessage(built.message, targetWindow, window.location.origin);
+        if (!sent) {
+            notify("Cannot send Tag Analyzer request to neo-web.", "error");
+        }
+    };
 
     return (
         <div className={embedded ? "data-viewer-embedded" : "page"}>
@@ -1266,28 +1292,39 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
                                                         <span className="truncate">{group.title}</span>
                                                         <span className="badge badge-muted">{group.tagNames.length}</span>
                                                     </div>
-                                                    {group.split && (
-                                                        <div className="data-viewer-chart-panel-actions">
-                                                            <button
-                                                                type="button"
-                                                                className="btn btn-sm btn-ghost"
-                                                                title="Group"
-                                                                onClick={() => handleMergeSplitChart(group.id)}
-                                                            >
-                                                                <Icon name="join_inner" className="icon-sm" />
-                                                                <span>Group</span>
-                                                            </button>
-                                                            <button
-                                                                type="button"
-                                                                className="btn btn-sm btn-ghost data-viewer-time-range-button"
-                                                                title={formatTimeRangeLabel(group.range?.from, group.range?.to)}
-                                                                onClick={() => setRangeEditor({ type: "split", groupId: group.id })}
-                                                            >
-                                                                <Icon name="calendar_month" className="icon-sm" />
-                                                                <span>{formatTimeRangeLabel(group.range?.from, group.range?.to)}</span>
-                                                            </button>
-                                                        </div>
-                                                    )}
+                                                    <div className="data-viewer-chart-panel-actions">
+                                                        <button
+                                                            type="button"
+                                                            className="btn btn-sm btn-ghost"
+                                                            title="Open in Tag Analyzer"
+                                                            onClick={() => handleOpenTagAnalyzer(group, chartData)}
+                                                        >
+                                                            <Icon name="monitoring" className="icon-sm" />
+                                                            <span>Tag Analyzer</span>
+                                                        </button>
+                                                        {group.split && (
+                                                            <>
+                                                                <button
+                                                                    type="button"
+                                                                    className="btn btn-sm btn-ghost"
+                                                                    title="Group"
+                                                                    onClick={() => handleMergeSplitChart(group.id)}
+                                                                >
+                                                                    <Icon name="join_inner" className="icon-sm" />
+                                                                    <span>Group</span>
+                                                                </button>
+                                                                <button
+                                                                    type="button"
+                                                                    className="btn btn-sm btn-ghost data-viewer-time-range-button"
+                                                                    title={formatTimeRangeLabel(group.range?.from, group.range?.to)}
+                                                                    onClick={() => setRangeEditor({ type: "split", groupId: group.id })}
+                                                                >
+                                                                    <Icon name="calendar_month" className="icon-sm" />
+                                                                    <span>{formatTimeRangeLabel(group.range?.from, group.range?.to)}</span>
+                                                                </button>
+                                                            </>
+                                                        )}
+                                                    </div>
                                                 </div>
                                                 <div className="table-card-body">
                                                     {!group.split && group.tagNames.length > 0 && (group.tagNames.length > 1 || splitChartGroups.length > 0) && (
