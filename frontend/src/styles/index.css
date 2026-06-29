@@ -3993,7 +3993,7 @@ label.switch input:checked + .switch-slider::before {
 .data-viewer-chart-panel-header {
     display: flex;
     align-items: center;
-    justify-content: space-between;
+    justify-content: flex-start;
     gap: var(--spacing-12);
     padding: var(--spacing-8) var(--spacing-12);
     border-bottom: 1px solid var(--color-border);
@@ -4002,6 +4002,7 @@ label.switch input:checked + .switch-slider::before {
 .data-viewer-chart-panel-title {
     display: flex;
     align-items: center;
+    flex: 0 1 auto;
     min-width: 0;
     gap: var(--spacing-8);
     color: var(--color-on-surface);
@@ -4014,7 +4015,9 @@ label.switch input:checked + .switch-slider::before {
     align-items: center;
     justify-content: flex-end;
     gap: var(--spacing-8);
+    flex: 0 0 auto;
     min-width: 0;
+    margin-left: auto;
 }
 
 .data-viewer-chart-panel-actions .btn-sm {
@@ -4035,16 +4038,27 @@ label.switch input:checked + .switch-slider::before {
 .data-viewer-chart-tag-actions {
     display: flex;
     align-items: center;
+    justify-content: flex-start;
     gap: var(--spacing-6);
-    padding: var(--spacing-8) var(--spacing-10);
-    border-bottom: 1px solid var(--color-border);
+    flex: 1 1 auto;
+    max-width: min(720px, 52vw);
+    min-width: 120px;
+    padding: 0;
     overflow-x: auto;
+    overflow-y: hidden;
+    overscroll-behavior-inline: contain;
+    scrollbar-width: none;
+}
+
+.data-viewer-chart-tag-actions::-webkit-scrollbar {
+    display: none;
 }
 
 .data-viewer-chart-tag-chip {
     display: inline-flex;
     align-items: center;
     gap: var(--spacing-6);
+    flex: 0 0 auto;
     max-width: 220px;
     min-height: 28px;
     padding: 0 var(--spacing-8);

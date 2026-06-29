@@ -1292,6 +1292,32 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
                                                         <span className="truncate">{group.title}</span>
                                                         <span className="badge badge-muted">{group.tagNames.length}</span>
                                                     </div>
+                                                    {!group.split && group.tagNames.length > 0 && (group.tagNames.length > 1 || splitChartGroups.length > 0) && (
+                                                        <div
+                                                            className="data-viewer-chart-tag-actions"
+                                                            aria-label="Split individual tags"
+                                                            onWheel={(event) => {
+                                                                const target = event.currentTarget;
+                                                                if (target.scrollWidth <= target.clientWidth) return;
+
+                                                                event.preventDefault();
+                                                                target.scrollLeft += event.deltaX || event.deltaY;
+                                                            }}
+                                                        >
+                                                            {group.tagNames.map((tagName) => (
+                                                                <button
+                                                                    key={tagName}
+                                                                    type="button"
+                                                                    className="data-viewer-chart-tag-chip"
+                                                                    title={`Split ${tagName}`}
+                                                                    onClick={() => handleCreateSplitChart([tagName])}
+                                                                >
+                                                                    <span className="truncate">{tagName}</span>
+                                                                    <Icon name="call_split" className="icon-sm" />
+                                                                </button>
+                                                            ))}
+                                                        </div>
+                                                    )}
                                                     <div className="data-viewer-chart-panel-actions">
                                                         <button
                                                             type="button"
@@ -1327,22 +1353,6 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
                                                     </div>
                                                 </div>
                                                 <div className="table-card-body">
-                                                    {!group.split && group.tagNames.length > 0 && (group.tagNames.length > 1 || splitChartGroups.length > 0) && (
-                                                        <div className="data-viewer-chart-tag-actions" aria-label="Split individual tags">
-                                                            {group.tagNames.map((tagName) => (
-                                                                <button
-                                                                    key={tagName}
-                                                                    type="button"
-                                                                    className="data-viewer-chart-tag-chip"
-                                                                    title={`Split ${tagName}`}
-                                                                    onClick={() => handleCreateSplitChart([tagName])}
-                                                                >
-                                                                    <span className="truncate">{tagName}</span>
-                                                                    <Icon name="call_split" className="icon-sm" />
-                                                                </button>
-                                                            ))}
-                                                        </div>
-                                                    )}
                                                     <TagEChart
                                                         series={chartData.series}
                                                         timeFormat={timeFormat}
