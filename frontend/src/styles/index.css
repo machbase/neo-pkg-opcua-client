@@ -491,7 +491,7 @@ pre {
     font-family: var(--font-family-mono);
     font-size: var(--font-size-md);
     font-weight: var(--font-weight-semibold);
-    color: var(--color-on-surface-secondary);
+    color: var(--color-on-surface);
 }
 .repl-info-host {
     font-family: var(--font-family-mono);
@@ -3461,7 +3461,7 @@ label.switch input:checked + .switch-slider::before {
 .data-viewer-segmented-item.is-active {
     background-color: var(--color-surface);
     border-color: var(--color-border);
-    color: var(--color-on-surface);
+    color: #e0c09d;
     box-shadow: var(--shadow-sm);
 }
 
