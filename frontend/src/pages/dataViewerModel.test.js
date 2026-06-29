@@ -7,6 +7,7 @@ import {
     buildDataViewerChartXAxis,
     buildDataViewerChartGroups,
     buildDataViewerEChartOption,
+    buildDataViewerGlobalTimeUpdate,
     buildDataViewerSplitGroups,
     buildDataViewerWheelZoomRange,
     buildDataViewerZoomControlRange,
@@ -561,6 +562,76 @@ test("buildDataViewerSplitGroups skips duplicates, missing tags, and already spl
     assert.deepEqual(groups, [
         { id: "split:0:sensor.a", title: "sensor.a", tagNames: ["sensor.a"] },
     ]);
+});
+
+test("buildDataViewerGlobalTimeUpdate uses visible range first and applies it to every chart range", () => {
+    const update = buildDataViewerGlobalTimeUpdate({
+        sourceGroupId: "split:b",
+        chartGroups: [
+            { id: "default", title: "Selected Tags", tagNames: ["sensor.a"], range: { from: "2026-06-01T00:00:00.000Z", to: "2026-06-01T01:00:00.000Z" }, split: false },
+            { id: "split:b", title: "sensor.b", tagNames: ["sensor.b"], range: { from: "2026-06-01T00:00:00.000Z", to: "2026-06-01T01:00:00.000Z" }, split: true },
+            { id: "split:c", title: "sensor.c", tagNames: ["sensor.c"], range: { from: "2026-06-01T00:00:00.000Z", to: "2026-06-01T01:00:00.000Z" }, split: true },
+        ],
+        chartViewRanges: {
+            "split:b": { from: "2026-06-01T00:10:00.000Z", to: "2026-06-01T00:20:00.000Z" },
+        },
+        chartNavigatorRanges: {
+            "split:b": { from: "2026-06-01T00:00:00.000Z", to: "2026-06-01T01:00:00.000Z" },
+        },
+        chartResults: {
+            "split:b": { range: { from: "2026-06-01T00:05:00.000Z", to: "2026-06-01T00:25:00.000Z" } },
+        },
+    });
+
+    assert.deepEqual(update, {
+        range: { from: "2026-06-01T00:00:00.000Z", to: "2026-06-01T01:00:00.000Z" },
+        splitRanges: {
+            "split:b": { from: "2026-06-01T00:00:00.000Z", to: "2026-06-01T01:00:00.000Z" },
+            "split:c": { from: "2026-06-01T00:00:00.000Z", to: "2026-06-01T01:00:00.000Z" },
+        },
+        viewRanges: {
+            default: { from: "2026-06-01T00:10:00.000Z", to: "2026-06-01T00:20:00.000Z" },
+            "split:b": { from: "2026-06-01T00:10:00.000Z", to: "2026-06-01T00:20:00.000Z" },
+            "split:c": { from: "2026-06-01T00:10:00.000Z", to: "2026-06-01T00:20:00.000Z" },
+        },
+        navigatorRanges: {
+            default: { from: "2026-06-01T00:00:00.000Z", to: "2026-06-01T01:00:00.000Z" },
+            "split:b": { from: "2026-06-01T00:00:00.000Z", to: "2026-06-01T01:00:00.000Z" },
+            "split:c": { from: "2026-06-01T00:00:00.000Z", to: "2026-06-01T01:00:00.000Z" },
+        },
+    });
+});
+
+test("buildDataViewerGlobalTimeUpdate falls back to query range and rejects unavailable global time", () => {
+    const chartGroups = [
+        { id: "split:a", title: "sensor.a", tagNames: ["sensor.a"], range: { from: "now-1h", to: "now" }, split: true },
+        { id: "split:b", title: "sensor.b", tagNames: ["sensor.b"], range: { from: "now-1h", to: "now" }, split: true },
+    ];
+
+    assert.deepEqual(buildDataViewerGlobalTimeUpdate({
+        sourceGroupId: "split:a",
+        chartGroups,
+        chartResults: {
+            "split:a": { range: { from: "2026-06-01T00:00:00.000Z", to: "2026-06-01T01:00:00.000Z" } },
+        },
+    }), {
+        range: { from: "2026-06-01T00:00:00.000Z", to: "2026-06-01T01:00:00.000Z" },
+        splitRanges: {
+            "split:a": { from: "2026-06-01T00:00:00.000Z", to: "2026-06-01T01:00:00.000Z" },
+            "split:b": { from: "2026-06-01T00:00:00.000Z", to: "2026-06-01T01:00:00.000Z" },
+        },
+        viewRanges: {
+            "split:a": { from: "2026-06-01T00:00:00.000Z", to: "2026-06-01T01:00:00.000Z" },
+            "split:b": { from: "2026-06-01T00:00:00.000Z", to: "2026-06-01T01:00:00.000Z" },
+        },
+        navigatorRanges: {
+            "split:a": { from: "2026-06-01T00:00:00.000Z", to: "2026-06-01T01:00:00.000Z" },
+            "split:b": { from: "2026-06-01T00:00:00.000Z", to: "2026-06-01T01:00:00.000Z" },
+        },
+    });
+
+    assert.equal(buildDataViewerGlobalTimeUpdate({ sourceGroupId: "only", chartGroups: [{ id: "only", range: { from: "2026-06-01T00:00:00.000Z", to: "2026-06-01T01:00:00.000Z" }, split: false }] }), undefined);
+    assert.equal(buildDataViewerGlobalTimeUpdate({ sourceGroupId: "split:a", chartGroups }), undefined);
 });
 
 test("buildNeoWebTagAnalyzerRange prefers explicit units and rejects invalid ranges", () => {

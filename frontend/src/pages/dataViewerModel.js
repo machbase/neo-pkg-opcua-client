@@ -315,6 +315,65 @@ export function buildDataViewerSplitGroups({
     return groups;
 }
 
+function normalizeDataViewerGlobalTimeRange(range = {}) {
+    const startValue = range.from ?? range.start ?? range.startTime;
+    const endValue = range.to ?? range.end ?? range.endTime;
+    const startTime = typeof startValue === "number" ? startValue : Date.parse(String(startValue ?? ""));
+    const endTime = typeof endValue === "number" ? endValue : Date.parse(String(endValue ?? ""));
+
+    if (!Number.isFinite(startTime) || !Number.isFinite(endTime) || endTime <= startTime) return undefined;
+
+    return {
+        from: new Date(startTime).toISOString(),
+        to: new Date(endTime).toISOString(),
+    };
+}
+
+export function buildDataViewerGlobalTimeUpdate({
+    sourceGroupId,
+    chartGroups = [],
+    chartViewRanges = {},
+    chartNavigatorRanges = {},
+    chartResults = {},
+} = {}) {
+    if (!sourceGroupId || chartGroups.length <= 1) return undefined;
+
+    const sourceGroup = chartGroups.find((group) => group?.id === sourceGroupId);
+    if (!sourceGroup) return undefined;
+
+    const displayRange =
+        normalizeDataViewerGlobalTimeRange(chartViewRanges?.[sourceGroupId]) ||
+        normalizeDataViewerGlobalTimeRange(chartResults?.[sourceGroupId]?.range) ||
+        normalizeDataViewerGlobalTimeRange(sourceGroup.range);
+    const navigatorRange =
+        normalizeDataViewerGlobalTimeRange(chartNavigatorRanges?.[sourceGroupId]) ||
+        normalizeDataViewerGlobalTimeRange(chartResults?.[sourceGroupId]?.range) ||
+        normalizeDataViewerGlobalTimeRange(sourceGroup.range) ||
+        displayRange;
+
+    if (!displayRange || !navigatorRange) return undefined;
+
+    const splitRanges = {};
+    const viewRanges = {};
+    const navigatorRanges = {};
+    for (const group of chartGroups) {
+        if (group?.split && group.id) {
+            splitRanges[group.id] = navigatorRange;
+        }
+        if (group?.id) {
+            viewRanges[group.id] = displayRange;
+            navigatorRanges[group.id] = navigatorRange;
+        }
+    }
+
+    return {
+        range: navigatorRange,
+        splitRanges,
+        viewRanges,
+        navigatorRanges,
+    };
+}
+
 export const QUICK_TIME_RANGE_GROUPS = [
     [
         { key: "now-5s", name: "Last 5 seconds", value: ["now-5s", "now"] },
@@ -938,7 +997,7 @@ export function buildDataViewerEChartOption({
 } = {}) {
     const allPoints = series.flatMap((item) => Array.isArray(item?.data) ? item.data : []);
     const panelRange = getPanelRange(allPoints, displayRange || timeRange);
-    const navigatorRange = getPanelRange(allPoints, {});
+    const navigatorRange = getPanelRange(allPoints, timeRange);
     const yAxisRange = getYAxisRange(series, panelRange);
 
     return {
