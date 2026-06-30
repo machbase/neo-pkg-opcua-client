@@ -43,6 +43,7 @@ import {
     resolveTimeRangeInput,
     resolveTagNodes,
     sendNeoWebTagAnalyzerMessage,
+    shouldFetchDataViewerRowsForMode,
     showsDataViewerTimeControls,
     toggleSelectedTagName,
 } from "./dataViewerModel.js";
@@ -153,6 +154,12 @@ test("getScanDirectionLabel uses scan direction wording", () => {
 test("showsDataViewerTimeControls keeps time controls available for raw and chart", () => {
     assert.equal(showsDataViewerTimeControls("raw"), true);
     assert.equal(showsDataViewerTimeControls("chart"), true);
+});
+
+test("shouldFetchDataViewerRowsForMode keeps raw rows active for raw and chart", () => {
+    assert.equal(shouldFetchDataViewerRowsForMode("raw"), true);
+    assert.equal(shouldFetchDataViewerRowsForMode("chart"), true);
+    assert.equal(shouldFetchDataViewerRowsForMode("other"), false);
 });
 
 test("buildTagRows keeps ordinary tags as a flat list", () => {

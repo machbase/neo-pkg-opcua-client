@@ -49,6 +49,7 @@ import {
     resolveTimeRangeInput,
     resolveTagNodes,
     sendNeoWebTagAnalyzerMessage,
+    shouldFetchDataViewerRowsForMode,
     showsDataViewerTimeControls,
     toggleSelectedTagName,
 } from "./dataViewerModel";
@@ -983,7 +984,7 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
             setLoading(false);
             return;
         }
-        if (mode !== "raw") {
+        if (!shouldFetchDataViewerRowsForMode(mode)) {
             setLoading(false);
             return;
         }

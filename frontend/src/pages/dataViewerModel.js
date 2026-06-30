@@ -217,6 +217,10 @@ export function showsDataViewerTimeControls(mode) {
     return mode === "raw" || mode === "chart";
 }
 
+export function shouldFetchDataViewerRowsForMode(mode) {
+    return mode === "raw" || mode === "chart";
+}
+
 export function getDataViewerRawPageSize(selectedTagNames = []) {
     const tagCount = Array.isArray(selectedTagNames) ? selectedTagNames.length : 0;
     return Math.max(1, tagCount) * 1000;
