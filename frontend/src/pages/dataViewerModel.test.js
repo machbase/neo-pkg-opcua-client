@@ -12,10 +12,12 @@ import {
     buildDataViewerRawPageTimeRange,
     buildDataViewerRawPageBounds,
     buildDataViewerRawPageRequest,
+    buildDataViewerRawRowsPerTagChange,
     buildDataViewerRawToChartRangeUpdate,
     buildDataViewerSplitRangeUpdate,
     buildDataViewerSplitGroups,
     buildDataViewerShiftMainRangeUpdate,
+    buildDataViewerDragRangeUpdate,
     buildDataViewerTagSelectionUpdate,
     buildDataViewerWheelZoomRange,
     buildDataViewerZoomControlRange,
@@ -35,6 +37,7 @@ import {
     formatTimeRangeLabel,
     getDataViewerChartRangeMs,
     getDataViewerRawPageSize,
+    normalizeDataViewerRowsPerTag,
     getResultHeading,
     getScanDirectionLabel,
     getVisibleTagRows,
@@ -402,10 +405,45 @@ test("normalizeSelectedTagNames selects the first selectable tag when none remai
     assert.deepEqual(normalizeSelectedTagNames([], []), []);
 });
 
-test("getDataViewerRawPageSize uses 1000 rows per selected tag", () => {
+test("getDataViewerRawPageSize uses configurable rows per selected tag", () => {
     assert.equal(getDataViewerRawPageSize(["sensor.a"]), 1000);
     assert.equal(getDataViewerRawPageSize(["sensor.a", "sensor.b", "sensor.c"]), 3000);
     assert.equal(getDataViewerRawPageSize([]), 1000);
+    assert.equal(getDataViewerRawPageSize(["sensor.a"], 100), 100);
+    assert.equal(getDataViewerRawPageSize(["sensor.a", "sensor.b", "sensor.c"], 100), 300);
+    assert.equal(getDataViewerRawPageSize([], 100), 100);
+});
+
+test("normalizeDataViewerRowsPerTag keeps positive integer values", () => {
+    assert.equal(normalizeDataViewerRowsPerTag("100", 1000), 100);
+    assert.equal(normalizeDataViewerRowsPerTag("100.9", 1000), 100);
+    assert.equal(normalizeDataViewerRowsPerTag("", 1000), 1000);
+    assert.equal(normalizeDataViewerRowsPerTag("0", 1000), 1000);
+    assert.equal(normalizeDataViewerRowsPerTag("abc", 1000), 1000);
+});
+
+test("buildDataViewerRawRowsPerTagChange resets raw paging to page one", () => {
+    assert.deepEqual(
+        buildDataViewerRawRowsPerTagChange({
+            value: "100",
+            currentRowsPerTag: 1000,
+            selectedTagNames: ["sensor.a", "sensor.b", "sensor.c"],
+        }),
+        {
+            rowsPerTag: 100,
+            pageSize: 300,
+            page: 1,
+            rawPageRequest: { page: 1 },
+        }
+    );
+    assert.equal(
+        buildDataViewerRawRowsPerTagChange({
+            value: "0",
+            currentRowsPerTag: 1000,
+            selectedTagNames: ["sensor.a"],
+        }),
+        null
+    );
 });
 
 test("buildDataViewerRawPageTimeRange returns the current raw page time span", () => {
@@ -1278,6 +1316,65 @@ test("buildDataViewerWheelZoomRange zooms around the pointer anchor", () => {
         startTime: 0,
         endTime: 1000,
     });
+});
+
+test("buildDataViewerDragRangeUpdate zooms into a left-button drag range", () => {
+    assert.deepEqual(
+        buildDataViewerDragRangeUpdate({
+            mode: "zoom-in",
+            dragStartTime: 800,
+            dragEndTime: 300,
+            currentRange: { startTime: 0, endTime: 1000 },
+            navigatorRange: { startTime: 0, endTime: 1000 },
+        }),
+        { startTime: 300, endTime: 800 }
+    );
+});
+
+test("buildDataViewerDragRangeUpdate pans with middle-button drag inside navigator", () => {
+    assert.deepEqual(
+        buildDataViewerDragRangeUpdate({
+            mode: "pan",
+            dragStartTime: 500,
+            dragEndTime: 650,
+            currentRange: { startTime: 200, endTime: 800 },
+            navigatorRange: { startTime: 0, endTime: 1000 },
+        }),
+        { startTime: 50, endTime: 650 }
+    );
+    assert.equal(
+        buildDataViewerDragRangeUpdate({
+            mode: "pan",
+            dragStartTime: 500,
+            dragEndTime: 650,
+            currentRange: { startTime: 0, endTime: 1000 },
+            navigatorRange: { startTime: 0, endTime: 1000 },
+        }),
+        undefined
+    );
+});
+
+test("buildDataViewerDragRangeUpdate zooms out with right-button drag", () => {
+    assert.deepEqual(
+        buildDataViewerDragRangeUpdate({
+            mode: "zoom-out",
+            dragStartTime: 400,
+            dragEndTime: 600,
+            currentRange: { startTime: 200, endTime: 800 },
+            navigatorRange: { startTime: 0, endTime: 1000 },
+        }),
+        { startTime: 100, endTime: 900 }
+    );
+    assert.deepEqual(
+        buildDataViewerDragRangeUpdate({
+            mode: "zoom-out",
+            dragStartTime: 0,
+            dragEndTime: 1000,
+            currentRange: { startTime: 200, endTime: 800 },
+            navigatorRange: { startTime: 0, endTime: 1000 },
+        }),
+        { startTime: 0, endTime: 1000 }
+    );
 });
 
 test("getDataViewerChartRangeMs resolves explicit and data-driven chart ranges", () => {
