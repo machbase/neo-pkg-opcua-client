@@ -1930,6 +1930,35 @@ runner.run('Handler: dbTableData', {
         t.assertEqual(mockMachbaseClient.queries[0].values[0], 'sensor.a');
     },
 
+    'normalizes raw numeric value precision to match web query responses': (t) => {
+        const H = makeHandler();
+        mockMachbaseClient.users = [{ USER_ID: 1, NAME: 'SYS' }];
+        mockMachbaseClient.tableMeta = { ID: 10, TYPE: 6, NAME: 'TAG' };
+        mockMachbaseClient.queryResults = [
+            [
+                { TIME: new Date('2026-06-01T00:00:00Z'), NAME: 'sensor.a', VALUE: 23.420000076293945 },
+                { TIME: new Date('2026-06-01T00:00:01Z'), NAME: 'sensor.b', VALUE: -39.8431282043457 },
+            ],
+        ];
+
+        let result;
+        H.dbTableData({
+            host: 'h',
+            port: 5656,
+            user: 'SYS',
+            password: 'p',
+        }, {
+            table: 'TAG',
+            names: ['sensor.a', 'sensor.b'],
+            valueColumn: 'VALUE',
+            pageSize: 2,
+        }, (r) => { result = r; });
+
+        t.assert(result.ok, 'should be ok');
+        t.assertEqual(result.data.rows[0].value, 23.42);
+        t.assertEqual(result.data.rows[1].value, -39.843128);
+    },
+
     'accepts multiple names and binds all values in an IN filter': (t) => {
         const H = makeHandler();
         mockMachbaseClient.users = [{ USER_ID: 1, NAME: 'SYS' }];
@@ -2013,6 +2042,41 @@ runner.run('Handler: dbTableData', {
         t.assertDeepEqual(result.data.names, ['area,1', 'sensor.b']);
         t.assert(mockMachbaseClient.queries[0].sql.includes('WHERE NAME IN (?, ?)'), 'repeated names should use multiple placeholders');
         t.assertDeepEqual(mockMachbaseClient.queries[0].values.slice(0, 2), ['area,1', 'sensor.b']);
+    },
+
+    'returns full bounded range rows without page limit': (t) => {
+        const H = makeHandler();
+        mockMachbaseClient.users = [{ USER_ID: 1, NAME: 'SYS' }];
+        mockMachbaseClient.tableMeta = { ID: 10, TYPE: 6, NAME: 'TAG' };
+        mockMachbaseClient.queryResults = [
+            [
+                { TIME: new Date('2026-06-01T00:02:00Z'), NAME: 'sensor.a', VALUE: 12.5 },
+                { TIME: new Date('2026-06-01T00:01:00Z'), NAME: 'sensor.b', VALUE: 11.5 },
+                { TIME: new Date('2026-06-01T00:00:00Z'), NAME: 'sensor.c', VALUE: 10.5 },
+            ],
+        ];
+
+        let result;
+        H.dbTableData({
+            host: 'h',
+            port: 5656,
+            user: 'SYS',
+            password: 'p',
+        }, {
+            table: 'TAG',
+            names: ['sensor.a', 'sensor.b', 'sensor.c'],
+            valueColumn: 'VALUE',
+            from: '2026-06-01T00:00:00.000Z',
+            to: '2026-06-01T00:02:00.000Z',
+            pageSize: 2,
+            boundedRange: true,
+        }, (r) => { result = r; });
+
+        t.assert(result.ok, 'should be ok');
+        t.assertEqual(result.data.pageSize, 2, 'response pageSize should keep request value');
+        t.assertEqual(result.data.rows.length, 3, 'bounded range refresh should return all rows in range');
+        t.assert(!mockMachbaseClient.queries[0].sql.includes('LIMIT'), 'bounded range query should not apply page limit');
+        t.assertDeepEqual(mockMachbaseClient.queries[0].values.slice(0, 3), ['sensor.a', 'sensor.b', 'sensor.c']);
     },
 
     'returns oldest raw rows with forward scan and time range': (t) => {

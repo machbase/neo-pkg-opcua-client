@@ -13,7 +13,9 @@ import {
     buildDataViewerRawPageBounds,
     buildDataViewerRawPageRequest,
     buildDataViewerRawToChartRangeUpdate,
+    buildDataViewerSplitRangeUpdate,
     buildDataViewerSplitGroups,
+    buildDataViewerTagSelectionUpdate,
     buildDataViewerWheelZoomRange,
     buildDataViewerZoomControlRange,
     buildNeoWebTagAnalyzerMessage,
@@ -589,6 +591,29 @@ test("toggleSelectedTagName removes existing tags or appends new tags", () => {
     assert.deepEqual(toggleSelectedTagName(["sensor.a"], "sensor.b"), ["sensor.a", "sensor.b"]);
 });
 
+test("buildDataViewerTagSelectionUpdate preserves chart ranges while refreshing raw rows", () => {
+    const update = buildDataViewerTagSelectionUpdate({
+        selectedTagNames: ["sensor.a"],
+        tagName: "sensor.b",
+        currentPage: 3,
+        currentBounds: {
+            pageBounds: {
+                from: "2026-06-01T00:00:00.000Z",
+                to: "2026-06-01T00:10:00.000Z",
+            },
+        },
+    });
+
+    assert.deepEqual(update.selectedTagNames, ["sensor.a", "sensor.b"]);
+    assert.deepEqual(update.rawPageRequest, {
+        page: 3,
+        from: "2026-06-01T00:00:00.000Z",
+        to: "2026-06-01T00:10:00.000Z",
+        boundedRange: true,
+    });
+    assert.equal(update.preserveChartRanges, true);
+});
+
 test("resolveTagNodes falls back to DB tag names when collector nodes are empty", () => {
     const nodes = resolveTagNodes([], [
         { name: "sensor.a" },
@@ -802,6 +827,46 @@ test("buildDataViewerSplitGroups skips duplicates, missing tags, and already spl
     assert.deepEqual(groups, [
         { id: "split:0:sensor.a", title: "sensor.a", tagNames: ["sensor.a"] },
     ]);
+});
+
+test("buildDataViewerSplitRangeUpdate preserves default ranges and seeds new split ranges", () => {
+    const update = buildDataViewerSplitRangeUpdate({
+        nextGroups: [
+            { id: "split:a", title: "sensor.a", tagNames: ["sensor.a"] },
+            { id: "split:b", title: "sensor.b", tagNames: ["sensor.b"] },
+        ],
+        chartViewRanges: {
+            default: { startTime: 1000, endTime: 2000 },
+            "split:old": { startTime: 3000, endTime: 4000 },
+        },
+        chartNavigatorRanges: {
+            default: { startTime: 0, endTime: 5000 },
+            "split:old": { startTime: 2500, endTime: 4500 },
+        },
+        splitRanges: {
+            "split:old": { startTime: 2500, endTime: 4500 },
+        },
+    });
+
+    assert.deepEqual(update, {
+        chartViewRanges: {
+            default: { startTime: 1000, endTime: 2000 },
+            "split:old": { startTime: 3000, endTime: 4000 },
+            "split:a": { startTime: 1000, endTime: 2000 },
+            "split:b": { startTime: 1000, endTime: 2000 },
+        },
+        chartNavigatorRanges: {
+            default: { startTime: 0, endTime: 5000 },
+            "split:old": { startTime: 2500, endTime: 4500 },
+            "split:a": { startTime: 0, endTime: 5000 },
+            "split:b": { startTime: 0, endTime: 5000 },
+        },
+        splitRanges: {
+            "split:old": { startTime: 2500, endTime: 4500 },
+            "split:a": { startTime: 0, endTime: 5000 },
+            "split:b": { startTime: 0, endTime: 5000 },
+        },
+    });
 });
 
 test("buildDataViewerGlobalTimeUpdate uses visible range first and applies it to every chart range", () => {

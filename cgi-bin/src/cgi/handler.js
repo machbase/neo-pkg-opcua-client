@@ -2003,6 +2003,11 @@ function rowCountValue(row) {
 const INTERNAL_QUERY_ROW_FIELDS = new Set(['buffer', 'names']);
 const TAG_DATA_MAX_PAGE_SIZE = 1000000;
 
+function normalizeWebQueryNumericValue(value) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return value;
+  return Math.round(value * 1000000) / 1000000;
+}
+
 function normalizeTagDataRow(row, req) {
   const normalized = {};
   for (const [key, value] of Object.entries(row || {})) {
@@ -2026,6 +2031,9 @@ function normalizeTagDataRow(row, req) {
   if (valueKey !== 'value' && Object.prototype.hasOwnProperty.call(normalized, valueKey)) {
     normalized.value = normalized[valueKey];
     delete normalized[valueKey];
+  }
+  if (Object.prototype.hasOwnProperty.call(normalized, 'value')) {
+    normalized.value = normalizeWebQueryNumericValue(normalized.value);
   }
 
   return normalized;
@@ -2433,11 +2441,11 @@ function dbTableData(db, params, reply) {
     const orderName = cursor ? cursor.orderName : 'ASC';
     const scan = orderTime === 'ASC' ? 'SCAN_FORWARD' : 'SCAN_BACKWARD';
     const offset = cursor ? req.cursorOffset : (req.boundedRange ? 0 : (req.page - 1) * req.pageSize);
-    const limitSql = cursor ? 'LIMIT ?, ?' : 'LIMIT ?';
-    const limitValues = cursor ? [offset, req.pageSize] : [offset + req.pageSize];
+    const limitSql = cursor ? ' LIMIT ?, ?' : (req.boundedRange ? '' : ' LIMIT ?');
+    const limitValues = cursor ? [offset, req.pageSize] : (req.boundedRange ? [] : [offset + req.pageSize]);
     const dataRows = client.query(
       `SELECT /*+ ${scan}(${req.tableRef}) */ * ` +
-      `FROM ${req.tableRef} WHERE ${queryWhere} ORDER BY ${req.timeColumn} ${orderTime}, ${req.primaryColumn} ${orderName} ${limitSql}`,
+      `FROM ${req.tableRef} WHERE ${queryWhere} ORDER BY ${req.timeColumn} ${orderTime}, ${req.primaryColumn} ${orderName}${limitSql}`,
       [
         ...where.values,
         ...(cursor ? cursor.values : []),
@@ -2446,7 +2454,7 @@ function dbTableData(db, params, reply) {
     );
     const pageRows = cursor
       ? (cursor.reverseRows ? [...(dataRows || [])].reverse() : (dataRows || []))
-      : (dataRows || []).slice(req.boundedRange ? 0 : offset, req.boundedRange ? req.pageSize : offset + req.pageSize);
+      : (req.boundedRange ? (dataRows || []) : (dataRows || []).slice(offset, offset + req.pageSize));
     const rows = pageRows.map((row) => normalizeTagDataRow(row, req));
 
     reply({

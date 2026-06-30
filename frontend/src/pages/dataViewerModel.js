@@ -471,6 +471,35 @@ export function buildDataViewerSplitGroups({
     return groups;
 }
 
+export function buildDataViewerSplitRangeUpdate({
+    nextGroups = [],
+    chartViewRanges = {},
+    chartNavigatorRanges = {},
+    splitRanges = {},
+    sourceGroupId = "default",
+} = {}) {
+    const nextViewRanges = { ...chartViewRanges };
+    const nextNavigatorRanges = { ...chartNavigatorRanges };
+    const nextSplitRanges = { ...splitRanges };
+    const sourceViewRange = chartViewRanges?.[sourceGroupId];
+    const sourceNavigatorRange = chartNavigatorRanges?.[sourceGroupId];
+    const sourceSplitRange = sourceNavigatorRange || sourceViewRange;
+
+    for (const group of nextGroups || []) {
+        const id = String(group?.id || "").trim();
+        if (!id) continue;
+        if (sourceViewRange && !nextViewRanges[id]) nextViewRanges[id] = sourceViewRange;
+        if (sourceNavigatorRange && !nextNavigatorRanges[id]) nextNavigatorRanges[id] = sourceNavigatorRange;
+        if (sourceSplitRange && !nextSplitRanges[id]) nextSplitRanges[id] = sourceSplitRange;
+    }
+
+    return {
+        chartViewRanges: nextViewRanges,
+        chartNavigatorRanges: nextNavigatorRanges,
+        splitRanges: nextSplitRanges,
+    };
+}
+
 function normalizeDataViewerGlobalTimeRange(range = {}) {
     const startValue = range.from ?? range.start ?? range.startTime;
     const endValue = range.to ?? range.end ?? range.endTime;
@@ -1485,6 +1514,27 @@ export function toggleSelectedTagName(selectedNames = [], tagName = "") {
         return current.filter((selectedName) => selectedName !== name);
     }
     return [...current, name];
+}
+
+export function buildDataViewerTagSelectionUpdate({
+    selectedTagNames = [],
+    tagName = "",
+    currentPage = 1,
+    pageSize,
+    currentBounds,
+} = {}) {
+    const nextSelectedTagNames = toggleSelectedTagName(selectedTagNames, tagName);
+    return {
+        selectedTagNames: nextSelectedTagNames,
+        rawPageRequest: buildDataViewerRawPageRequest({
+            currentPage,
+            nextPage: currentPage,
+            pageSize: pageSize ?? getDataViewerRawPageSize(nextSelectedTagNames),
+            currentBounds,
+            reason: "tags",
+        }),
+        preserveChartRanges: true,
+    };
 }
 
 function pad(value, len = 2) {

@@ -24,7 +24,9 @@ import {
     buildDataViewerRawPageBounds,
     buildDataViewerRawPageRequest,
     buildDataViewerRawToChartRangeUpdate,
+    buildDataViewerSplitRangeUpdate,
     buildDataViewerSplitGroups,
+    buildDataViewerTagSelectionUpdate,
     buildDataViewerWheelZoomRange,
     buildDataViewerZoomControlRange,
     buildNeoWebTagAnalyzerMessage,
@@ -51,7 +53,6 @@ import {
     sendNeoWebTagAnalyzerMessage,
     shouldFetchDataViewerRowsForMode,
     showsDataViewerTimeControls,
-    toggleSelectedTagName,
 } from "./dataViewerModel";
 
 const WEEKDAY_LABELS = ["S", "M", "T", "W", "T", "F", "S"];
@@ -911,17 +912,14 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
         rowsRequestRef.current += 1;
         chartRequestRef.current += 1;
         endPageRequestRef.current += 1;
-        setChartViewRanges({});
-        setChartNavigatorRanges({});
-        const next = toggleSelectedTagName(selectedTagNames, tagName);
-        setSelectedTagNames(next);
-        setRawPageRequest(buildDataViewerRawPageRequest({
+        const update = buildDataViewerTagSelectionUpdate({
+            selectedTagNames,
+            tagName,
             currentPage: resultPage,
-            nextPage: resultPage,
-            pageSize: getDataViewerRawPageSize(next),
             currentBounds: rawPageBounds,
-            reason: "tags",
-        }));
+        });
+        setSelectedTagNames(update.selectedTagNames);
+        setRawPageRequest(update.rawPageRequest);
     }, [rawPageBounds, resultPage, selectedTagNames]);
 
     const handleCreateSplitChart = useCallback((tagNames) => {
@@ -931,11 +929,18 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
             assignedTagNames: Array.from(splitAssignedNames),
         });
         if (nextGroups.length === 0) return;
+        const rangeUpdate = buildDataViewerSplitRangeUpdate({
+            nextGroups,
+            chartViewRanges,
+            chartNavigatorRanges,
+            splitRanges: splitChartRanges,
+        });
         chartRequestRef.current += 1;
-        setChartViewRanges({});
-        setChartNavigatorRanges({});
+        setChartViewRanges(rangeUpdate.chartViewRanges);
+        setChartNavigatorRanges(rangeUpdate.chartNavigatorRanges);
+        setSplitChartRanges(rangeUpdate.splitRanges);
         setSplitChartGroups((current) => ([...current, ...nextGroups]));
-    }, [selectedTagNames, splitAssignedNames]);
+    }, [chartNavigatorRanges, chartViewRanges, selectedTagNames, splitAssignedNames, splitChartRanges]);
 
     const handleRemoveSplitChart = useCallback((groupId) => {
         chartRequestRef.current += 1;
