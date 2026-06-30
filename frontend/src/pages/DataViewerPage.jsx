@@ -1333,8 +1333,8 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
                 valueColumn,
                 stringValueColumn,
                 direction: backwardScan ? "latest" : "oldest",
-                from: update.range.from,
-                to: update.range.to,
+                from: update.navigatorRange.from,
+                to: update.navigatorRange.to,
                 pageSize: getDataViewerRawPageSize(group.tagNames),
                 boundedRange: true,
             });

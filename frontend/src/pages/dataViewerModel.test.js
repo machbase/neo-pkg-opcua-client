@@ -1221,27 +1221,27 @@ test("buildDataViewerShiftMainRangeUpdate shifts visible main range like Tag Ana
 
     assert.deepEqual(buildDataViewerShiftMainRangeUpdate({ direction: "backward", currentRange, navigatorRange }), {
         range: {
-            from: new Date(700).toISOString(),
-            to: new Date(1700).toISOString(),
+            from: new Date(100).toISOString(),
+            to: new Date(1100).toISOString(),
         },
         navigatorRange: {
-            from: new Date(0).toISOString(),
-            to: new Date(3000).toISOString(),
+            from: new Date(-900).toISOString(),
+            to: new Date(2100).toISOString(),
         },
     });
     assert.deepEqual(buildDataViewerShiftMainRangeUpdate({ direction: "forward", currentRange, navigatorRange }), {
         range: {
-            from: new Date(1300).toISOString(),
-            to: new Date(2300).toISOString(),
+            from: new Date(1900).toISOString(),
+            to: new Date(2900).toISOString(),
         },
         navigatorRange: {
-            from: new Date(0).toISOString(),
-            to: new Date(3000).toISOString(),
+            from: new Date(900).toISOString(),
+            to: new Date(3900).toISOString(),
         },
     });
 });
 
-test("buildDataViewerShiftMainRangeUpdate expands navigator only when shifted range leaves it", () => {
+test("buildDataViewerShiftMainRangeUpdate moves the full navigator range for page navigation", () => {
     assert.deepEqual(
         buildDataViewerShiftMainRangeUpdate({
             direction: "backward",
@@ -1250,12 +1250,12 @@ test("buildDataViewerShiftMainRangeUpdate expands navigator only when shifted ra
         }),
         {
             range: {
-                from: new Date(700).toISOString(),
-                to: new Date(1700).toISOString(),
+                from: new Date(520).toISOString(),
+                to: new Date(1520).toISOString(),
             },
             navigatorRange: {
-                from: new Date(700).toISOString(),
-                to: new Date(2200).toISOString(),
+                from: new Date(420).toISOString(),
+                to: new Date(2020).toISOString(),
             },
         }
     );
