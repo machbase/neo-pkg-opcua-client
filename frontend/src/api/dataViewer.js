@@ -19,18 +19,28 @@ export function queryTagData({
     to,
     page,
     pageSize,
+    boundedRange,
+    cursorSide,
+    cursorTime,
+    cursorName,
+    cursorOffset,
 }) {
     const params = encodeDataViewerQuery({
         server,
         table,
-        names,
+        names: Array.isArray(names) ? names.map((name) => String(name || "").trim()).filter(Boolean).join(",") : names,
         valueColumn,
         stringValueColumn,
         direction,
         from,
         to,
-        page,
+        page: boundedRange ? undefined : page,
         pageSize,
+        boundedRange,
+        cursorSide,
+        cursorTime,
+        cursorName,
+        cursorOffset,
     });
 
     return request("GET", `/cgi-bin/api/db/table/data?${params}`);
@@ -122,7 +132,7 @@ export function queryTagDataTotal({
     const params = encodeDataViewerQuery({
         server,
         table,
-        names,
+        names: Array.isArray(names) ? names.map((name) => String(name || "").trim()).filter(Boolean).join(",") : names,
         includeTotal: "true",
         valueColumn,
         stringValueColumn,

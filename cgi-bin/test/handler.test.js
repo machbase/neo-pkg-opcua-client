@@ -1963,6 +1963,32 @@ runner.run('Handler: dbTableData', {
         t.assertDeepEqual(mockMachbaseClient.queries[0].values.slice(0, 2), ['sensor.a', 'sensor.b']);
     },
 
+    'allows raw page size to scale with selected tag count': (t) => {
+        const H = makeHandler();
+        mockMachbaseClient.users = [{ USER_ID: 1, NAME: 'SYS' }];
+        mockMachbaseClient.tableMeta = { ID: 10, TYPE: 6, NAME: 'TAG' };
+        mockMachbaseClient.queryResults = [
+            [{ TIME: new Date('2026-06-01T00:02:00Z'), NAME: 'sensor.a', VALUE: 12.5 }],
+        ];
+
+        let result;
+        H.dbTableData({
+            host: 'h',
+            port: 5656,
+            user: 'SYS',
+            password: 'p',
+        }, {
+            table: 'TAG',
+            names: ['sensor.a', 'sensor.b', 'sensor.c'],
+            valueColumn: 'VALUE',
+            pageSize: 3000,
+        }, (r) => { result = r; });
+
+        t.assert(result.ok, 'should be ok');
+        t.assertEqual(result.data.pageSize, 3000);
+        t.assertEqual(mockMachbaseClient.queries[0].values[3], 3000, 'fetch limit should keep scaled raw page size');
+    },
+
     'accepts repeated names params without splitting commas inside tag names': (t) => {
         const H = makeHandler();
         mockMachbaseClient.users = [{ USER_ID: 1, NAME: 'SYS' }];
@@ -2023,6 +2049,135 @@ runner.run('Handler: dbTableData', {
         t.assert(mockMachbaseClient.queries[0].values[1] instanceof Date, 'from should be bound as Date');
         t.assert(mockMachbaseClient.queries[0].values[2] instanceof Date, 'to should be bound as Date');
         t.assertEqual(mockMachbaseClient.queries[0].values[3], 200, 'second page fetches offset plus page size');
+    },
+
+    'uses latest cursor next condition from current page end': (t) => {
+        const H = makeHandler();
+        mockMachbaseClient.users = [{ USER_ID: 1, NAME: 'SYS' }];
+        mockMachbaseClient.tableMeta = { ID: 10, TYPE: 6, NAME: 'TAG' };
+        mockMachbaseClient.queryResults = [
+            [
+                { TIME: new Date('2026-06-01T00:09:00Z'), NAME: 'sensor.a', VALUE: 9 },
+                { TIME: new Date('2026-06-01T00:08:00Z'), NAME: 'sensor.b', VALUE: 8 },
+            ],
+        ];
+
+        let result;
+        H.dbTableData({
+            host: 'h',
+            port: 5656,
+            user: 'SYS',
+            password: 'p',
+        }, {
+            table: 'TAG',
+            names: ['sensor.a', 'sensor.b'],
+            direction: 'latest',
+            page: 3,
+            pageSize: 2,
+            cursorSide: 'next',
+            cursorTime: '2026-06-01T00:10:00.000Z',
+            cursorName: 'sensor.b',
+            cursorOffset: 2,
+        }, (r) => { result = r; });
+
+        t.assert(result.ok, 'should be ok');
+        const query = mockMachbaseClient.queries[0];
+        t.assert(query.sql.includes("TIME < TO_TIMESTAMP('"), 'latest next should use SQL timestamp literal for cursor time');
+        t.assert(query.sql.includes('OR (TIME = TO_TIMESTAMP('), 'latest next should compare equal cursor time as SQL literal');
+        t.assert(query.sql.includes("AND NAME > ?)"), 'latest next should move after page end');
+        t.assert(query.sql.includes('ORDER BY TIME DESC, NAME ASC'), 'latest next should keep display order');
+        t.assert(query.sql.includes('LIMIT ?, ?'), 'cursor query should use cursor offset and page size');
+        t.assertEqual(query.values[2], 'sensor.b');
+        t.assertEqual(query.values[3], 2, 'cursor offset should be passed');
+        t.assertEqual(query.values[4], 2, 'page size should be passed');
+        t.assertEqual(result.data.rows[0].time.toISOString(), '2026-06-01T00:09:00.000Z');
+    },
+
+    'uses reverse query for latest cursor prev and restores display order': (t) => {
+        const H = makeHandler();
+        mockMachbaseClient.users = [{ USER_ID: 1, NAME: 'SYS' }];
+        mockMachbaseClient.tableMeta = { ID: 10, TYPE: 6, NAME: 'TAG' };
+        mockMachbaseClient.queryResults = [
+            [
+                { TIME: new Date('2026-06-01T00:11:00Z'), NAME: 'sensor.c', VALUE: 11 },
+                { TIME: new Date('2026-06-01T00:12:00Z'), NAME: 'sensor.a', VALUE: 12 },
+            ],
+        ];
+
+        let result;
+        H.dbTableData({
+            host: 'h',
+            port: 5656,
+            user: 'SYS',
+            password: 'p',
+        }, {
+            table: 'TAG',
+            names: ['sensor.a', 'sensor.c'],
+            direction: 'latest',
+            page: 2,
+            pageSize: 2,
+            cursorSide: 'prev',
+            cursorTime: '2026-06-01T00:10:00.000Z',
+            cursorName: 'sensor.b',
+            cursorOffset: 0,
+        }, (r) => { result = r; });
+
+        t.assert(result.ok, 'should be ok');
+        const query = mockMachbaseClient.queries[0];
+        t.assert(query.sql.includes("TIME > TO_TIMESTAMP('"), 'latest prev should use SQL timestamp literal for cursor time');
+        t.assert(query.sql.includes("AND NAME < ?)"), 'latest prev should move before page start');
+        t.assert(query.sql.includes('ORDER BY TIME ASC, NAME DESC'), 'latest prev should query in reverse display order');
+        t.assertEqual(result.data.rows[0].time.toISOString(), '2026-06-01T00:12:00.000Z', 'rows should be restored to latest display order');
+        t.assertEqual(result.data.rows[1].time.toISOString(), '2026-06-01T00:11:00.000Z');
+    },
+
+    'uses oldest cursor next and prev conditions': (t) => {
+        const H = makeHandler();
+        mockMachbaseClient.users = [{ USER_ID: 1, NAME: 'SYS' }];
+        mockMachbaseClient.tableMeta = { ID: 10, TYPE: 6, NAME: 'TAG' };
+        mockMachbaseClient.queryResults = [
+            [{ TIME: new Date('2026-06-01T00:11:00Z'), NAME: 'sensor.a', VALUE: 11 }],
+            [{ TIME: new Date('2026-06-01T00:08:00Z'), NAME: 'sensor.a', VALUE: 8 }],
+        ];
+
+        H.dbTableData({
+            host: 'h',
+            port: 5656,
+            user: 'SYS',
+            password: 'p',
+        }, {
+            table: 'TAG',
+            name: 'sensor.a',
+            direction: 'oldest',
+            page: 2,
+            pageSize: 1,
+            cursorSide: 'next',
+            cursorTime: '2026-06-01T00:10:00.000Z',
+            cursorName: 'sensor.a',
+        }, () => {});
+
+        H.dbTableData({
+            host: 'h',
+            port: 5656,
+            user: 'SYS',
+            password: 'p',
+        }, {
+            table: 'TAG',
+            name: 'sensor.a',
+            direction: 'oldest',
+            page: 1,
+            pageSize: 1,
+            cursorSide: 'prev',
+            cursorTime: '2026-06-01T00:10:00.000Z',
+            cursorName: 'sensor.a',
+        }, () => {});
+
+        t.assert(mockMachbaseClient.queries[0].sql.includes("TIME > TO_TIMESTAMP('"), 'oldest next should move after page end');
+        t.assert(mockMachbaseClient.queries[0].sql.includes("AND NAME > ?)"), 'oldest next should compare name after equal cursor time');
+        t.assert(mockMachbaseClient.queries[0].sql.includes('ORDER BY TIME ASC, NAME ASC'), 'oldest next should keep display order');
+        t.assert(mockMachbaseClient.queries[1].sql.includes("TIME < TO_TIMESTAMP('"), 'oldest prev should move before page start');
+        t.assert(mockMachbaseClient.queries[1].sql.includes("AND NAME < ?)"), 'oldest prev should compare name before equal cursor time');
+        t.assert(mockMachbaseClient.queries[1].sql.includes('ORDER BY TIME DESC, NAME DESC'), 'oldest prev should query in reverse display order');
     },
 
     'matches db user case-insensitively': (t) => {

@@ -2001,6 +2001,7 @@ function rowCountValue(row) {
 }
 
 const INTERNAL_QUERY_ROW_FIELDS = new Set(['buffer', 'names']);
+const TAG_DATA_MAX_PAGE_SIZE = 1000000;
 
 function normalizeTagDataRow(row, req) {
   const normalized = {};
@@ -2161,6 +2162,52 @@ function buildTagDataWhere(params, primaryColumn, timeColumn) {
   };
 }
 
+function buildTagDataCursor(req) {
+  if (!req.cursorSide || !req.cursorTime) return null;
+
+  const latest = req.direction !== 'oldest';
+  const next = req.cursorSide === 'next';
+  let timeOp;
+  let nameOp;
+  let orderTime;
+  let orderName;
+  let reverseRows = false;
+
+  if (latest && next) {
+    timeOp = '<';
+    nameOp = '>';
+    orderTime = 'DESC';
+    orderName = 'ASC';
+  } else if (latest) {
+    timeOp = '>';
+    nameOp = '<';
+    orderTime = 'ASC';
+    orderName = 'DESC';
+    reverseRows = true;
+  } else if (next) {
+    timeOp = '>';
+    nameOp = '>';
+    orderTime = 'ASC';
+    orderName = 'ASC';
+  } else {
+    timeOp = '<';
+    nameOp = '<';
+    orderTime = 'DESC';
+    orderName = 'DESC';
+    reverseRows = true;
+  }
+
+  const cursorTimeSql = formatSqlTimestampLiteral(req.cursorTime);
+
+  return {
+    sql: `(${req.timeColumn} ${timeOp} ${cursorTimeSql} OR (${req.timeColumn} = ${cursorTimeSql} AND ${req.primaryColumn} ${nameOp} ?))`,
+    values: [req.cursorName],
+    orderTime,
+    orderName,
+    reverseRows,
+  };
+}
+
 function escapeSqlString(value) {
   return String(value === undefined || value === null ? '' : value).replace(/'/g, "''");
 }
@@ -2169,6 +2216,16 @@ function formatSqlDateLiteral(value) {
   if (!(value instanceof Date)) return '';
   const iso = value.toISOString().replace('T', ' ').replace('Z', '');
   return `to_date('${escapeSqlString(iso)}')`;
+}
+
+function formatSqlTimestampLiteral(value) {
+  if (!(value instanceof Date)) return "TO_TIMESTAMP('')";
+  const pad = (part, size = 2) => String(part).padStart(size, '0');
+  const timestamp =
+    `${value.getFullYear()}-${pad(value.getMonth() + 1)}-${pad(value.getDate())} ` +
+    `${pad(value.getHours())}:${pad(value.getMinutes())}:${pad(value.getSeconds())}.` +
+    `${pad(value.getMilliseconds(), 3)}`;
+  return `TO_TIMESTAMP('${escapeSqlString(timestamp)}')`;
 }
 
 function buildTagChartTqlWhere(req) {
@@ -2252,7 +2309,12 @@ function parseTagDataRequest(params) {
     from: parseOptionalDate(params && params.from, 'from'),
     to: parseOptionalDate(params && params.to, 'to'),
     page: parsePositiveInt(params && params.page, 1, 1, 1000000),
-    pageSize: parsePositiveInt(params && params.pageSize, 100, 1, 1000),
+    pageSize: parsePositiveInt(params && params.pageSize, 100, 1, TAG_DATA_MAX_PAGE_SIZE),
+    boundedRange: params && (params.boundedRange === true || params.boundedRange === 'true'),
+    cursorSide: params && (params.cursorSide === 'next' || params.cursorSide === 'prev') ? params.cursorSide : null,
+    cursorTime: parseOptionalDate(params && params.cursorTime, 'cursorTime'),
+    cursorName: normalizeText(params && params.cursorName),
+    cursorOffset: parsePositiveInt(params && params.cursorOffset, 0, 0, TAG_DATA_MAX_PAGE_SIZE),
   };
   if (!req.name) {
     throw new Error('name is required');
@@ -2342,6 +2404,11 @@ function dbTableTags(db, params, reply) {
  *   to?: string,
  *   page?: number,
  *   pageSize?: number,
+ *   boundedRange?: boolean|string,
+ *   cursorSide?: 'next'|'prev',
+ *   cursorTime?: string,
+ *   cursorName?: string,
+ *   cursorOffset?: number,
  * }} params
  * @param {function} reply
  */
@@ -2360,16 +2427,27 @@ function dbTableData(db, params, reply) {
     validateTagDataTable(client, req, db);
 
     const where = buildTagDataWhere(req, req.primaryColumn, req.timeColumn);
-    const offset = (req.page - 1) * req.pageSize;
-    const fetchLimit = offset + req.pageSize;
-    const scan = req.direction === 'oldest' ? 'SCAN_FORWARD' : 'SCAN_BACKWARD';
-    const orderDir = req.direction === 'oldest' ? 'ASC' : 'DESC';
+    const cursor = buildTagDataCursor(req);
+    const queryWhere = cursor ? `${where.sql} AND ${cursor.sql}` : where.sql;
+    const orderTime = cursor ? cursor.orderTime : (req.direction === 'oldest' ? 'ASC' : 'DESC');
+    const orderName = cursor ? cursor.orderName : 'ASC';
+    const scan = orderTime === 'ASC' ? 'SCAN_FORWARD' : 'SCAN_BACKWARD';
+    const offset = cursor ? req.cursorOffset : (req.boundedRange ? 0 : (req.page - 1) * req.pageSize);
+    const limitSql = cursor ? 'LIMIT ?, ?' : 'LIMIT ?';
+    const limitValues = cursor ? [offset, req.pageSize] : [offset + req.pageSize];
     const dataRows = client.query(
       `SELECT /*+ ${scan}(${req.tableRef}) */ * ` +
-      `FROM ${req.tableRef} WHERE ${where.sql} ORDER BY ${req.timeColumn} ${orderDir}, ${req.primaryColumn} ASC LIMIT ?`,
-      [...where.values, fetchLimit]
+      `FROM ${req.tableRef} WHERE ${queryWhere} ORDER BY ${req.timeColumn} ${orderTime}, ${req.primaryColumn} ${orderName} ${limitSql}`,
+      [
+        ...where.values,
+        ...(cursor ? cursor.values : []),
+        ...limitValues,
+      ]
     );
-    const rows = (dataRows || []).slice(offset, offset + req.pageSize).map((row) => normalizeTagDataRow(row, req));
+    const pageRows = cursor
+      ? (cursor.reverseRows ? [...(dataRows || [])].reverse() : (dataRows || []))
+      : (dataRows || []).slice(req.boundedRange ? 0 : offset, req.boundedRange ? req.pageSize : offset + req.pageSize);
+    const rows = pageRows.map((row) => normalizeTagDataRow(row, req));
 
     reply({
       ok: true,

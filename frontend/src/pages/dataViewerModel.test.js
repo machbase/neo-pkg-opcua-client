@@ -8,6 +8,11 @@ import {
     buildDataViewerChartGroups,
     buildDataViewerEChartOption,
     buildDataViewerGlobalTimeUpdate,
+    buildDataViewerChartResultsFromRawRows,
+    buildDataViewerRawPageTimeRange,
+    buildDataViewerRawPageBounds,
+    buildDataViewerRawPageRequest,
+    buildDataViewerRawToChartRangeUpdate,
     buildDataViewerSplitGroups,
     buildDataViewerWheelZoomRange,
     buildDataViewerZoomControlRange,
@@ -25,9 +30,11 @@ import {
     formatTimeRangeInput,
     formatTimeRangeLabel,
     getDataViewerChartRangeMs,
+    getDataViewerRawPageSize,
     getResultHeading,
     getScanDirectionLabel,
     getVisibleTagRows,
+    hasDataViewerRawNextPage,
     hasExplicitDataViewerDataZoomEventRange,
     hasAssetHierarchy,
     isSameDataViewerChartRange,
@@ -384,6 +391,192 @@ test("normalizeSelectedTagNames selects the first selectable tag when none remai
     assert.deepEqual(normalizeSelectedTagNames([], []), []);
 });
 
+test("getDataViewerRawPageSize uses 1000 rows per selected tag", () => {
+    assert.equal(getDataViewerRawPageSize(["sensor.a"]), 1000);
+    assert.equal(getDataViewerRawPageSize(["sensor.a", "sensor.b", "sensor.c"]), 3000);
+    assert.equal(getDataViewerRawPageSize([]), 1000);
+});
+
+test("buildDataViewerRawPageTimeRange returns the current raw page time span", () => {
+    assert.deepEqual(
+        buildDataViewerRawPageTimeRange([
+            { time: "2026-06-25T05:09:58.534Z", name: "sensor.a" },
+            { time: "2026-06-25T05:09:56.100Z", name: "sensor.b" },
+            { time: "2026-06-25T05:10:01.001Z", name: "sensor.a" },
+        ]),
+        {
+            from: "2026-06-25T05:09:56.100Z",
+            to: "2026-06-25T05:10:01.001Z",
+        }
+    );
+
+    assert.deepEqual(
+        buildDataViewerRawPageTimeRange([
+            { TIME: "2026-06-25T05:09:58.534Z" },
+            { Time: "2026-06-25T05:09:59.534Z" },
+        ]),
+        {
+            from: "2026-06-25T05:09:58.534Z",
+            to: "2026-06-25T05:09:59.534Z",
+        }
+    );
+});
+
+test("buildDataViewerRawPageTimeRange ignores rows without valid time", () => {
+    assert.equal(buildDataViewerRawPageTimeRange([]), null);
+    assert.equal(buildDataViewerRawPageTimeRange([{ time: "" }, { time: "not-a-date" }]), null);
+});
+
+test("buildDataViewerRawPageBounds returns first, last, and time range for the current page", () => {
+    assert.deepEqual(
+        buildDataViewerRawPageBounds([
+            { time: "2026-06-25T05:10:01.001Z", name: "sensor.a" },
+            { time: "2026-06-25T05:09:58.534Z", name: "sensor.b" },
+            { time: "2026-06-25T05:09:56.100Z", name: "sensor.a" },
+        ]),
+        {
+            pageStart: { time: "2026-06-25T05:10:01.001Z", name: "sensor.a" },
+            pageEnd: { time: "2026-06-25T05:09:56.100Z", name: "sensor.a" },
+            pageBounds: {
+                from: "2026-06-25T05:09:56.100Z",
+                to: "2026-06-25T05:10:01.001Z",
+            },
+        }
+    );
+
+    assert.equal(buildDataViewerRawPageBounds([{ time: "", name: "sensor.a" }]), null);
+});
+
+test("buildDataViewerRawPageRequest uses cursor boundaries for page movement", () => {
+    const currentBounds = {
+        pageStart: { time: "2026-06-25T05:10:01.001Z", name: "sensor.a" },
+        pageEnd: { time: "2026-06-25T05:09:56.100Z", name: "sensor.c" },
+        pageBounds: {
+            from: "2026-06-25T05:09:56.100Z",
+            to: "2026-06-25T05:10:01.001Z",
+        },
+    };
+
+    assert.deepEqual(
+        buildDataViewerRawPageRequest({
+            currentPage: 1,
+            nextPage: 2,
+            pageSize: 3000,
+            currentBounds,
+            reason: "page",
+        }),
+        {
+            page: 2,
+            cursorSide: "next",
+            cursorTime: "2026-06-25T05:09:56.100Z",
+            cursorName: "sensor.c",
+            cursorOffset: 0,
+        }
+    );
+
+    assert.deepEqual(
+        buildDataViewerRawPageRequest({
+            currentPage: 1,
+            nextPage: 3,
+            pageSize: 3000,
+            currentBounds,
+            reason: "page",
+        }),
+        {
+            page: 3,
+        }
+    );
+
+    assert.deepEqual(
+        buildDataViewerRawPageRequest({
+            currentPage: 3,
+            nextPage: 2,
+            pageSize: 3000,
+            currentBounds,
+            reason: "page",
+        }),
+        {
+            page: 2,
+            cursorSide: "prev",
+            cursorTime: "2026-06-25T05:10:01.001Z",
+            cursorName: "sensor.a",
+            cursorOffset: 0,
+        }
+    );
+
+    assert.deepEqual(
+        buildDataViewerRawPageRequest({
+            currentPage: 3,
+            nextPage: 3,
+            pageSize: 3000,
+            currentBounds,
+            reason: "tags",
+        }),
+        {
+            page: 3,
+            from: "2026-06-25T05:09:56.100Z",
+            to: "2026-06-25T05:10:01.001Z",
+            boundedRange: true,
+        }
+    );
+});
+
+test("hasDataViewerRawNextPage opens next page during bounded tag refresh", () => {
+    assert.equal(
+        hasDataViewerRawNextPage({
+            rowCount: 100,
+            pageSize: 2000,
+            forceOpen: false,
+        }),
+        false
+    );
+    assert.equal(
+        hasDataViewerRawNextPage({
+            rowCount: 100,
+            pageSize: 2000,
+            forceOpen: true,
+        }),
+        true
+    );
+});
+
+test("buildDataViewerRawToChartRangeUpdate keeps raw range unchanged and prepares chart range", () => {
+    const rawRange = { from: "now-1h", to: "now" };
+
+    assert.deepEqual(
+        buildDataViewerRawToChartRangeUpdate({
+            rows: [
+                { time: "2026-06-25T05:09:58.534Z" },
+                { time: "2026-06-25T05:10:01.001Z" },
+            ],
+            rawRange,
+            splitGroups: [
+                { id: "split:a", title: "sensor.a", tagNames: ["sensor.a"] },
+                { id: "split:b", title: "sensor.b", tagNames: ["sensor.b"] },
+            ],
+        }),
+        {
+            rawRange,
+            chartRange: {
+                from: "2026-06-25T05:09:58.534Z",
+                to: "2026-06-25T05:10:01.001Z",
+            },
+            splitRanges: {
+                "split:a": {
+                    from: "2026-06-25T05:09:58.534Z",
+                    to: "2026-06-25T05:10:01.001Z",
+                },
+                "split:b": {
+                    from: "2026-06-25T05:09:58.534Z",
+                    to: "2026-06-25T05:10:01.001Z",
+                },
+            },
+        }
+    );
+
+    assert.equal(buildDataViewerRawToChartRangeUpdate({ rows: [], rawRange }), null);
+});
+
 test("toggleSelectedTagName removes existing tags or appends new tags", () => {
     assert.deepEqual(toggleSelectedTagName(["sensor.a", "sensor.b"], "sensor.a"), ["sensor.b"]);
     assert.deepEqual(toggleSelectedTagName(["sensor.a"], "sensor.b"), ["sensor.a", "sensor.b"]);
@@ -407,14 +600,47 @@ test("buildTagChartSeries uses real time values and sorts points by time", () =>
         { time: "2026-06-04T10:00:00Z", name: "sensor.a", value: "10.5" },
         { time: "bad-time", name: "sensor.a", value: "99" },
         { time: "2026-06-04T10:01:00Z", name: "sensor.a", value: "not-number" },
+        { TIME: "2026-06-04T10:03:00Z", NAME: "sensor.b", VALUE: "20.5" },
     ]);
 
-    assert.equal(series.length, 1);
+    assert.equal(series.length, 2);
     assert.equal(series[0].name, "sensor.a");
     assert.deepEqual(series[0].data, [
         [Date.parse("2026-06-04T10:00:00Z"), 10.5],
         [Date.parse("2026-06-04T10:02:00Z"), 12.5],
     ]);
+    assert.equal(series[1].name, "sensor.b");
+    assert.deepEqual(series[1].data, [
+        [Date.parse("2026-06-04T10:03:00Z"), 20.5],
+    ]);
+});
+
+test("buildDataViewerChartResultsFromRawRows builds chart groups from visible raw rows", () => {
+    const rows = [
+        { TIME: "2026-06-25T05:10:00.000Z", NAME: "sensor.a", VALUE: 1 },
+        { time: "2026-06-25T05:10:01.000Z", name: "sensor.b", value: 2 },
+        { time: "2026-06-25T05:10:02.000Z", name: "sensor.a", value: 3 },
+    ];
+    const chartGroups = [
+        { id: "default", title: "Selected Tags", tagNames: ["sensor.a", "sensor.b"], range: { from: "raw-from", to: "raw-to" }, split: false },
+        { id: "split:a", title: "sensor.a", tagNames: ["sensor.a"], range: { from: "split-from", to: "split-to" }, split: true },
+    ];
+
+    assert.deepEqual(buildDataViewerChartResultsFromRawRows({ rows, chartGroups }), {
+        default: {
+            range: { from: "raw-from", to: "raw-to" },
+            series: [
+                { name: "sensor.a", data: [[Date.parse("2026-06-25T05:10:00.000Z"), 1], [Date.parse("2026-06-25T05:10:02.000Z"), 3]] },
+                { name: "sensor.b", data: [[Date.parse("2026-06-25T05:10:01.000Z"), 2]] },
+            ],
+        },
+        "split:a": {
+            range: { from: "split-from", to: "split-to" },
+            series: [
+                { name: "sensor.a", data: [[Date.parse("2026-06-25T05:10:00.000Z"), 1], [Date.parse("2026-06-25T05:10:02.000Z"), 3]] },
+            ],
+        },
+    });
 });
 
 test("buildDataViewerChartXAxis uses selected range instead of data extent", () => {
@@ -467,7 +693,7 @@ test("buildDataViewerChartGroups keeps one default chart and splits selected tag
         {
             id: "default",
             title: "Selected Tags",
-            tagNames: ["sensor.a", "sensor.d"],
+            tagNames: ["sensor.a", "sensor.b", "sensor.c", "sensor.d"],
             range: { from: "now-1h", to: "now" },
             split: false,
         },
@@ -481,7 +707,7 @@ test("buildDataViewerChartGroups keeps one default chart and splits selected tag
     ]);
 });
 
-test("buildDataViewerChartGroups keeps the last remaining tag in the default chart", () => {
+test("buildDataViewerChartGroups keeps split tags in the default chart", () => {
     const groups = buildDataViewerChartGroups({
         selectedTagNames: ["sensor.a", "sensor.b"],
         splitGroups: [
@@ -494,7 +720,7 @@ test("buildDataViewerChartGroups keeps the last remaining tag in the default cha
         {
             id: "default",
             title: "Selected Tags",
-            tagNames: ["sensor.b"],
+            tagNames: ["sensor.a", "sensor.b"],
             range: { from: "now-1h", to: "now" },
             split: false,
         },
@@ -508,7 +734,7 @@ test("buildDataViewerChartGroups keeps the last remaining tag in the default cha
     ]);
 });
 
-test("buildDataViewerChartGroups omits the default chart when every tag is split", () => {
+test("buildDataViewerChartGroups keeps the default chart when every tag is split", () => {
     const groups = buildDataViewerChartGroups({
         selectedTagNames: ["sensor.a", "sensor.b"],
         splitGroups: [
@@ -519,6 +745,13 @@ test("buildDataViewerChartGroups omits the default chart when every tag is split
     });
 
     assert.deepEqual(groups, [
+        {
+            id: "default",
+            title: "Selected Tags",
+            tagNames: ["sensor.a", "sensor.b"],
+            range: { from: "now-1h", to: "now" },
+            split: false,
+        },
         {
             id: "split:a",
             title: "sensor.a",

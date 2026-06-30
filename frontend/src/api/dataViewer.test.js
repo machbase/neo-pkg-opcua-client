@@ -4,6 +4,8 @@ import assert from "node:assert/strict";
 import {
     buildSeriesFromChartRows,
     buildDataViewerChartQueryPath,
+    queryTagData,
+    queryTagDataTotal,
     queryTagChartData,
 } from "./dataViewer.js";
 import { encodeDataViewerQuery } from "./dataViewerQuery.js";
@@ -63,6 +65,119 @@ test("buildDataViewerChartQueryPath uses chart endpoint with repeated names", ()
         }),
         "/cgi-bin/api/db/table/chart?server=local&table=TAG&names=sensor.a&names=sensor.b&from=2026-06-01T00%3A00%3A00.000Z&to=2026-06-01T01%3A00%3A00.000Z"
     );
+});
+
+test("queryTagData sends raw cursor parameters", async () => {
+    const originalFetch = globalThis.fetch;
+    const calls = [];
+    globalThis.fetch = async (url, options = {}) => {
+        calls.push({ url: String(url), options });
+        return {
+            status: 200,
+            text: async () => JSON.stringify({
+                ok: true,
+                data: { rows: [], page: 3, pageSize: 3000 },
+            }),
+        };
+    };
+
+    try {
+        await queryTagData({
+            server: "local",
+            table: "TAG",
+            names: ["sensor.a", "sensor.b"],
+            direction: "latest",
+            page: 3,
+            pageSize: 3000,
+            cursorSide: "next",
+            cursorTime: "2026-06-25T05:09:56.100Z",
+            cursorName: "sensor.b",
+            cursorOffset: 3000,
+        });
+
+        const call = calls[0];
+        assert.ok(call.url.includes("names=sensor.a%2Csensor.b"));
+        assert.equal(call.url.includes("names=sensor.a&names=sensor.b"), false);
+        assert.ok(call.url.includes("cursorSide=next"));
+        assert.ok(call.url.includes("cursorTime=2026-06-25T05%3A09%3A56.100Z"));
+        assert.ok(call.url.includes("cursorName=sensor.b"));
+        assert.ok(call.url.includes("cursorOffset=3000"));
+    } finally {
+        globalThis.fetch = originalFetch;
+    }
+});
+
+test("queryTagData omits page when refreshing within current page bounds", async () => {
+    const originalFetch = globalThis.fetch;
+    const calls = [];
+    globalThis.fetch = async (url, options = {}) => {
+        calls.push({ url: String(url), options });
+        return {
+            status: 200,
+            text: async () => JSON.stringify({
+                ok: true,
+                data: { rows: [], page: 1, pageSize: 3000 },
+            }),
+        };
+    };
+
+    try {
+        await queryTagData({
+            server: "local",
+            table: "TAG",
+            names: ["sensor.a", "sensor.b", "sensor.c"],
+            direction: "latest",
+            page: 4,
+            pageSize: 3000,
+            from: "2026-06-25T05:09:56.100Z",
+            to: "2026-06-25T05:10:01.001Z",
+            boundedRange: true,
+        });
+
+        const url = calls[0].url;
+        assert.ok(url.includes("names=sensor.a%2Csensor.b%2Csensor.c"));
+        assert.equal(url.includes("names=sensor.a&names=sensor.b"), false);
+        assert.ok(url.includes("boundedRange=true"));
+        assert.ok(url.includes("pageSize=3000"));
+        assert.ok(url.includes("from=2026-06-25T05%3A09%3A56.100Z"));
+        assert.ok(url.includes("to=2026-06-25T05%3A10%3A01.001Z"));
+        assert.equal(url.includes("page=4"), false);
+    } finally {
+        globalThis.fetch = originalFetch;
+    }
+});
+
+test("queryTagDataTotal sends raw total names as one comma-separated value", async () => {
+    const originalFetch = globalThis.fetch;
+    const calls = [];
+    globalThis.fetch = async (url, options = {}) => {
+        calls.push({ url: String(url), options });
+        return {
+            status: 200,
+            text: async () => JSON.stringify({
+                ok: true,
+                data: { total: 403703, pageSize: 2000, lastPage: 202 },
+            }),
+        };
+    };
+
+    try {
+        await queryTagDataTotal({
+            server: "local",
+            table: "TAG",
+            names: ["sensor.a", "sensor.b"],
+            direction: "latest",
+            pageSize: 2000,
+        });
+
+        const url = calls[0].url;
+        assert.ok(url.includes("names=sensor.a%2Csensor.b"));
+        assert.equal(url.includes("names=sensor.a&names=sensor.b"), false);
+        assert.ok(url.includes("includeTotal=true"));
+        assert.ok(url.includes("pageSize=2000"));
+    } finally {
+        globalThis.fetch = originalFetch;
+    }
 });
 
 test("buildSeriesFromChartRows groups web query rows by tag name", () => {

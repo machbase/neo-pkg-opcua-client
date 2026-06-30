@@ -45,6 +45,11 @@ const handlers = {
       to: query.to,
       page: query.page,
       pageSize: query.pageSize,
+      boundedRange: query.boundedRange,
+      cursorSide: query.cursorSide,
+      cursorTime: query.cursorTime,
+      cursorName: query.cursorName,
+      cursorOffset: query.cursorOffset,
     };
     if (query.includeTotal === 'true') {
       Handler.dbTableDataTotal(db, params, reply);

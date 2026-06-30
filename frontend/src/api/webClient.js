@@ -6,6 +6,14 @@ function getAccessToken() {
     }
 }
 
+function getConsoleId() {
+    try {
+        return globalThis.localStorage?.getItem?.("consoleId") || "";
+    } catch {
+        return "";
+    }
+}
+
 async function parseWebResponse(res) {
     const text = await res.text();
     let json;
@@ -23,12 +31,18 @@ async function parseWebResponse(res) {
 }
 
 export async function webRequest(path) {
+    const token = getAccessToken();
+    if (!token) {
+        throw new Error("Neo Web login is required before running chart queries.");
+    }
+
     const headers = {
         "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
     };
-    const token = getAccessToken();
-    if (token) {
-        headers.Authorization = `Bearer ${token}`;
+    const consoleId = getConsoleId();
+    if (consoleId) {
+        headers["X-Console-Id"] = consoleId;
     }
 
     const res = await fetch(`/web${path}`, {

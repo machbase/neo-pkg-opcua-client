@@ -3982,12 +3982,17 @@ label.switch input:checked + .switch-slider::before {
 }
 
 .data-viewer-chart-stack {
+    box-sizing: border-box;
     display: flex;
     flex-direction: column;
     gap: var(--spacing-12);
     flex: 1;
+    width: calc(100% + var(--spacing-12));
     min-height: 0;
+    margin-right: calc(-1 * var(--spacing-12));
+    padding-right: var(--spacing-12);
     overflow-y: auto;
+    scrollbar-gutter: stable;
 }
 
 .data-viewer-chart-panel-header {
@@ -4022,6 +4027,60 @@ label.switch input:checked + .switch-slider::before {
 
 .data-viewer-chart-panel-actions .btn-sm {
     min-height: 32px;
+}
+
+.data-viewer-chart-menu-button,
+.data-viewer-chart-close-button {
+    width: 32px;
+    min-width: 32px;
+    height: 32px;
+    padding: 0;
+}
+
+.data-viewer-chart-action-menu {
+    position: relative;
+    flex: 0 0 auto;
+}
+
+.data-viewer-chart-menu {
+    position: absolute;
+    top: calc(100% + var(--spacing-6));
+    right: 0;
+    z-index: 30;
+    display: flex;
+    flex-direction: column;
+    min-width: 168px;
+    padding: var(--spacing-6);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-base);
+    background-color: var(--color-surface);
+    box-shadow: var(--shadow-lg);
+}
+
+.data-viewer-chart-menu-item {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-8);
+    width: 100%;
+    min-height: 32px;
+    padding: 0 var(--spacing-8);
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--color-on-surface);
+    font-size: var(--font-size-sm);
+    text-align: left;
+    cursor: pointer;
+}
+
+.data-viewer-chart-menu-item:hover:not(:disabled) {
+    background-color: var(--color-primary-muted);
+    color: var(--color-primary-hover);
+}
+
+.data-viewer-chart-menu-item:disabled {
+    color: var(--color-on-surface-disabled);
+    cursor: not-allowed;
 }
 
 .data-viewer-chart-card {
@@ -4074,6 +4133,12 @@ label.switch input:checked + .switch-slider::before {
 .data-viewer-chart-tag-chip:hover {
     border-color: var(--color-primary);
     color: var(--color-primary-hover);
+    background-color: var(--color-primary-muted);
+}
+
+.data-viewer-chart-tag-chip.is-split {
+    border-color: var(--color-primary);
+    color: var(--color-primary);
     background-color: var(--color-primary-muted);
 }
 
