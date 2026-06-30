@@ -866,16 +866,19 @@ export function buildTagChartSeries(rows = []) {
 
 export function buildDataViewerChartResultsFromRawRows({
     rows = [],
+    rowsByGroup = {},
     chartGroups = [],
 } = {}) {
     const safeRows = Array.isArray(rows) ? rows : [];
+    const safeRowsByGroup = rowsByGroup && typeof rowsByGroup === "object" ? rowsByGroup : {};
     const results = {};
 
     for (const group of chartGroups || []) {
         if (!group?.id) continue;
+        const sourceRows = Array.isArray(safeRowsByGroup[group.id]) ? safeRowsByGroup[group.id] : safeRows;
         const tagSet = new Set((group.tagNames || []).map((name) => String(name || "").trim()).filter(Boolean));
         const groupRows = tagSet.size > 0
-            ? safeRows.filter((row) => tagSet.has(String(getRawRowNameValue(row) ?? "")))
+            ? sourceRows.filter((row) => tagSet.has(String(getRawRowNameValue(row) ?? "")))
             : [];
         results[group.id] = {
             range: group.range || { from: "", to: "" },
@@ -1109,6 +1112,47 @@ export function buildDataViewerZoomControlRange(action, currentRange = {}, navig
 
     if (nextEnd <= nextStart) return undefined;
     return { startTime: nextStart, endTime: nextEnd };
+}
+
+const PANEL_MAIN_RANGE_SHIFT_FRACTION = 0.3;
+
+export function buildDataViewerShiftMainRangeUpdate({ direction, currentRange = {}, navigatorRange = {} } = {}) {
+    const currentStart = Number(currentRange.startTime);
+    const currentEnd = Number(currentRange.endTime);
+    const navigatorStart = Number(navigatorRange.startTime);
+    const navigatorEnd = Number(navigatorRange.endTime);
+    if (![currentStart, currentEnd, navigatorStart, navigatorEnd].every(Number.isFinite)) return null;
+    if (currentEnd <= currentStart || navigatorEnd <= navigatorStart) return null;
+
+    const shiftDirection = direction === "backward" ? -1 : direction === "forward" ? 1 : 0;
+    if (shiftDirection === 0) return null;
+
+    const offset = (currentEnd - currentStart) * PANEL_MAIN_RANGE_SHIFT_FRACTION * shiftDirection;
+    const nextStart = currentStart + offset;
+    const nextEnd = currentEnd + offset;
+    let nextNavigatorStart = navigatorStart;
+    let nextNavigatorEnd = navigatorEnd;
+
+    if (shiftDirection < 0 && nextStart < nextNavigatorStart) {
+        nextNavigatorStart = nextStart;
+        nextNavigatorEnd += offset;
+    } else if (shiftDirection > 0 && nextEnd > nextNavigatorEnd) {
+        nextNavigatorStart += offset;
+        nextNavigatorEnd = nextEnd;
+    }
+
+    if (nextEnd <= nextStart || nextNavigatorEnd <= nextNavigatorStart) return null;
+
+    return {
+        range: {
+            from: new Date(nextStart).toISOString(),
+            to: new Date(nextEnd).toISOString(),
+        },
+        navigatorRange: {
+            from: new Date(nextNavigatorStart).toISOString(),
+            to: new Date(nextNavigatorEnd).toISOString(),
+        },
+    };
 }
 
 export function buildDataViewerWheelZoomRange(deltaY, anchorTime, currentRange = {}, navigatorRange = {}) {
@@ -1698,6 +1742,15 @@ export function formatDataViewerAxisTime(value, range = {}, timeZone = DEFAULT_T
     }
 
     return formatDataViewerTime(value, "2006-01-02", timeZone);
+}
+
+export function formatDataViewerNavigatorRangeLabels(range = {}, timeFormat = DEFAULT_TIME_FORMAT, timeZone = DEFAULT_TIME_ZONE) {
+    const startTime = toEpochMs(range?.startTime ?? range?.from);
+    const endTime = toEpochMs(range?.endTime ?? range?.to);
+    return {
+        start: Number.isFinite(startTime) ? formatDataViewerTime(startTime, timeFormat, timeZone) : "",
+        end: Number.isFinite(endTime) ? formatDataViewerTime(endTime, timeFormat, timeZone) : "",
+    };
 }
 
 export function formatTimeRangeLabel(from, to) {

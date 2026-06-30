@@ -26,6 +26,7 @@ import {
     buildDataViewerRawToChartRangeUpdate,
     buildDataViewerSplitRangeUpdate,
     buildDataViewerSplitGroups,
+    buildDataViewerShiftMainRangeUpdate,
     buildDataViewerTagSelectionUpdate,
     buildDataViewerWheelZoomRange,
     buildDataViewerZoomControlRange,
@@ -33,6 +34,7 @@ import {
     buildRawResultColumns,
     buildTagRows,
     extractDataViewerDataZoomRange,
+    formatDataViewerNavigatorRangeLabels,
     formatDataViewerTime,
     formatTimeRangeInput,
     formatTimeRangeLabel,
@@ -451,7 +453,7 @@ function FormatTimezoneModal({ timeFormat, timeZone, onApply, onClose }) {
     );
 }
 
-function TagEChart({ series, timeFormat, timeZone, timeRange, displayRange, onDisplayRangeChange }) {
+function TagEChart({ series, timeFormat, timeZone, timeRange, displayRange, onDisplayRangeChange, onShiftMainRange }) {
     const containerRef = useRef(null);
     const chartRef = useRef(null);
     const rangeRef = useRef({ currentRange: {}, navigatorRange: {}, onDisplayRangeChange });
@@ -606,13 +608,23 @@ function TagEChart({ series, timeFormat, timeZone, timeRange, displayRange, onDi
         !Number.isFinite(currentRange.endTime) ||
         !Number.isFinite(navigatorRange.startTime) ||
         !Number.isFinite(navigatorRange.endTime);
-
-    if (!hasChartData) {
-        return <div className="empty-state">No chart data</div>;
-    }
+    const navigatorLabels = useMemo(
+        () => formatDataViewerNavigatorRangeLabels(navigatorRange, timeFormat, timeZone),
+        [navigatorRange, timeFormat, timeZone]
+    );
 
     return (
         <div className="data-viewer-chart-shell">
+            <button
+                type="button"
+                className="data-viewer-chart-range-shift data-viewer-chart-range-shift-left"
+                title="Move range backward"
+                aria-label="Move range backward"
+                disabled={zoomControlsDisabled}
+                onClick={() => onShiftMainRange?.("backward", currentRange, navigatorRange)}
+            >
+                <Icon name="chevron_left" className="icon-sm" />
+            </button>
             <div className="data-viewer-chart-footer-form" aria-label="Chart zoom controls">
                 <div className="data-viewer-chart-toolbar-controls">
                     <div className="data-viewer-chart-toolbar-group">
@@ -650,6 +662,27 @@ function TagEChart({ series, timeFormat, timeZone, timeRange, displayRange, onDi
                 data-navigator-from={Number.isFinite(navigatorRange.startTime) ? String(Math.floor(navigatorRange.startTime)) : ""}
                 data-navigator-to={Number.isFinite(navigatorRange.endTime) ? String(Math.ceil(navigatorRange.endTime)) : ""}
             />
+            {!hasChartData && (
+                <div className="data-viewer-chart-empty-overlay" aria-live="polite">
+                    No chart data
+                </div>
+            )}
+            {(navigatorLabels.start || navigatorLabels.end) && (
+                <div className="data-viewer-chart-navigator-labels" aria-label="Mini chart time range">
+                    <span title={navigatorLabels.start}>{navigatorLabels.start}</span>
+                    <span title={navigatorLabels.end}>{navigatorLabels.end}</span>
+                </div>
+            )}
+            <button
+                type="button"
+                className="data-viewer-chart-range-shift data-viewer-chart-range-shift-right"
+                title="Move range forward"
+                aria-label="Move range forward"
+                disabled={zoomControlsDisabled}
+                onClick={() => onShiftMainRange?.("forward", currentRange, navigatorRange)}
+            >
+                <Icon name="chevron_right" className="icon-sm" />
+            </button>
         </div>
     );
 }
@@ -693,6 +726,7 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
     const [chartNavigatorRanges, setChartNavigatorRanges] = useState({});
     const [openChartMenuId, setOpenChartMenuId] = useState(null);
     const [chartResults, setChartResults] = useState({});
+    const [splitChartRows, setSplitChartRows] = useState({});
     const [chartLoading, setChartLoading] = useState(false);
     const [chartError, setChartError] = useState("");
     const [backwardScan, setBackwardScan] = useState(true);
@@ -899,6 +933,13 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
             }
             return Object.keys(next).length === Object.keys(current).length ? current : next;
         });
+        setSplitChartRows((current) => {
+            const next = {};
+            for (const [id, value] of Object.entries(current)) {
+                if (validGroupIds.has(id)) next[id] = value;
+            }
+            return Object.keys(next).length === Object.keys(current).length ? current : next;
+        });
     }, [chartGroups]);
     const toggleTagFolder = useCallback((key) => {
         setCollapsedTagFolders((prev) => {
@@ -964,6 +1005,12 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
             return next;
         });
         setChartResults((current) => {
+            if (!Object.prototype.hasOwnProperty.call(current, groupId)) return current;
+            const next = { ...current };
+            delete next[groupId];
+            return next;
+        });
+        setSplitChartRows((current) => {
             if (!Object.prototype.hasOwnProperty.call(current, groupId)) return current;
             const next = { ...current };
             delete next[groupId];
@@ -1061,6 +1108,7 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
         setChartError("");
         const nextResults = buildDataViewerChartResultsFromRawRows({
             rows: result.rows,
+            rowsByGroup: splitChartRows,
             chartGroups,
         });
         if (chartRequestRef.current !== requestId) return undefined;
@@ -1076,7 +1124,7 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
         return () => {
             chartRequestRef.current += 1;
         };
-    }, [canQuery, chartGroups, mode, result.rows]);
+    }, [canQuery, chartGroups, mode, result.rows, splitChartRows]);
 
     const handleModeChange = useCallback((nextMode) => {
         if (nextMode === mode) return;
@@ -1236,6 +1284,76 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
         setChartNavigatorRanges(update.navigatorRanges);
         setChartRange(update.range);
         setSplitChartRanges(update.splitRanges);
+    };
+    const handleShiftMainRange = async (group, direction, currentRange, navigatorRange) => {
+        if (!canQuery) return;
+        const update = buildDataViewerShiftMainRangeUpdate({ direction, currentRange, navigatorRange });
+        if (!update) {
+            notify("Cannot move chart range.", "error");
+            return;
+        }
+
+        chartRequestRef.current += 1;
+        setChartError("");
+        setChartViewRanges((current) => ({
+            ...current,
+            [group.id]: update.range,
+        }));
+        setChartNavigatorRanges((current) => ({
+            ...current,
+            [group.id]: update.navigatorRange,
+        }));
+
+        if (group.id === "default") {
+            if (splitChartGroups.length > 0) {
+                setSplitChartRows((current) => {
+                    let changed = false;
+                    const next = { ...current };
+                    for (const splitGroup of splitChartGroups) {
+                        if (!splitGroup?.id || Object.prototype.hasOwnProperty.call(next, splitGroup.id)) continue;
+                        next[splitGroup.id] = result.rows;
+                        changed = true;
+                    }
+                    return changed ? next : current;
+                });
+            }
+            setChartRange(update.navigatorRange);
+        } else {
+            setSplitChartRanges((current) => ({
+                ...current,
+                [group.id]: update.navigatorRange,
+            }));
+        }
+
+        try {
+            const data = await queryTagData({
+                server: dbServer,
+                table: dbTable,
+                names: group.tagNames,
+                valueColumn,
+                stringValueColumn,
+                direction: backwardScan ? "latest" : "oldest",
+                from: update.range.from,
+                to: update.range.to,
+                pageSize: getDataViewerRawPageSize(group.tagNames),
+                boundedRange: true,
+            });
+            const nextRows = data?.rows || [];
+            chartRequestRef.current += 1;
+            if (group.id === "default") {
+                setResult(data || { rows: [], total: 0, page: resultPage, pageSize: rawPageSize });
+                setRawPageBounds(buildDataViewerRawPageBounds(nextRows));
+            } else {
+                setSplitChartRows((current) => ({
+                    ...current,
+                    [group.id]: nextRows,
+                }));
+            }
+        } catch (e) {
+            const message = e.reason || e.message || "Failed to move chart range";
+            setChartError(message);
+            notify(message, "error");
+        }
     };
 
     return (
@@ -1581,6 +1699,7 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
                                                                 }));
                                                             }
                                                         }}
+                                                        onShiftMainRange={(direction, currentRange, navigatorRange) => handleShiftMainRange(group, direction, currentRange, navigatorRange)}
                                                     />
                                                 </div>
                                             </div>
