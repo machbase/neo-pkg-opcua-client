@@ -1088,6 +1088,22 @@ test("buildDataViewerEChartOption creates line chart options with data zoom", ()
     assert.equal(option.toolbox.show, false);
 });
 
+test("buildDataViewerEChartOption moves main chart below multi-row legend", () => {
+    const series = Array.from({ length: 9 }, (_, index) => ({
+        name: `sensor.${index}`,
+        data: [[Date.parse("2026-06-01T00:00:00Z"), index]],
+    }));
+    const option = buildDataViewerEChartOption({
+        series,
+        timeRange: { from: "2026-06-01T00:00:00.000Z", to: "2026-06-01T00:10:00.000Z" },
+        timeZone: "UTC",
+    });
+
+    assert.ok(option.grid[0].top > 40);
+    assert.ok(option.grid[0].height < 178);
+    assert.equal(option.legend.type, "scroll");
+});
+
 test("buildDataViewerEChartOption lays out large multi-tag data by time range", () => {
     const start = Date.parse("2026-06-01T00:00:00.000Z");
     const series = [

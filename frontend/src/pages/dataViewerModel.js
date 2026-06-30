@@ -947,6 +947,9 @@ const PANEL_NAVIGATOR_GRID_SIDE = 58;
 const PANEL_SLIDER_HEIGHT = 26;
 const PANEL_MAIN_TOP_WITH_LEGEND = 40;
 const PANEL_MAIN_HEIGHT = 178;
+const PANEL_LEGEND_ITEMS_PER_ROW = 4;
+const PANEL_LEGEND_ROW_HEIGHT = 18;
+const PANEL_MAIN_MIN_HEIGHT = 96;
 const PANEL_MAIN_SERIES_ID_PREFIX = "main-series-";
 const PANEL_COLORS = ["#5470c6", "#91cc75", "#fac858", "#ee6666", "#73c0de", "#3ba272", "#fc8452", "#9a60b4", "#ea7ccc"];
 const PANEL_MOUSE_WHEEL_ZOOM_IN_FACTOR = 0.82;
@@ -1239,6 +1242,18 @@ function buildNeoLikeTooltipFormatter(params, timeFormat, timeZone) {
     </div>`;
 }
 
+function getPanelLegendLayout(series = []) {
+    const rowCount = Math.max(1, Math.ceil(Math.max(0, series.length) / PANEL_LEGEND_ITEMS_PER_ROW));
+    const extraLegendHeight = Math.max(0, rowCount - 1) * PANEL_LEGEND_ROW_HEIGHT;
+    const mainTop = PANEL_MAIN_TOP_WITH_LEGEND + extraLegendHeight;
+    return {
+        rowCount,
+        mainTop,
+        mainHeight: Math.max(PANEL_MAIN_MIN_HEIGHT, PANEL_MAIN_HEIGHT - extraLegendHeight),
+        legendHeight: Math.max(PANEL_LEGEND_ROW_HEIGHT, mainTop - PANEL_LEGEND_TOP - 8),
+    };
+}
+
 export function buildDataViewerEChartOption({
     series = [],
     timeRange = {},
@@ -1250,6 +1265,7 @@ export function buildDataViewerEChartOption({
     const panelRange = getPanelRange(allPoints, displayRange || timeRange);
     const navigatorRange = getPanelRange(allPoints, timeRange);
     const yAxisRange = getYAxisRange(series, panelRange);
+    const legendLayout = getPanelLegendLayout(series);
 
     return {
         backgroundColor: "#252525",
@@ -1263,8 +1279,8 @@ export function buildDataViewerEChartOption({
                 id: "panel-main-grid",
                 left: PANEL_GRID_SIDE,
                 right: PANEL_GRID_SIDE,
-                top: PANEL_MAIN_TOP_WITH_LEGEND,
-                height: PANEL_MAIN_HEIGHT,
+                top: legendLayout.mainTop,
+                height: legendLayout.mainHeight,
                 containLabel: true,
             },
             {
@@ -1277,8 +1293,11 @@ export function buildDataViewerEChartOption({
         ],
         legend: {
             show: true,
+            type: "scroll",
             left: 10,
+            right: 10,
             top: PANEL_LEGEND_TOP,
+            height: legendLayout.legendHeight,
             itemGap: 15,
             textStyle: {
                 color: "#e7e8ea",
