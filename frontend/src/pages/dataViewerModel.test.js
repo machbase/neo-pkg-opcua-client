@@ -13,6 +13,7 @@ import {
     buildDataViewerRawPageBounds,
     buildDataViewerRawPageRequest,
     buildDataViewerRawRowsPerTagChange,
+    buildDataViewerDefaultChartShiftRawPageUpdate,
     buildDataViewerRawToChartRangeUpdate,
     buildDataViewerSplitRangeUpdate,
     buildDataViewerSplitGroups,
@@ -567,6 +568,102 @@ test("buildDataViewerRawPageRequest uses cursor boundaries for page movement", (
             to: "2026-06-25T05:10:01.001Z",
             boundedRange: true,
         }
+    );
+});
+
+test("buildDataViewerDefaultChartShiftRawPageUpdate maps chart movement through raw scan direction", () => {
+    const currentBounds = {
+        pageStart: { time: "2026-06-01T00:00:00.000Z", name: "sensor.a" },
+        pageEnd: { time: "2026-06-01T00:10:00.000Z", name: "sensor.a" },
+        pageBounds: {
+            from: "2026-06-01T00:00:00.000Z",
+            to: "2026-06-01T00:10:00.000Z",
+        },
+    };
+
+    assert.deepEqual(
+        buildDataViewerDefaultChartShiftRawPageUpdate({
+            direction: "backward",
+            backwardScan: true,
+            currentPage: 2,
+            pageSize: 1000,
+            currentBounds,
+        }),
+        {
+            page: 3,
+            rawPageRequest: {
+                page: 3,
+                cursorSide: "next",
+                cursorTime: "2026-06-01T00:10:00.000Z",
+                cursorName: "sensor.a",
+                cursorOffset: 0,
+            },
+        }
+    );
+
+    assert.deepEqual(
+        buildDataViewerDefaultChartShiftRawPageUpdate({
+            direction: "forward",
+            backwardScan: true,
+            currentPage: 2,
+            pageSize: 1000,
+            currentBounds,
+        }),
+        {
+            page: 1,
+            rawPageRequest: {
+                page: 1,
+                cursorSide: "prev",
+                cursorTime: "2026-06-01T00:00:00.000Z",
+                cursorName: "sensor.a",
+                cursorOffset: 0,
+            },
+        }
+    );
+
+    assert.deepEqual(
+        buildDataViewerDefaultChartShiftRawPageUpdate({
+            direction: "forward",
+            backwardScan: false,
+            currentPage: 2,
+            pageSize: 1000,
+            currentBounds,
+        })?.page,
+        3
+    );
+
+    assert.deepEqual(
+        buildDataViewerDefaultChartShiftRawPageUpdate({
+            direction: "backward",
+            backwardScan: false,
+            currentPage: 2,
+            pageSize: 1000,
+            currentBounds,
+        })?.page,
+        1
+    );
+
+    assert.equal(
+        buildDataViewerDefaultChartShiftRawPageUpdate({
+            direction: "forward",
+            backwardScan: true,
+            currentPage: 1,
+            pageSize: 1000,
+            currentBounds,
+        }),
+        null
+    );
+
+    assert.equal(
+        buildDataViewerDefaultChartShiftRawPageUpdate({
+            direction: "backward",
+            backwardScan: true,
+            currentPage: 2,
+            pageSize: 1000,
+            rowCount: 999,
+            currentBounds,
+        }),
+        null
     );
 });
 

@@ -250,6 +250,34 @@ export function buildDataViewerRawRowsPerTagChange({
     };
 }
 
+export function buildDataViewerDefaultChartShiftRawPageUpdate({
+    direction,
+    backwardScan = true,
+    currentPage = 1,
+    pageSize = DEFAULT_DATA_VIEWER_ROWS_PER_TAG,
+    rowCount = pageSize,
+    forceNextPage = false,
+    currentBounds,
+} = {}) {
+    const page = Number(currentPage);
+    if (!Number.isFinite(page) || page < 1) return null;
+    const backward = Boolean(backwardScan);
+    const nextPage = direction === "backward" ? (backward ? page + 1 : page - 1) : direction === "forward" ? (backward ? page - 1 : page + 1) : page;
+    if (nextPage < 1 || nextPage === page) return null;
+    if (nextPage > page && !hasDataViewerRawNextPage({ rowCount, pageSize, forceOpen: forceNextPage })) return null;
+    const rawPageRequest = buildDataViewerRawPageRequest({
+        currentPage: page,
+        nextPage,
+        pageSize,
+        currentBounds,
+        reason: "page",
+    });
+    return {
+        page: rawPageRequest.page,
+        rawPageRequest,
+    };
+}
+
 function getRawRowTimeValue(row) {
     if (Array.isArray(row)) return row[0];
     if (!row || typeof row !== "object") return undefined;
