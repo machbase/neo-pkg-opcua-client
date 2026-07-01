@@ -1120,8 +1120,16 @@ test("buildNeoWebTagAnalyzerRange prefers explicit units and rejects invalid ran
         startEpochMs: 1000,
         endEpochMs: 2000,
     });
+    assert.deepEqual(buildNeoWebTagAnalyzerRange({
+        startTime: Date.parse("2026-06-01T00:10:00.000Z"),
+        endTime: Date.parse("2026-06-01T00:20:00.000Z"),
+    }), {
+        startEpochMs: Date.parse("2026-06-01T00:10:00.000Z"),
+        endEpochMs: Date.parse("2026-06-01T00:20:00.000Z"),
+    });
     assert.equal(buildNeoWebTagAnalyzerRange({ from: "bad", to: "2026-06-01T00:00:00.000Z" }), undefined);
     assert.equal(buildNeoWebTagAnalyzerRange({ from: 2000, to: 1000 }), undefined);
+    assert.equal(buildNeoWebTagAnalyzerRange({ startTime: 2000, endTime: 1000 }), undefined);
 });
 
 test("buildNeoWebTagAnalyzerMessage builds chart-group scoped Tag Analyzer payload", () => {
