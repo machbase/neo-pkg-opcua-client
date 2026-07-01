@@ -221,7 +221,7 @@ export function shouldFetchDataViewerRowsForMode(mode) {
     return mode === "raw" || mode === "chart";
 }
 
-export const DEFAULT_DATA_VIEWER_ROWS_PER_TAG = 1000;
+export const DEFAULT_DATA_VIEWER_ROWS_PER_TAG = 500;
 
 export function normalizeDataViewerRowsPerTag(value, fallback = DEFAULT_DATA_VIEWER_ROWS_PER_TAG) {
     const fallbackValue = Math.max(1, Math.floor(Number(fallback) || DEFAULT_DATA_VIEWER_ROWS_PER_TAG));

@@ -407,9 +407,9 @@ test("normalizeSelectedTagNames selects the first selectable tag when none remai
 });
 
 test("getDataViewerRawPageSize uses configurable rows per selected tag", () => {
-    assert.equal(getDataViewerRawPageSize(["sensor.a"]), 1000);
-    assert.equal(getDataViewerRawPageSize(["sensor.a", "sensor.b", "sensor.c"]), 3000);
-    assert.equal(getDataViewerRawPageSize([]), 1000);
+    assert.equal(getDataViewerRawPageSize(["sensor.a"]), 500);
+    assert.equal(getDataViewerRawPageSize(["sensor.a", "sensor.b", "sensor.c"]), 1500);
+    assert.equal(getDataViewerRawPageSize([]), 500);
     assert.equal(getDataViewerRawPageSize(["sensor.a"], 100), 100);
     assert.equal(getDataViewerRawPageSize(["sensor.a", "sensor.b", "sensor.c"], 100), 300);
     assert.equal(getDataViewerRawPageSize([], 100), 100);
