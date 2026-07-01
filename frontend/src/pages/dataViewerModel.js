@@ -83,8 +83,8 @@ function normalizeTagAnalyzerRangeValue(value, keyPrefix) {
 }
 
 export function buildNeoWebTagAnalyzerRange(range = {}) {
-    const start = normalizeTagAnalyzerRangeValue(range.from ?? range.start ?? range.startIso ?? range.startEpochMs, "start");
-    const end = normalizeTagAnalyzerRangeValue(range.to ?? range.end ?? range.endIso ?? range.endEpochMs, "end");
+    const start = normalizeTagAnalyzerRangeValue(range.from ?? range.start ?? range.startTime ?? range.startIso ?? range.startEpochMs, "start");
+    const end = normalizeTagAnalyzerRangeValue(range.to ?? range.end ?? range.endTime ?? range.endIso ?? range.endEpochMs, "end");
     if (Object.keys(start).length === 0 || Object.keys(end).length === 0) return undefined;
 
     const startMs = start.startEpochMs ?? Date.parse(start.startIso);
