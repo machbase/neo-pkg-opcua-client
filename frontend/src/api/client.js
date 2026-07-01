@@ -6,7 +6,7 @@ class ApiError extends Error {
     }
 }
 
-const API_BASE = import.meta.env.VITE_API_BASE ?? "/public/neo-pkg-opcua-client";
+const API_BASE = import.meta.env?.VITE_API_BASE ?? "/public/neo-pkg-opcua-client";
 
 async function request(method, path, body) {
     const opts = {

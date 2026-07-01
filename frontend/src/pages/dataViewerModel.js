@@ -25,6 +25,11 @@ export const TIME_FORMATS = [
 
 export const DATA_VIEWER_ROUTE_BASE = "/data-viewer";
 export const DATA_VIEWER_BACK_PATH = "/";
+export const NEO_WEB_TAG_ANALYZER_MESSAGE_TYPE = "neo.openTagAnalyzer";
+export const NEO_WEB_TAG_ANALYZER_MESSAGE_SOURCE = "neo-package";
+export const NEO_WEB_TAG_ANALYZER_MESSAGE_VERSION = 1;
+export const NEO_WEB_TAG_ANALYZER_APP_NAME = "neo-pkg-opcua-client";
+const TAG_ANALYZER_DATETIME_COLUMN_TYPE = 6;
 
 const supportedTimeZones =
     typeof Intl !== "undefined" && typeof Intl.supportedValuesOf === "function"
@@ -58,6 +63,102 @@ export function buildDataViewerHeaderLabels(jobName, tableName) {
         title: job || table,
         detail: table,
     };
+}
+
+function normalizeTagAnalyzerRangeValue(value, keyPrefix) {
+    if (value instanceof Date) {
+        const time = value.getTime();
+        return Number.isFinite(time) ? { [`${keyPrefix}Iso`]: value.toISOString() } : {};
+    }
+    if (typeof value === "number") {
+        return Number.isFinite(value) ? { [`${keyPrefix}EpochMs`]: value } : {};
+    }
+
+    const text = String(value ?? "").trim();
+    if (!text) return {};
+
+    const parsed = Date.parse(text);
+    if (!Number.isFinite(parsed)) return {};
+    return { [`${keyPrefix}Iso`]: new Date(parsed).toISOString() };
+}
+
+export function buildNeoWebTagAnalyzerRange(range = {}) {
+    const start = normalizeTagAnalyzerRangeValue(range.from ?? range.start ?? range.startIso ?? range.startEpochMs, "start");
+    const end = normalizeTagAnalyzerRangeValue(range.to ?? range.end ?? range.endIso ?? range.endEpochMs, "end");
+    if (Object.keys(start).length === 0 || Object.keys(end).length === 0) return undefined;
+
+    const startMs = start.startEpochMs ?? Date.parse(start.startIso);
+    const endMs = end.endEpochMs ?? Date.parse(end.endIso);
+    if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) return undefined;
+    return { ...start, ...end };
+}
+
+export function buildNeoWebTagAnalyzerMessage({
+    appName = NEO_WEB_TAG_ANALYZER_APP_NAME,
+    title = "OPC UA Data Viewer",
+    table,
+    tagNames = [],
+    range,
+    valueColumn = "VALUE",
+    nameColumn = "NAME",
+    timeColumn = "TIME",
+    stringOnly = false,
+} = {}) {
+    const tableName = String(table || "").trim();
+    if (!tableName) return { ok: false, reason: "Database table is required." };
+    if (stringOnly) return { ok: false, reason: "Tag Analyzer requires a numeric value column." };
+
+    const value = String(valueColumn || "VALUE").trim();
+    const name = String(nameColumn || "NAME").trim();
+    const time = String(timeColumn || "TIME").trim();
+    if (!value || !name || !time) return { ok: false, reason: "Tag Analyzer column mapping is incomplete." };
+
+    const seen = new Set();
+    const tags = [];
+    for (const rawName of tagNames || []) {
+        const tagName = String(rawName || "").trim();
+        if (!tagName || seen.has(tagName)) continue;
+        seen.add(tagName);
+        tags.push({
+            tagName,
+            table: tableName,
+            calculationMode: "avg",
+            alias: "",
+            weight: 1,
+            colName: {
+                name,
+                time,
+                value,
+                timeType: TAG_ANALYZER_DATETIME_COLUMN_TYPE,
+                timeBaseTime: true,
+                jsonKey: "",
+            },
+        });
+    }
+
+    if (tags.length === 0) return { ok: false, reason: "Cannot open Tag Analyzer because there is no tag." };
+
+    const normalizedRange = buildNeoWebTagAnalyzerRange(range);
+    return {
+        ok: true,
+        message: {
+            source: NEO_WEB_TAG_ANALYZER_MESSAGE_SOURCE,
+            type: NEO_WEB_TAG_ANALYZER_MESSAGE_TYPE,
+            version: NEO_WEB_TAG_ANALYZER_MESSAGE_VERSION,
+            appName,
+            payload: {
+                title,
+                ...(normalizedRange ? { range: normalizedRange } : {}),
+                tags,
+            },
+        },
+    };
+}
+
+export function sendNeoWebTagAnalyzerMessage(message, targetWindow, targetOrigin) {
+    if (!message || typeof targetWindow?.postMessage !== "function") return false;
+    targetWindow.postMessage(message, targetOrigin);
+    return true;
 }
 
 const RAW_COLUMN_ORDER = ["time", "name", "value"];
@@ -114,6 +215,400 @@ export function getScanDirectionLabel(backwardScan) {
 
 export function showsDataViewerTimeControls(mode) {
     return mode === "raw" || mode === "chart";
+}
+
+export function shouldFetchDataViewerRowsForMode(mode) {
+    return mode === "raw" || mode === "chart";
+}
+
+export const DEFAULT_DATA_VIEWER_ROWS_PER_TAG = 500;
+
+export function normalizeDataViewerRowsPerTag(value, fallback = DEFAULT_DATA_VIEWER_ROWS_PER_TAG) {
+    const fallbackValue = Math.max(1, Math.floor(Number(fallback) || DEFAULT_DATA_VIEWER_ROWS_PER_TAG));
+    if (value === "" || value === null || value === undefined) return fallbackValue;
+    const next = Math.floor(Number(value));
+    return Number.isFinite(next) && next > 0 ? next : fallbackValue;
+}
+
+export function getDataViewerRawPageSize(selectedTagNames = [], rowsPerTag = DEFAULT_DATA_VIEWER_ROWS_PER_TAG) {
+    const tagCount = Array.isArray(selectedTagNames) ? selectedTagNames.length : 0;
+    return Math.max(1, tagCount) * normalizeDataViewerRowsPerTag(rowsPerTag);
+}
+
+export function buildDataViewerRawRowsPerTagChange({
+    value,
+    currentRowsPerTag = DEFAULT_DATA_VIEWER_ROWS_PER_TAG,
+    selectedTagNames = [],
+} = {}) {
+    const rowsPerTag = normalizeDataViewerRowsPerTag(value, currentRowsPerTag);
+    if (rowsPerTag === normalizeDataViewerRowsPerTag(currentRowsPerTag)) return null;
+    return {
+        rowsPerTag,
+        pageSize: getDataViewerRawPageSize(selectedTagNames, rowsPerTag),
+        page: 1,
+        rawPageRequest: { page: 1 },
+    };
+}
+
+export function buildDataViewerDefaultChartShiftRawPageUpdate({
+    direction,
+    backwardScan = true,
+    currentPage = 1,
+    pageSize = DEFAULT_DATA_VIEWER_ROWS_PER_TAG,
+    rowCount = pageSize,
+    forceNextPage = false,
+    currentBounds,
+} = {}) {
+    const page = Number(currentPage);
+    if (!Number.isFinite(page) || page < 1) return null;
+    const backward = Boolean(backwardScan);
+    const nextPage = direction === "backward" ? (backward ? page + 1 : page - 1) : direction === "forward" ? (backward ? page - 1 : page + 1) : page;
+    if (nextPage < 1 || nextPage === page) return null;
+    if (nextPage > page && !hasDataViewerRawNextPage({ rowCount, pageSize, forceOpen: forceNextPage })) return null;
+    const rawPageRequest = buildDataViewerRawPageRequest({
+        currentPage: page,
+        nextPage,
+        pageSize,
+        currentBounds,
+        reason: "page",
+    });
+    return {
+        page: rawPageRequest.page,
+        rawPageRequest,
+    };
+}
+
+function getRawRowTimeValue(row) {
+    if (Array.isArray(row)) return row[0];
+    if (!row || typeof row !== "object") return undefined;
+    return row.time ?? row.TIME ?? row.Time;
+}
+
+function getRawRowNameValue(row) {
+    if (Array.isArray(row)) return row[1];
+    if (!row || typeof row !== "object") return undefined;
+    return row.name ?? row.NAME ?? row.Name;
+}
+
+function getRawRowValueValue(row) {
+    if (Array.isArray(row)) return row[2];
+    if (!row || typeof row !== "object") return undefined;
+    return row.value ?? row.VALUE ?? row.Value;
+}
+
+export function buildDataViewerRawPageTimeRange(rows = []) {
+    if (!Array.isArray(rows) || rows.length === 0) return null;
+
+    let min = Number.POSITIVE_INFINITY;
+    let max = Number.NEGATIVE_INFINITY;
+
+    for (const row of rows) {
+        const epochMs = toEpochMs(getRawRowTimeValue(row));
+        if (!Number.isFinite(epochMs)) continue;
+        if (epochMs < min) min = epochMs;
+        if (epochMs > max) max = epochMs;
+    }
+
+    if (!Number.isFinite(min) || !Number.isFinite(max)) return null;
+
+    return {
+        from: new Date(min).toISOString(),
+        to: new Date(max).toISOString(),
+    };
+}
+
+export function buildDataViewerRawPageBounds(rows = []) {
+    if (!Array.isArray(rows) || rows.length === 0) return null;
+
+    const normalized = rows
+        .map((row) => {
+            const time = getRawRowTimeValue(row);
+            const epochMs = toEpochMs(time);
+            if (!Number.isFinite(epochMs)) return null;
+            return {
+                time: new Date(epochMs).toISOString(),
+                name: String(getRawRowNameValue(row) ?? ""),
+                epochMs,
+            };
+        })
+        .filter(Boolean);
+
+    if (normalized.length === 0) return null;
+
+    let min = Number.POSITIVE_INFINITY;
+    let max = Number.NEGATIVE_INFINITY;
+    for (const row of normalized) {
+        if (row.epochMs < min) min = row.epochMs;
+        if (row.epochMs > max) max = row.epochMs;
+    }
+
+    return {
+        pageStart: {
+            time: normalized[0].time,
+            name: normalized[0].name,
+        },
+        pageEnd: {
+            time: normalized[normalized.length - 1].time,
+            name: normalized[normalized.length - 1].name,
+        },
+        pageBounds: {
+            from: new Date(min).toISOString(),
+            to: new Date(max).toISOString(),
+        },
+    };
+}
+
+export function buildDataViewerRawPageRequest({
+    currentPage = 1,
+    nextPage = 1,
+    pageSize = 1,
+    currentBounds,
+    reason = "page",
+} = {}) {
+    const page = Math.max(1, Math.floor(Number(nextPage) || 1));
+    const previousPage = Math.max(1, Math.floor(Number(currentPage) || 1));
+    const safePageSize = Math.max(1, Math.floor(Number(pageSize) || 1));
+
+    if (reason === "tags" && currentBounds?.pageBounds) {
+        return {
+            page,
+            from: currentBounds.pageBounds.from,
+            to: currentBounds.pageBounds.to,
+            boundedRange: true,
+        };
+    }
+
+    if (!currentBounds || page === previousPage) {
+        return { page };
+    }
+
+    if (Math.abs(page - previousPage) !== 1) {
+        return { page };
+    }
+
+    const movingForward = page > previousPage;
+    const boundary = movingForward ? currentBounds.pageEnd : currentBounds.pageStart;
+    if (!boundary?.time) return { page };
+
+    return {
+        page,
+        cursorSide: movingForward ? "next" : "prev",
+        cursorTime: boundary.time,
+        cursorName: boundary.name || "",
+        cursorOffset: Math.max(0, Math.abs(page - previousPage) - 1) * safePageSize,
+    };
+}
+
+export function hasDataViewerRawNextPage({ rowCount = 0, pageSize = 1, forceOpen = false } = {}) {
+    if (forceOpen) return true;
+    const safePageSize = Math.max(1, Math.floor(Number(pageSize) || 1));
+    return Math.max(0, Math.floor(Number(rowCount) || 0)) >= safePageSize;
+}
+
+export function buildDataViewerRawToChartRangeUpdate({
+    rows = [],
+    rawRange = { from: "", to: "" },
+    splitGroups = [],
+} = {}) {
+    const chartRange = buildDataViewerRawPageTimeRange(rows);
+    if (!chartRange) return null;
+
+    const splitRanges = {};
+    for (const group of splitGroups || []) {
+        if (group?.id) splitRanges[group.id] = chartRange;
+    }
+
+    return {
+        rawRange,
+        chartRange,
+        splitRanges,
+    };
+}
+
+export function buildDataViewerChartGroups({
+    selectedTagNames = [],
+    splitGroups = [],
+    splitTagNames = [],
+    globalRange = { from: "", to: "" },
+    splitRanges = {},
+} = {}) {
+    const selected = [];
+    const selectedSet = new Set();
+    for (const name of selectedTagNames) {
+        const tagName = String(name || "").trim();
+        if (!tagName || selectedSet.has(tagName)) continue;
+        selectedSet.add(tagName);
+        selected.push(tagName);
+    }
+
+    const normalizedSplitGroups = [];
+    const splitSet = new Set();
+    const sourceSplitGroups = splitGroups.length > 0
+        ? splitGroups
+        : splitTagNames.map((name) => ({ id: `split:${name}`, tagNames: [name] }));
+
+    for (const group of sourceSplitGroups) {
+        const groupNames = [];
+        for (const name of group?.tagNames || []) {
+            const tagName = String(name || "").trim();
+            if (!tagName || !selectedSet.has(tagName) || splitSet.has(tagName)) continue;
+            splitSet.add(tagName);
+            groupNames.push(tagName);
+        }
+        if (groupNames.length === 0) continue;
+        const id = String(group?.id || `split:${groupNames.join("|")}`).trim();
+        normalizedSplitGroups.push({
+            id,
+            title: group?.title || groupNames.join(", "),
+            tagNames: groupNames,
+        });
+    }
+
+    const range = globalRange || { from: "", to: "" };
+    const groups = [];
+    const defaultNames = selected;
+    if (defaultNames.length > 0) {
+        groups.push({
+            id: "default",
+            title: "Selected Tags",
+            tagNames: defaultNames,
+            range,
+            split: false,
+        });
+    }
+
+    for (const group of normalizedSplitGroups) {
+        groups.push({
+            id: group.id,
+            title: group.title,
+            tagNames: group.tagNames,
+            range: splitRanges?.[group.id] || range,
+            split: true,
+        });
+    }
+
+    return groups;
+}
+
+export function buildDataViewerSplitGroups({
+    tagNames = [],
+    selectedTagNames = [],
+    assignedTagNames = [],
+    createId = (name, index) => `split:${Date.now()}:${index}:${name}`,
+} = {}) {
+    const selectedSet = new Set(
+        selectedTagNames
+            .map((name) => String(name || "").trim())
+            .filter(Boolean)
+    );
+    const assignedSet = new Set(
+        assignedTagNames
+            .map((name) => String(name || "").trim())
+            .filter(Boolean)
+    );
+    const seen = new Set();
+    const groups = [];
+
+    for (const name of tagNames || []) {
+        const tagName = String(name || "").trim();
+        if (!tagName || seen.has(tagName) || assignedSet.has(tagName) || !selectedSet.has(tagName)) continue;
+        seen.add(tagName);
+        groups.push({
+            id: createId(tagName, groups.length),
+            title: tagName,
+            tagNames: [tagName],
+        });
+    }
+
+    return groups;
+}
+
+export function buildDataViewerSplitRangeUpdate({
+    nextGroups = [],
+    chartViewRanges = {},
+    chartNavigatorRanges = {},
+    splitRanges = {},
+    sourceGroupId = "default",
+} = {}) {
+    const nextViewRanges = { ...chartViewRanges };
+    const nextNavigatorRanges = { ...chartNavigatorRanges };
+    const nextSplitRanges = { ...splitRanges };
+    const sourceViewRange = chartViewRanges?.[sourceGroupId];
+    const sourceNavigatorRange = chartNavigatorRanges?.[sourceGroupId];
+    const sourceSplitRange = sourceNavigatorRange || sourceViewRange;
+
+    for (const group of nextGroups || []) {
+        const id = String(group?.id || "").trim();
+        if (!id) continue;
+        if (sourceViewRange && !nextViewRanges[id]) nextViewRanges[id] = sourceViewRange;
+        if (sourceNavigatorRange && !nextNavigatorRanges[id]) nextNavigatorRanges[id] = sourceNavigatorRange;
+        if (sourceSplitRange && !nextSplitRanges[id]) nextSplitRanges[id] = sourceSplitRange;
+    }
+
+    return {
+        chartViewRanges: nextViewRanges,
+        chartNavigatorRanges: nextNavigatorRanges,
+        splitRanges: nextSplitRanges,
+    };
+}
+
+function normalizeDataViewerGlobalTimeRange(range = {}) {
+    const startValue = range.from ?? range.start ?? range.startTime;
+    const endValue = range.to ?? range.end ?? range.endTime;
+    const startTime = typeof startValue === "number" ? startValue : Date.parse(String(startValue ?? ""));
+    const endTime = typeof endValue === "number" ? endValue : Date.parse(String(endValue ?? ""));
+
+    if (!Number.isFinite(startTime) || !Number.isFinite(endTime) || endTime <= startTime) return undefined;
+
+    return {
+        from: new Date(startTime).toISOString(),
+        to: new Date(endTime).toISOString(),
+    };
+}
+
+export function buildDataViewerGlobalTimeUpdate({
+    sourceGroupId,
+    chartGroups = [],
+    chartViewRanges = {},
+    chartNavigatorRanges = {},
+    chartResults = {},
+} = {}) {
+    if (!sourceGroupId || chartGroups.length <= 1) return undefined;
+
+    const sourceGroup = chartGroups.find((group) => group?.id === sourceGroupId);
+    if (!sourceGroup) return undefined;
+
+    const displayRange =
+        normalizeDataViewerGlobalTimeRange(chartViewRanges?.[sourceGroupId]) ||
+        normalizeDataViewerGlobalTimeRange(chartResults?.[sourceGroupId]?.range) ||
+        normalizeDataViewerGlobalTimeRange(sourceGroup.range);
+    const navigatorRange =
+        normalizeDataViewerGlobalTimeRange(chartNavigatorRanges?.[sourceGroupId]) ||
+        normalizeDataViewerGlobalTimeRange(chartResults?.[sourceGroupId]?.range) ||
+        normalizeDataViewerGlobalTimeRange(sourceGroup.range) ||
+        displayRange;
+
+    if (!displayRange || !navigatorRange) return undefined;
+
+    const splitRanges = {};
+    const viewRanges = {};
+    const navigatorRanges = {};
+    for (const group of chartGroups) {
+        if (group?.split && group.id) {
+            splitRanges[group.id] = navigatorRange;
+        }
+        if (group?.id) {
+            viewRanges[group.id] = displayRange;
+            navigatorRanges[group.id] = navigatorRange;
+        }
+    }
+
+    return {
+        range: navigatorRange,
+        splitRanges,
+        viewRanges,
+        navigatorRanges,
+    };
 }
 
 export const QUICK_TIME_RANGE_GROUPS = [
@@ -405,9 +900,9 @@ export function buildTagChartSeries(rows = []) {
     const seriesByName = new Map();
 
     rows.forEach((row) => {
-        const name = String(row?.name ?? "");
-        const x = toEpochMs(row?.time);
-        const y = Number(row?.value);
+        const name = String(getRawRowNameValue(row) ?? "");
+        const x = toEpochMs(getRawRowTimeValue(row));
+        const y = Number(getRawRowValueValue(row));
         if (!name || !Number.isFinite(x) || !Number.isFinite(y)) return;
         if (!seriesByName.has(name)) {
             seriesByName.set(name, []);
@@ -419,6 +914,31 @@ export function buildTagChartSeries(rows = []) {
         name,
         data: data.sort((a, b) => a[0] - b[0]),
     }));
+}
+
+export function buildDataViewerChartResultsFromRawRows({
+    rows = [],
+    rowsByGroup = {},
+    chartGroups = [],
+} = {}) {
+    const safeRows = Array.isArray(rows) ? rows : [];
+    const safeRowsByGroup = rowsByGroup && typeof rowsByGroup === "object" ? rowsByGroup : {};
+    const results = {};
+
+    for (const group of chartGroups || []) {
+        if (!group?.id) continue;
+        const sourceRows = Array.isArray(safeRowsByGroup[group.id]) ? safeRowsByGroup[group.id] : safeRows;
+        const tagSet = new Set((group.tagNames || []).map((name) => String(name || "").trim()).filter(Boolean));
+        const groupRows = tagSet.size > 0
+            ? sourceRows.filter((row) => tagSet.has(String(getRawRowNameValue(row) ?? "")))
+            : [];
+        results[group.id] = {
+            range: group.range || { from: "", to: "" },
+            series: buildTagChartSeries(groupRows),
+        };
+    }
+
+    return results;
 }
 
 const SECOND_MS = 1000;
@@ -442,17 +962,21 @@ function chooseTimeTickInterval(duration) {
 }
 
 export function buildDataViewerChartXAxis(points = [], range = {}) {
-    const pointTimes = points
-        .map((point) => Array.isArray(point) ? point[0] : point?.x)
-        .filter((value) => Number.isFinite(value));
     const rangeFrom = toEpochMs(range?.from);
     const rangeTo = toEpochMs(range?.to);
 
     let min = Number.isFinite(rangeFrom) ? rangeFrom : undefined;
     let max = Number.isFinite(rangeTo) ? rangeTo : undefined;
 
-    if (min === undefined && pointTimes.length > 0) min = Math.min(...pointTimes);
-    if (max === undefined && pointTimes.length > 0) max = Math.max(...pointTimes);
+    if (min === undefined || max === undefined) {
+        for (const point of points) {
+            const value = Array.isArray(point) ? point[0] : point?.x;
+            if (!Number.isFinite(value)) continue;
+            if (min === undefined || value < min) min = value;
+            if (max === undefined || value > max) max = value;
+        }
+    }
+
     if (!Number.isFinite(min) || !Number.isFinite(max)) return {};
 
     if (min > max) {
@@ -468,8 +992,711 @@ export function buildDataViewerChartXAxis(points = [], range = {}) {
     };
 }
 
+const PANEL_LEGEND_TOP = 6;
+const PANEL_GRID_BOTTOM = 20;
+const PANEL_GRID_SIDE = 35;
+const PANEL_NAVIGATOR_GRID_SIDE = 58;
+const PANEL_SLIDER_HEIGHT = 26;
+const PANEL_MAIN_TOP_WITH_LEGEND = 40;
+const PANEL_MAIN_HEIGHT = 178;
+const PANEL_LEGEND_ITEMS_PER_ROW = 4;
+const PANEL_LEGEND_ROW_HEIGHT = 18;
+const PANEL_MAIN_MIN_HEIGHT = 96;
+const PANEL_MAIN_SERIES_ID_PREFIX = "main-series-";
+const PANEL_COLORS = ["#5470c6", "#91cc75", "#fac858", "#ee6666", "#73c0de", "#3ba272", "#fc8452", "#9a60b4", "#ea7ccc"];
+const PANEL_MOUSE_WHEEL_ZOOM_IN_FACTOR = 0.82;
+const PANEL_MOUSE_WHEEL_ZOOM_OUT_FACTOR = 1.22;
+
+const AXIS_LINE_STYLE = { lineStyle: { color: "#323333" } };
+const AXIS_SPLIT_LINE_STYLE = { color: "#323333", width: 1 };
+const PANEL_AXIS_LABEL_STYLE = { color: "#f8f8f8", fontSize: 10 };
+const Y_AXIS_LABEL_STYLE = {
+    color: "#afb5bc",
+    fontSize: 10,
+    formatter: formatYAxisLabel,
+};
+
+function formatYAxisLabel(value) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return String(value);
+    const units = [
+        { value: 1_000_000_000_000, suffix: "T" },
+        { value: 1_000_000_000, suffix: "B" },
+        { value: 1_000_000, suffix: "M" },
+        { value: 1_000, suffix: "K" },
+    ];
+    const normalized = Object.is(numeric, -0) ? 0 : numeric;
+    const abs = Math.abs(normalized);
+    const unit = units.find((item) => abs >= item.value);
+    if (!unit) {
+        return new Intl.NumberFormat("en-US", { maximumFractionDigits: 4 }).format(normalized);
+    }
+    return `${new Intl.NumberFormat("en-US", { maximumFractionDigits: 1 }).format(normalized / unit.value)}${unit.suffix}`;
+}
+
+function getPanelRange(points, timeRange) {
+    const axis = buildDataViewerChartXAxis(points, timeRange);
+    const now = Date.now();
+    return {
+        startTime: Number.isFinite(axis.min) ? axis.min : now - 60 * 60 * 1000,
+        endTime: Number.isFinite(axis.max) ? axis.max : now,
+    };
+}
+
+export function getDataViewerChartRangeMs(points = [], timeRange = {}) {
+    return getPanelRange(points, timeRange);
+}
+
+function getPrimaryDataZoomEventItem(zoomData = {}) {
+    return Array.isArray(zoomData?.batch) ? zoomData.batch[0] : zoomData;
+}
+
+function hasExplicitDataZoomRange(dataZoomState = {}) {
+    return (
+        (dataZoomState.startValue !== undefined && dataZoomState.endValue !== undefined) ||
+        (dataZoomState.start !== undefined && dataZoomState.end !== undefined)
+    );
+}
+
+function getExplicitDataZoomRange(zoomData = {}) {
+    const startValue = zoomData.startValue;
+    const endValue = zoomData.endValue;
+
+    if (startValue === undefined || endValue === undefined) {
+        return undefined;
+    }
+
+    const startTime = Number(startValue);
+    const endTime = Number(endValue);
+
+    if (!Number.isFinite(startTime) || !Number.isFinite(endTime)) {
+        return undefined;
+    }
+
+    return {
+        startTime,
+        endTime,
+    };
+}
+
+export function extractDataViewerDataZoomRange(params = {}, currentRange = {}, axisRange = currentRange) {
+    const zoomData = getPrimaryDataZoomEventItem(params);
+    if (!zoomData) return undefined;
+
+    const explicitRange = getExplicitDataZoomRange(zoomData);
+    if (explicitRange) return explicitRange;
+
+    const axisStartTime = Number(axisRange.startTime);
+    const axisEndTime = Number(axisRange.endTime);
+    const axisSpan = axisEndTime - axisStartTime;
+    if (
+        typeof zoomData.start === "number" &&
+        typeof zoomData.end === "number" &&
+        Number.isFinite(axisSpan) &&
+        axisSpan > 0
+    ) {
+        return {
+            startTime: axisStartTime + (axisSpan * zoomData.start) / 100,
+            endTime: axisStartTime + (axisSpan * zoomData.end) / 100,
+        };
+    }
+
+    return undefined;
+}
+
+export function hasExplicitDataViewerDataZoomEventRange(params = {}) {
+    const zoomData = getPrimaryDataZoomEventItem(params);
+    return zoomData ? hasExplicitDataZoomRange(zoomData) : false;
+}
+
+export function isSameDataViewerChartRange(a = {}, b = {}) {
+    const aStart = Number(a.startTime);
+    const aEnd = Number(a.endTime);
+    const bStart = Number(b.startTime);
+    const bEnd = Number(b.endTime);
+    if (![aStart, aEnd, bStart, bEnd].every(Number.isFinite)) return false;
+    return Math.floor(aStart) === Math.floor(bStart) && Math.ceil(aEnd) === Math.ceil(bEnd);
+}
+
+export function buildDataViewerZoomControlRange(action, currentRange = {}, navigatorRange = {}, zoom = 0.2) {
+    const currentStart = Number(currentRange.startTime);
+    const currentEnd = Number(currentRange.endTime);
+    const navigatorStart = Number(navigatorRange.startTime);
+    const navigatorEnd = Number(navigatorRange.endTime);
+    if (![currentStart, currentEnd, navigatorStart, navigatorEnd].every(Number.isFinite)) return undefined;
+    if (currentEnd <= currentStart || navigatorEnd <= navigatorStart) return undefined;
+
+    const currentSpan = currentEnd - currentStart;
+    const navigatorSpan = navigatorEnd - navigatorStart;
+    const center = currentStart + currentSpan / 2;
+    let nextStart = currentStart;
+    let nextEnd = currentEnd;
+
+    if (action === "zoom-in") {
+        const offset = currentSpan * zoom;
+        nextStart = currentStart + offset;
+        nextEnd = currentEnd - offset;
+    } else if (action === "zoom-out") {
+        const offset = currentSpan * zoom;
+        nextStart = currentStart - offset;
+        nextEnd = currentEnd + offset;
+    } else if (action === "focus") {
+        const nextSpan = Math.max(currentSpan * 0.2, 1);
+        nextStart = center - nextSpan / 2;
+        nextEnd = center + nextSpan / 2;
+    } else if (action === "pan-left") {
+        nextStart = currentStart - currentSpan / 2;
+        nextEnd = currentEnd - currentSpan / 2;
+    } else if (action === "pan-right") {
+        nextStart = currentStart + currentSpan / 2;
+        nextEnd = currentEnd + currentSpan / 2;
+    } else {
+        return undefined;
+    }
+
+    if (nextStart < navigatorStart) {
+        nextEnd += navigatorStart - nextStart;
+        nextStart = navigatorStart;
+    }
+    if (nextEnd > navigatorEnd) {
+        nextStart -= nextEnd - navigatorEnd;
+        nextEnd = navigatorEnd;
+    }
+    nextStart = Math.max(nextStart, navigatorStart);
+    nextEnd = Math.min(nextEnd, navigatorEnd);
+
+    if (nextEnd <= nextStart) return undefined;
+    return { startTime: nextStart, endTime: nextEnd };
+}
+
+const PANEL_MAIN_RANGE_SHIFT_FRACTION = 0.3;
+
+export function buildDataViewerShiftMainRangeUpdate({ direction, currentRange = {}, navigatorRange = {} } = {}) {
+    const currentStart = Number(currentRange.startTime);
+    const currentEnd = Number(currentRange.endTime);
+    const navigatorStart = Number(navigatorRange.startTime);
+    const navigatorEnd = Number(navigatorRange.endTime);
+    if (![currentStart, currentEnd, navigatorStart, navigatorEnd].every(Number.isFinite)) return null;
+    if (currentEnd <= currentStart || navigatorEnd <= navigatorStart) return null;
+
+    const shiftDirection = direction === "backward" ? -1 : direction === "forward" ? 1 : 0;
+    if (shiftDirection === 0) return null;
+
+    const offset = (navigatorEnd - navigatorStart) * PANEL_MAIN_RANGE_SHIFT_FRACTION * shiftDirection;
+    const nextStart = currentStart + offset;
+    const nextEnd = currentEnd + offset;
+    const nextNavigatorStart = navigatorStart + offset;
+    const nextNavigatorEnd = navigatorEnd + offset;
+
+    if (nextEnd <= nextStart || nextNavigatorEnd <= nextNavigatorStart) return null;
+
+    return {
+        range: {
+            from: new Date(nextStart).toISOString(),
+            to: new Date(nextEnd).toISOString(),
+        },
+        navigatorRange: {
+            from: new Date(nextNavigatorStart).toISOString(),
+            to: new Date(nextNavigatorEnd).toISOString(),
+        },
+    };
+}
+
+export function buildDataViewerWheelZoomRange(deltaY, anchorTime, currentRange = {}, navigatorRange = {}) {
+    const currentStart = Number(currentRange.startTime);
+    const currentEnd = Number(currentRange.endTime);
+    const navigatorStart = Number(navigatorRange.startTime);
+    const navigatorEnd = Number(navigatorRange.endTime);
+    const anchor = Number(anchorTime);
+    if (![currentStart, currentEnd, navigatorStart, navigatorEnd, anchor, deltaY].every(Number.isFinite)) return undefined;
+    if (deltaY === 0 || currentEnd <= currentStart || navigatorEnd <= navigatorStart) return undefined;
+
+    const currentSpan = currentEnd - currentStart;
+    const navigatorSpan = navigatorEnd - navigatorStart;
+    const factor = deltaY < 0 ? PANEL_MOUSE_WHEEL_ZOOM_IN_FACTOR : PANEL_MOUSE_WHEEL_ZOOM_OUT_FACTOR;
+    const nextSpan = Math.min(Math.max(currentSpan * factor, 1), navigatorSpan);
+    const anchorRatio = Math.min(Math.max((anchor - currentStart) / currentSpan, 0), 1);
+    let nextStart = anchor - nextSpan * anchorRatio;
+    let nextEnd = nextStart + nextSpan;
+
+    if (nextStart < navigatorStart) {
+        nextEnd += navigatorStart - nextStart;
+        nextStart = navigatorStart;
+    }
+    if (nextEnd > navigatorEnd) {
+        nextStart -= nextEnd - navigatorEnd;
+        nextEnd = navigatorEnd;
+    }
+    nextStart = Math.max(nextStart, navigatorStart);
+    nextEnd = Math.min(nextEnd, navigatorEnd);
+
+    if (nextEnd <= nextStart) return undefined;
+    return { startTime: nextStart, endTime: nextEnd };
+}
+
+export function buildDataViewerDragRangeUpdate({
+    mode,
+    dragStartTime,
+    dragEndTime,
+    currentRange = {},
+    navigatorRange = {},
+} = {}) {
+    const currentStart = Number(currentRange.startTime);
+    const currentEnd = Number(currentRange.endTime);
+    const navigatorStart = Number(navigatorRange.startTime);
+    const navigatorEnd = Number(navigatorRange.endTime);
+    const dragStart = Number(dragStartTime);
+    const dragEnd = Number(dragEndTime);
+    if (![currentStart, currentEnd, navigatorStart, navigatorEnd, dragStart, dragEnd].every(Number.isFinite)) return undefined;
+    if (currentEnd <= currentStart || navigatorEnd <= navigatorStart || dragStart === dragEnd) return undefined;
+
+    const currentSpan = currentEnd - currentStart;
+    const navigatorSpan = navigatorEnd - navigatorStart;
+    let nextStart;
+    let nextEnd;
+
+    if (mode === "zoom-in") {
+        nextStart = Math.max(Math.min(dragStart, dragEnd), navigatorStart);
+        nextEnd = Math.min(Math.max(dragStart, dragEnd), navigatorEnd);
+    } else if (mode === "pan") {
+        if (currentSpan >= navigatorSpan) return undefined;
+        const offset = dragStart - dragEnd;
+        nextStart = currentStart + offset;
+        nextEnd = currentEnd + offset;
+    } else if (mode === "zoom-out") {
+        if (currentSpan >= navigatorSpan) return undefined;
+        const dragSpan = Math.abs(dragEnd - dragStart);
+        const nextSpan = Math.min(currentSpan + dragSpan, navigatorSpan);
+        const center = Math.min(Math.max((dragStart + dragEnd) / 2, navigatorStart), navigatorEnd);
+        nextStart = center - nextSpan / 2;
+        nextEnd = center + nextSpan / 2;
+    } else {
+        return undefined;
+    }
+
+    if (nextStart < navigatorStart) {
+        nextEnd += navigatorStart - nextStart;
+        nextStart = navigatorStart;
+    }
+    if (nextEnd > navigatorEnd) {
+        nextStart -= nextEnd - navigatorEnd;
+        nextEnd = navigatorEnd;
+    }
+    nextStart = Math.max(nextStart, navigatorStart);
+    nextEnd = Math.min(nextEnd, navigatorEnd);
+
+    if (nextEnd <= nextStart || isSameDataViewerChartRange({ startTime: nextStart, endTime: nextEnd }, currentRange)) return undefined;
+    return { startTime: nextStart, endTime: nextEnd };
+}
+
+function getRoundedAxisStep(axisRangeValue) {
+    const reference = Math.max(Math.abs(axisRangeValue) / 5, Number.MIN_VALUE);
+    const exponent = Math.floor(Math.log10(reference));
+    const magnitude = 10 ** exponent;
+    const fraction = reference / magnitude;
+    if (fraction <= 1) return magnitude;
+    if (fraction <= 2) return 2 * magnitude;
+    if (fraction <= 5) return 5 * magnitude;
+    return 10 * magnitude;
+}
+
+function getYAxisRange(series, panelRange) {
+    let rawMin;
+    let rawMax;
+    series.forEach((item) => {
+        (item.data || []).forEach(([x, y]) => {
+            if (x >= panelRange.startTime && x <= panelRange.endTime && typeof y === "number" && Number.isFinite(y)) {
+                if (rawMin === undefined || y < rawMin) rawMin = y;
+                if (rawMax === undefined || y > rawMax) rawMax = y;
+            }
+        });
+    });
+    if (rawMin === undefined || rawMax === undefined) return { min: undefined, max: undefined };
+    const range = rawMax - rawMin;
+    const fallback = Math.max(Math.abs(rawMax), Math.abs(rawMin), 1);
+    const step = getRoundedAxisStep(range > 0 ? range : fallback);
+    const min = Math.floor(rawMin / step) * step;
+    const max = Math.ceil(rawMax / step) * step;
+    return {
+        min: Number(min.toPrecision(12)),
+        max: Number((max > min ? max : min + step).toPrecision(12)),
+    };
+}
+
+function buildNeoLikeTooltipFormatter(params, timeFormat, timeZone) {
+    const items = (Array.isArray(params) ? params : [params])
+        .filter((item) => String(item?.seriesId || "").startsWith(PANEL_MAIN_SERIES_ID_PREFIX));
+    if (items.length === 0) return "";
+    const firstValue = Array.isArray(items[0].value) ? items[0].value : [];
+    const time = formatDataViewerTime(Number(firstValue[0] ?? items[0].axisValue), timeFormat, timeZone);
+    return `<div>
+        <div style="min-width:0;padding-left:10px;font-size:10px;color:#afb5bc">${time}</div>
+        <div style="padding:6px 0 0 10px">
+        ${items.map((item) => {
+            const value = Array.isArray(item.value) ? item.value[1] : "";
+            const colorStyle = typeof item.color === "string" ? `color:${item.color};` : "";
+            return `<div style="${colorStyle}margin:0;padding:0;white-space:nowrap">${item.seriesName} : ${value ?? ""}</div>`;
+        }).join("")}
+        </div>
+    </div>`;
+}
+
+function getPanelLegendLayout(series = []) {
+    const rowCount = Math.max(1, Math.ceil(Math.max(0, series.length) / PANEL_LEGEND_ITEMS_PER_ROW));
+    const extraLegendHeight = Math.max(0, rowCount - 1) * PANEL_LEGEND_ROW_HEIGHT;
+    const mainTop = PANEL_MAIN_TOP_WITH_LEGEND + extraLegendHeight;
+    return {
+        rowCount,
+        mainTop,
+        mainHeight: Math.max(PANEL_MAIN_MIN_HEIGHT, PANEL_MAIN_HEIGHT - extraLegendHeight),
+        legendHeight: Math.max(PANEL_LEGEND_ROW_HEIGHT, mainTop - PANEL_LEGEND_TOP - 8),
+    };
+}
+
+export function buildDataViewerEChartOption({
+    series = [],
+    timeRange = {},
+    displayRange,
+    timeFormat = DEFAULT_TIME_FORMAT,
+    timeZone = DEFAULT_TIME_ZONE,
+} = {}) {
+    const allPoints = series.flatMap((item) => Array.isArray(item?.data) ? item.data : []);
+    const panelRange = getPanelRange(allPoints, displayRange || timeRange);
+    const navigatorRange = getPanelRange(allPoints, timeRange);
+    const yAxisRange = getYAxisRange(series, panelRange);
+    const legendLayout = getPanelLegendLayout(series);
+
+    return {
+        backgroundColor: "#252525",
+        animation: false,
+        textStyle: {
+            fontFamily: "Open Sans, Helvetica, Arial, sans-serif",
+        },
+        color: PANEL_COLORS,
+        grid: [
+            {
+                id: "panel-main-grid",
+                left: PANEL_GRID_SIDE,
+                right: PANEL_GRID_SIDE,
+                top: legendLayout.mainTop,
+                height: legendLayout.mainHeight,
+                containLabel: true,
+            },
+            {
+                id: "panel-navigator-grid",
+                left: PANEL_NAVIGATOR_GRID_SIDE,
+                right: PANEL_NAVIGATOR_GRID_SIDE,
+                bottom: PANEL_GRID_BOTTOM,
+                height: PANEL_SLIDER_HEIGHT,
+            },
+        ],
+        legend: {
+            show: true,
+            type: "scroll",
+            left: 10,
+            right: 10,
+            top: PANEL_LEGEND_TOP,
+            height: legendLayout.legendHeight,
+            itemGap: 15,
+            textStyle: {
+                color: "#e7e8ea",
+                fontSize: 10,
+            },
+        },
+        tooltip: {
+            trigger: "axis",
+            confine: true,
+            backgroundColor: "#1f1d1d",
+            borderColor: "#292929",
+            borderWidth: 1,
+            textStyle: {
+                color: "#afb5bc",
+                fontSize: 10,
+            },
+            axisPointer: { type: "line", snap: false },
+            formatter: (params) => buildNeoLikeTooltipFormatter(params, timeFormat, timeZone),
+        },
+        xAxis: [
+            {
+                id: "panel-main-x-axis",
+                type: "time",
+                gridIndex: 0,
+                min: panelRange.startTime,
+                max: panelRange.endTime,
+                axisLine: AXIS_LINE_STYLE,
+                axisTick: AXIS_LINE_STYLE,
+                axisLabel: {
+                    ...PANEL_AXIS_LABEL_STYLE,
+                    formatter: (value) => formatDataViewerAxisTime(value, { min: panelRange.startTime, max: panelRange.endTime }, timeZone),
+                },
+                splitLine: {
+                    show: true,
+                    lineStyle: AXIS_SPLIT_LINE_STYLE,
+                },
+                axisPointer: {
+                    label: { show: false },
+                },
+            },
+            {
+                id: "panel-navigator-x-axis",
+                type: "time",
+                gridIndex: 1,
+                min: navigatorRange.startTime,
+                max: navigatorRange.endTime,
+                axisLine: { show: false },
+                axisTick: { show: false },
+                axisLabel: { show: false },
+                splitLine: { show: false },
+                axisPointer: { show: false, label: { show: false } },
+            },
+            {
+                id: "panel-navigator-data-x-axis",
+                type: "time",
+                gridIndex: 1,
+                min: navigatorRange.startTime,
+                max: navigatorRange.endTime,
+                axisLine: { show: false },
+                axisTick: { show: false },
+                axisLabel: { show: false },
+                splitLine: { show: false },
+                axisPointer: { show: false, label: { show: false } },
+            },
+        ],
+        yAxis: [
+            {
+                id: "panel-left-y-axis",
+                type: "value",
+                gridIndex: 0,
+                min: yAxisRange.min,
+                max: yAxisRange.max,
+                axisLine: AXIS_LINE_STYLE,
+                axisLabel: Y_AXIS_LABEL_STYLE,
+                splitLine: {
+                    show: true,
+                    lineStyle: AXIS_SPLIT_LINE_STYLE,
+                },
+                minInterval: 0,
+                scale: true,
+            },
+            {
+                id: "panel-right-y-axis",
+                type: "value",
+                gridIndex: 0,
+                position: "left",
+                axisLine: AXIS_LINE_STYLE,
+                axisLabel: { ...Y_AXIS_LABEL_STYLE, show: false },
+                splitLine: {
+                    show: true,
+                    lineStyle: AXIS_SPLIT_LINE_STYLE,
+                },
+                minInterval: 0,
+                scale: true,
+            },
+            {
+                id: "panel-navigator-y-axis",
+                type: "value",
+                gridIndex: 1,
+                boundaryGap: ["18%", "18%"],
+                axisLine: { show: false },
+                axisTick: { show: false },
+                axisLabel: { show: false },
+                splitLine: { show: false },
+                axisPointer: { show: false, label: { show: false } },
+                scale: true,
+            },
+        ],
+        dataZoom: [
+            {
+                id: "panel-inside-data-zoom",
+                type: "inside",
+                xAxisIndex: [1],
+                filterMode: "none",
+                startValue: panelRange.startTime,
+                endValue: panelRange.endTime,
+                zoomOnMouseWheel: false,
+                moveOnMouseMove: false,
+                moveOnMouseWheel: false,
+                preventDefaultMouseMove: true,
+            },
+            {
+                id: "panel-slider-data-zoom",
+                type: "slider",
+                xAxisIndex: [1],
+                filterMode: "none",
+                startValue: panelRange.startTime,
+                endValue: panelRange.endTime,
+                realtime: false,
+                left: PANEL_NAVIGATOR_GRID_SIDE,
+                right: PANEL_NAVIGATOR_GRID_SIDE,
+                bottom: PANEL_GRID_BOTTOM,
+                height: PANEL_SLIDER_HEIGHT,
+                showDetail: false,
+                brushSelect: false,
+                backgroundColor: "rgba(0, 0, 0, 0)",
+                borderColor: "#7a828c",
+                fillerColor: "rgba(104, 119, 138, 0.28)",
+                showDataShadow: false,
+                dataBackground: {
+                    lineStyle: { color: "#c0c7d0", opacity: 0.8 },
+                    areaStyle: { color: "#a8b0ba", opacity: 0.28 },
+                },
+                selectedDataBackground: {
+                    lineStyle: { color: "#a8b3c1", opacity: 0.62 },
+                    areaStyle: { color: "#7f8da0", opacity: 0.18 },
+                },
+                handleSize: 24,
+                handleStyle: {
+                    color: "rgba(245, 247, 250, 0.78)",
+                    borderColor: "#8a939e",
+                },
+                moveHandleStyle: {
+                    color: "rgba(245, 247, 250, 0.32)",
+                    opacity: 0.75,
+                },
+            },
+        ],
+        brush: {
+            toolbox: [],
+            xAxisIndex: 0,
+            brushMode: "single",
+            throttleType: "debounce",
+            throttleDelay: 150,
+            brushStyle: {
+                color: "rgba(68, 170, 213, 0.28)",
+                borderColor: "rgba(68, 170, 213, 0.85)",
+                borderWidth: 2,
+            },
+        },
+        toolbox: { show: false },
+        title: { show: false },
+        series: [
+            ...series.map((item, index) => ({
+                id: `${PANEL_MAIN_SERIES_ID_PREFIX}${index}`,
+                name: item.name,
+                type: "line",
+                legendHoverLink: false,
+                data: Array.isArray(item.data) ? item.data : [],
+                xAxisIndex: 0,
+                yAxisIndex: 0,
+                symbol: "circle",
+                showSymbol: false,
+                symbolSize: 6,
+                animation: false,
+                sampling: item.data?.length > 1000 ? "lttb" : undefined,
+                lineStyle: {
+                    width: 1,
+                    color: PANEL_COLORS[index % PANEL_COLORS.length],
+                    opacity: 1,
+                },
+                itemStyle: {
+                    color: PANEL_COLORS[index % PANEL_COLORS.length],
+                    opacity: 1,
+                },
+                connectNulls: false,
+                triggerEvent: true,
+                z: 2,
+            })),
+            ...series.map((item, index) => ({
+                id: `navigator-series-${index}`,
+                name: item.name,
+                type: "line",
+                legendHoverLink: false,
+                data: Array.isArray(item.data) ? item.data : [],
+                xAxisIndex: 2,
+                yAxisIndex: 2,
+                showSymbol: false,
+                silent: true,
+                tooltip: { show: false },
+                animation: false,
+                sampling: item.data?.length > 1000 ? "lttb" : undefined,
+                lineStyle: {
+                    width: 1,
+                    color: PANEL_COLORS[index % PANEL_COLORS.length],
+                    opacity: 0.85,
+                },
+                itemStyle: {
+                    color: PANEL_COLORS[index % PANEL_COLORS.length],
+                    opacity: 0.85,
+                },
+                emphasis: { disabled: true },
+                z: 1,
+            })),
+        ],
+    };
+}
+
 export function defaultSelectedTag(rows = []) {
     return rows.find((row) => row.type === "tag")?.tag || null;
+}
+
+function cleanTagName(name) {
+    return String(name ?? "").trim();
+}
+
+function getSelectableTagNames(rows = []) {
+    const names = [];
+    const seen = new Set();
+
+    for (const row of rows) {
+        if (row?.type !== "tag" || row.selectable === false) continue;
+        const name = cleanTagName(row?.tag?.name);
+        if (!name || seen.has(name)) continue;
+        seen.add(name);
+        names.push(name);
+    }
+
+    return names;
+}
+
+export function normalizeSelectedTagNames(selectedNames = [], selectableRows = []) {
+    const selectableNames = getSelectableTagNames(selectableRows);
+    if (selectableNames.length === 0) return [];
+
+    const selectable = new Set(selectableNames);
+    const seen = new Set();
+    const normalized = (Array.isArray(selectedNames) ? selectedNames : [])
+        .map(cleanTagName)
+        .filter((name) => {
+            if (!name || !selectable.has(name) || seen.has(name)) return false;
+            seen.add(name);
+            return true;
+        });
+
+    return normalized.length > 0 ? normalized : [selectableNames[0]];
+}
+
+export function toggleSelectedTagName(selectedNames = [], tagName = "") {
+    const name = cleanTagName(tagName);
+    const current = (Array.isArray(selectedNames) ? selectedNames : [])
+        .map(cleanTagName)
+        .filter(Boolean);
+
+    if (!name) return current;
+    if (current.includes(name)) {
+        return current.filter((selectedName) => selectedName !== name);
+    }
+    return [...current, name];
+}
+
+export function buildDataViewerTagSelectionUpdate({
+    selectedTagNames = [],
+    tagName = "",
+    currentPage = 1,
+    pageSize,
+    currentBounds,
+} = {}) {
+    const nextSelectedTagNames = toggleSelectedTagName(selectedTagNames, tagName);
+    return {
+        selectedTagNames: nextSelectedTagNames,
+        rawPageRequest: buildDataViewerRawPageRequest({
+            currentPage,
+            nextPage: currentPage,
+            pageSize: pageSize ?? getDataViewerRawPageSize(nextSelectedTagNames),
+            currentBounds,
+            reason: "tags",
+        }),
+        preserveChartRanges: true,
+    };
 }
 
 function pad(value, len = 2) {
@@ -633,6 +1860,15 @@ export function formatDataViewerAxisTime(value, range = {}, timeZone = DEFAULT_T
     }
 
     return formatDataViewerTime(value, "2006-01-02", timeZone);
+}
+
+export function formatDataViewerNavigatorRangeLabels(range = {}, timeFormat = DEFAULT_TIME_FORMAT, timeZone = DEFAULT_TIME_ZONE) {
+    const startTime = toEpochMs(range?.startTime ?? range?.from);
+    const endTime = toEpochMs(range?.endTime ?? range?.to);
+    return {
+        start: Number.isFinite(startTime) ? formatDataViewerTime(startTime, timeFormat, timeZone) : "",
+        end: Number.isFinite(endTime) ? formatDataViewerTime(endTime, timeFormat, timeZone) : "",
+    };
 }
 
 export function formatTimeRangeLabel(from, to) {

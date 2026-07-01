@@ -1,46 +1,66 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router";
-import Highcharts from "highcharts/highstock";
-import HighchartsBoost from "highcharts/modules/boost";
-import HighchartsReact from "highcharts-react-official";
+import * as echarts from "echarts";
 import Icon from "../components/common/Icon";
 import { useApp } from "../context/AppContext";
 import { listTableTags, queryTagData, queryTagDataTotal } from "../api/dataViewer";
+import ZoomInTwo from "../assets/image/btn_zoom in x2@3x.png";
+import ZoomInFour from "../assets/image/btn_zoom in x4@3x.png";
+import ZoomOutTwo from "../assets/image/btn_zoom out x2@3x.png";
+import ZoomOutFour from "../assets/image/btn_zoom out x4@3x.png";
 import {
     DATA_VIEWER_BACK_PATH,
+    DEFAULT_DATA_VIEWER_ROWS_PER_TAG,
     DEFAULT_TIME_FORMAT,
     DEFAULT_TIME_ZONE,
     QUICK_TIME_RANGE_GROUPS,
     TIME_FORMATS,
     TIME_ZONE_OPTIONS,
     buildAssetRows,
-    buildDataViewerChartXAxis,
+    buildDataViewerChartGroups,
+    buildDataViewerChartResultsFromRawRows,
+    buildDataViewerEChartOption,
+    buildDataViewerGlobalTimeUpdate,
     buildDataViewerHeaderLabels,
+    buildDataViewerDefaultChartShiftRawPageUpdate,
+    buildDataViewerRawPageBounds,
+    buildDataViewerRawPageRequest,
+    buildDataViewerRawRowsPerTagChange,
+    buildDataViewerRawToChartRangeUpdate,
+    buildDataViewerSplitRangeUpdate,
+    buildDataViewerSplitGroups,
+    buildDataViewerShiftMainRangeUpdate,
+    buildDataViewerDragRangeUpdate,
+    buildDataViewerTagSelectionUpdate,
+    buildDataViewerWheelZoomRange,
+    buildDataViewerZoomControlRange,
+    buildNeoWebTagAnalyzerMessage,
     buildRawResultColumns,
-    buildTagChartSeries,
     buildTagRows,
-    defaultSelectedTag,
-    formatDataViewerAxisTime,
+    extractDataViewerDataZoomRange,
+    formatDataViewerNavigatorRangeLabels,
     formatDataViewerTime,
     formatTimeRangeInput,
     formatTimeRangeLabel,
+    getDataViewerChartRangeMs,
+    getDataViewerRawPageSize,
     getResultHeading,
     getScanDirectionLabel,
     getTimeFormatLabel,
     getTimeZoneLabel,
     getVisibleTagRows,
+    hasDataViewerRawNextPage,
+    hasExplicitDataViewerDataZoomEventRange,
     hasAssetHierarchy,
+    isSameDataViewerChartRange,
+    normalizeSelectedTagNames,
     resolveTimeRangeInput,
     resolveTagNodes,
+    sendNeoWebTagAnalyzerMessage,
+    shouldFetchDataViewerRowsForMode,
     showsDataViewerTimeControls,
 } from "./dataViewerModel";
 
-if (typeof HighchartsBoost === "function") {
-    HighchartsBoost(Highcharts);
-}
-
-const RESULT_PAGE_SIZE = 100;
-const MIN_CHART_HEIGHT = 260;
 const WEEKDAY_LABELS = ["S", "M", "T", "W", "T", "F", "S"];
 const MONTH_LABELS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
@@ -103,13 +123,18 @@ function buildCalendarDays(year, month) {
     return cells;
 }
 
-function ResultPagination({ page, pageSize, rowCount, loading, endLoading, onPage, onEndPage }) {
+function ResultPagination({ page, pageSize, rowCount, loading, endLoading, forceNextPage = false, rowsPerTag, onRowsPerTagChange, onPage, onEndPage }) {
     const [value, setValue] = useState(String(page));
-    const hasNextPage = rowCount >= pageSize;
+    const [rowsPerTagValue, setRowsPerTagValue] = useState(String(rowsPerTag));
+    const hasNextPage = hasDataViewerRawNextPage({ rowCount, pageSize, forceOpen: forceNextPage });
 
     useEffect(() => {
         setValue(String(page));
     }, [page]);
+
+    useEffect(() => {
+        setRowsPerTagValue(String(rowsPerTag));
+    }, [rowsPerTag]);
 
     const go = (next) => {
         onPage(Math.max(1, next));
@@ -119,6 +144,11 @@ function ResultPagination({ page, pageSize, rowCount, loading, endLoading, onPag
         const n = Number(value);
         if (Number.isFinite(n)) go(Math.floor(n));
         else setValue(String(page));
+    };
+
+    const commitRowsPerTag = () => {
+        const next = onRowsPerTagChange?.(rowsPerTagValue);
+        setRowsPerTagValue(String(next || rowsPerTag));
     };
 
     return (
@@ -145,9 +175,26 @@ function ResultPagination({ page, pageSize, rowCount, loading, endLoading, onPag
             <button type="button" className="btn btn-sm btn-ghost" disabled={!hasNextPage || loading || endLoading} onClick={() => go(page + 1)}>
                 <Icon name="chevron_right" className="icon-sm" />
             </button>
-            <button type="button" className="btn btn-sm btn-ghost" disabled={loading || endLoading} onClick={onEndPage} title="Move to end page">
+            <button type="button" className="btn btn-sm btn-ghost" disabled={!hasNextPage || loading || endLoading} onClick={onEndPage} title="Move to end page">
                 <Icon name="keyboard_double_arrow_right" className="icon-sm" />
             </button>
+            <label className="pagination-page-size">
+                <span>Rows / tag</span>
+                <input
+                    type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    value={rowsPerTagValue}
+                    onChange={(e) => setRowsPerTagValue(e.target.value)}
+                    onBlur={commitRowsPerTag}
+                    onKeyDown={(e) => {
+                        if (e.key === "Enter") commitRowsPerTag();
+                    }}
+                    className="pagination-input pagination-page-size-input"
+                    aria-label="Rows per tag"
+                    disabled={loading || endLoading}
+                />
+            </label>
         </div>
     );
 }
@@ -437,208 +484,356 @@ function FormatTimezoneModal({ timeFormat, timeZone, onApply, onClose }) {
     );
 }
 
-function TagLineChart({ rows, timeFormat, timeZone, timeRange }) {
-    const chartRef = useRef(null);
+function TagEChart({ series, timeFormat, timeZone, timeRange, displayRange, onDisplayRangeChange, onShiftMainRange }) {
     const containerRef = useRef(null);
-    const [chartSize, setChartSize] = useState({ width: 0, height: MIN_CHART_HEIGHT });
-    const series = useMemo(() => buildTagChartSeries(rows), [rows]);
+    const chartRef = useRef(null);
+    const rangeRef = useRef({ currentRange: {}, navigatorRange: {}, onDisplayRangeChange });
+    const dragStateRef = useRef(null);
+    const [dragPreview, setDragPreview] = useState(null);
     const allPoints = useMemo(() => series.flatMap((item) => item.data), [series]);
+    const hasChartData = allPoints.length > 0;
+    const options = useMemo(
+        () => buildDataViewerEChartOption({ series, timeFormat, timeZone, timeRange, displayRange }),
+        [displayRange, series, timeFormat, timeRange, timeZone]
+    );
+    const currentRange = useMemo(
+        () => getDataViewerChartRangeMs(allPoints, displayRange || timeRange),
+        [allPoints, displayRange, timeRange]
+    );
+    const navigatorRange = useMemo(
+        () => getDataViewerChartRangeMs(allPoints, timeRange),
+        [allPoints, timeRange]
+    );
+
+    useEffect(() => {
+        rangeRef.current = { currentRange, navigatorRange, onDisplayRangeChange };
+    }, [currentRange, navigatorRange, onDisplayRangeChange]);
 
     useEffect(() => {
         const container = containerRef.current;
-        if (!container || typeof ResizeObserver === "undefined") return undefined;
+        if (!container) return undefined;
 
-        const updateSize = (entry) => {
-            const rect = entry?.contentRect || container.getBoundingClientRect();
-            const width = Math.floor(rect.width);
-            const height = Math.max(MIN_CHART_HEIGHT, Math.floor(rect.height));
+        const chart = echarts.init(container, null, { renderer: "canvas" });
+        chartRef.current = chart;
+        const getDataZoomEventState = (params = {}) => {
+            const eventState = Array.isArray(params.batch) ? params.batch[0] : params;
+            const dataZoomOptions = chart.getOption?.()?.dataZoom || [];
+            const dataZoomIndex = Number(eventState?.dataZoomIndex);
+            const dataZoomId = eventState?.dataZoomId;
+            const optionState = dataZoomId
+                ? dataZoomOptions.find((item) => item?.id === dataZoomId)
+                : (Number.isFinite(dataZoomIndex) ? dataZoomOptions[dataZoomIndex] : undefined);
 
-            setChartSize((prev) => (prev.width === width && prev.height === height ? prev : { width, height }));
+            return {
+                ...(optionState || dataZoomOptions[1] || dataZoomOptions[0] || {}),
+                ...(eventState || {}),
+            };
         };
+        const convertMouseEventToTimestamp = (event) => {
+            const rect = container.getBoundingClientRect?.();
+            if (!rect) return undefined;
 
-        const observer = new ResizeObserver((entries) => {
-            updateSize(entries[0]);
+            const pixel = [event.clientX - rect.left, event.clientY - rect.top];
+            if (!chart.containPixel?.({ gridIndex: 0 }, pixel)) return undefined;
+
+            const fromAxis = chart.convertFromPixel?.({ xAxisIndex: 0 }, pixel);
+            const fromGrid = chart.convertFromPixel?.({ gridIndex: 0 }, pixel);
+            const axisTime = Array.isArray(fromAxis) ? Number(fromAxis[0]) : Number(fromAxis);
+            if (Number.isFinite(axisTime)) return axisTime;
+
+            const gridTime = Array.isArray(fromGrid) ? Number(fromGrid[0]) : Number(fromGrid);
+            if (Number.isFinite(gridTime)) return gridTime;
+
+            const { currentRange: activeRange } = rangeRef.current;
+            const start = Number(activeRange?.startTime);
+            const end = Number(activeRange?.endTime);
+            return Number.isFinite(start) && Number.isFinite(end) ? start + (end - start) / 2 : undefined;
+        };
+        const handleMouseWheelZoom = (event) => {
+            if (event.deltaY === 0) return;
+            const { currentRange: activeRange, navigatorRange: activeNavigatorRange, onDisplayRangeChange: activeRangeChange } = rangeRef.current;
+            const anchorTime = convertMouseEventToTimestamp(event);
+            const nextRange = buildDataViewerWheelZoomRange(event.deltaY, anchorTime, activeRange, activeNavigatorRange);
+            if (!nextRange || isSameDataViewerChartRange(nextRange, activeRange)) return;
+
+            event.preventDefault();
+            event.stopPropagation();
+            activeRangeChange?.({
+                from: new Date(nextRange.startTime).toISOString(),
+                to: new Date(nextRange.endTime).toISOString(),
+            }, {
+                from: new Date(activeNavigatorRange.startTime).toISOString(),
+                to: new Date(activeNavigatorRange.endTime).toISOString(),
+            });
+        };
+        const getDragMode = (button) => {
+            if (button === 0) return "zoom-in";
+            if (button === 1) return "pan";
+            if (button === 2) return "zoom-out";
+            return undefined;
+        };
+        const getMainGridBounds = () => {
+            const grid = chart.getOption?.()?.grid?.[0] || {};
+            const top = Number(grid.top);
+            const height = Number(grid.height);
+            return {
+                top: Number.isFinite(top) ? top : 40,
+                height: Number.isFinite(height) ? height : 178,
+            };
+        };
+        const emitDragRange = (dragState, endTime) => {
+            const nextRange = buildDataViewerDragRangeUpdate({
+                mode: dragState.mode,
+                dragStartTime: dragState.startTime,
+                dragEndTime: endTime,
+                currentRange: dragState.currentRange,
+                navigatorRange: dragState.navigatorRange,
+            });
+            if (!nextRange || isSameDataViewerChartRange(nextRange, dragState.currentRange)) return;
+
+            dragState.onDisplayRangeChange?.({
+                from: new Date(nextRange.startTime).toISOString(),
+                to: new Date(nextRange.endTime).toISOString(),
+            }, {
+                from: new Date(dragState.navigatorRange.startTime).toISOString(),
+                to: new Date(dragState.navigatorRange.endTime).toISOString(),
+            });
+        };
+        const applyDragRange = (event) => {
+            const dragState = dragStateRef.current;
+            dragStateRef.current = null;
+            setDragPreview(null);
+            if (!dragState) return;
+
+            const endTime = convertMouseEventToTimestamp(event);
+            if (!Number.isFinite(endTime) || Math.abs(event.clientX - dragState.startX) < 8) return;
+
+            emitDragRange(dragState, endTime);
+        };
+        const handleDragMove = (event) => {
+            const dragState = dragStateRef.current;
+            if (!dragState) return;
+            event.preventDefault();
+            event.stopPropagation();
+
+            const endTime = convertMouseEventToTimestamp(event);
+            if (dragState.mode === "pan") {
+                if (Number.isFinite(endTime) && Math.abs(event.clientX - dragState.startX) >= 1) {
+                    emitDragRange(dragState, endTime);
+                }
+                return;
+            }
+            const left = Math.min(dragState.startX, event.clientX) - dragState.containerLeft;
+            const width = Math.abs(event.clientX - dragState.startX);
+            setDragPreview({ mode: dragState.mode, left, width, ...dragState.gridBounds });
+        };
+        const handleDragEnd = (event) => {
+            if (!dragStateRef.current) return;
+            event.preventDefault();
+            event.stopPropagation();
+            window.removeEventListener("mousemove", handleDragMove, true);
+            window.removeEventListener("mouseup", handleDragEnd, true);
+            applyDragRange(event);
+        };
+        const handleMouseDownDrag = (event) => {
+            const mode = getDragMode(event.button);
+            if (!mode) return;
+            const startTime = convertMouseEventToTimestamp(event);
+            if (!Number.isFinite(startTime)) return;
+
+            const rect = container.getBoundingClientRect?.();
+            if (!rect) return;
+            event.preventDefault();
+            event.stopPropagation();
+
+            const { currentRange: activeRange, navigatorRange: activeNavigatorRange, onDisplayRangeChange: activeRangeChange } = rangeRef.current;
+            dragStateRef.current = {
+                mode,
+                startTime,
+                startX: event.clientX,
+                containerLeft: rect.left,
+                currentRange: activeRange,
+                navigatorRange: activeNavigatorRange,
+                onDisplayRangeChange: activeRangeChange,
+                gridBounds: getMainGridBounds(),
+            };
+            setDragPreview(mode === "pan" ? null : { mode, left: event.clientX - rect.left, width: 0, ...dragStateRef.current.gridBounds });
+            window.addEventListener("mousemove", handleDragMove, true);
+            window.addEventListener("mouseup", handleDragEnd, true);
+        };
+        const handleContextMenu = (event) => {
+            const startTime = convertMouseEventToTimestamp(event);
+            if (!Number.isFinite(startTime)) return;
+            event.preventDefault();
+        };
+        const handleDataZoom = (params) => {
+            const { currentRange: activeRange, navigatorRange: activeNavigatorRange, onDisplayRangeChange: activeRangeChange } = rangeRef.current;
+            const dataZoomState = getDataZoomEventState(params);
+            const nextRange = hasExplicitDataViewerDataZoomEventRange(params)
+                ? extractDataViewerDataZoomRange(params, activeRange, activeNavigatorRange)
+                : extractDataViewerDataZoomRange(dataZoomState, activeRange, activeNavigatorRange);
+
+            if (!nextRange || isSameDataViewerChartRange(nextRange, activeRange)) return;
+            activeRangeChange?.({
+                from: new Date(nextRange.startTime).toISOString(),
+                to: new Date(nextRange.endTime).toISOString(),
+            }, {
+                from: new Date(activeNavigatorRange.startTime).toISOString(),
+                to: new Date(activeNavigatorRange.endTime).toISOString(),
+            });
+        };
+        chart.on("datazoom", handleDataZoom);
+        container.addEventListener("wheel", handleMouseWheelZoom, { passive: false, capture: true });
+        container.addEventListener("mousedown", handleMouseDownDrag, { capture: true });
+        container.addEventListener("contextmenu", handleContextMenu, { capture: true });
+
+        const resize = () => chart.resize();
+        let observer;
+        if (typeof ResizeObserver !== "undefined") {
+            observer = new ResizeObserver(resize);
+            observer.observe(container);
+        } else {
+            window.addEventListener("resize", resize);
+        }
+        resize();
+
+        return () => {
+            chart.off("datazoom", handleDataZoom);
+            container.removeEventListener("wheel", handleMouseWheelZoom, true);
+            container.removeEventListener("mousedown", handleMouseDownDrag, true);
+            container.removeEventListener("contextmenu", handleContextMenu, true);
+            window.removeEventListener("mousemove", handleDragMove, true);
+            window.removeEventListener("mouseup", handleDragEnd, true);
+            if (observer) observer.disconnect();
+            else window.removeEventListener("resize", resize);
+            chart.dispose();
+            chartRef.current = null;
+            dragStateRef.current = null;
+        };
+    }, [hasChartData]);
+
+    useEffect(() => {
+        if (!chartRef.current) return;
+        chartRef.current.setOption(options, true);
+        if (Number.isFinite(currentRange.startTime) && Number.isFinite(currentRange.endTime)) {
+            chartRef.current.dispatchAction?.({
+                type: "dataZoom",
+                dataZoomId: "panel-inside-data-zoom",
+                startValue: currentRange.startTime,
+                endValue: currentRange.endTime,
+            });
+            chartRef.current.dispatchAction?.({
+                type: "dataZoom",
+                dataZoomId: "panel-slider-data-zoom",
+                startValue: currentRange.startTime,
+                endValue: currentRange.endTime,
+            });
+        }
+        chartRef.current.resize();
+    }, [currentRange, options]);
+
+    const applyZoomControl = useCallback((action, zoom) => {
+        const nextRange = buildDataViewerZoomControlRange(action, currentRange, navigatorRange, zoom);
+        if (!nextRange || isSameDataViewerChartRange(nextRange, currentRange)) return;
+        onDisplayRangeChange?.({
+            from: new Date(nextRange.startTime).toISOString(),
+            to: new Date(nextRange.endTime).toISOString(),
+        }, {
+            from: new Date(navigatorRange.startTime).toISOString(),
+            to: new Date(navigatorRange.endTime).toISOString(),
         });
+    }, [currentRange, navigatorRange, onDisplayRangeChange]);
 
-        observer.observe(container);
-        updateSize();
-
-        return () => observer.disconnect();
-    }, []);
-
-    const options = useMemo(() => {
-        if (allPoints.length === 0) return null;
-
-        const xAxisRange = buildDataViewerChartXAxis(allPoints, timeRange);
-        const yValues = allPoints.map((point) => point[1]);
-        const yMin = Math.floor(Math.min(...yValues) * 1000) / 1000;
-        const yMax = Math.ceil(Math.max(...yValues) * 1000) / 1000;
-        const yPadding = yMin === yMax ? Math.max(1, Math.abs(yMin) * 0.1) : 0;
-
-        return {
-            accessibility: { enabled: false },
-            chart: {
-                backgroundColor: "#252525",
-                height: chartSize.height,
-                width: chartSize.width || undefined,
-                spacing: [10, 10, 15, 10],
-                type: "line",
-                animation: false,
-                style: {
-                    fontFamily: "Open Sans, Helvetica, Arial, sans-serif",
-                },
-            },
-            time: {
-                useUTC: false,
-            },
-            series: series.map((item) => ({
-                name: item.name,
-                data: item.data,
-                yAxis: 0,
-                marker: { symbol: "circle", lineColor: null, lineWidth: 1 },
-            })),
-            plotOptions: {
-                boost: {
-                    useGPUTranslations: true,
-                    seriesThreshold: 5,
-                },
-                series: {
-                    boostThreshold: 5000,
-                    showInNavigator: false,
-                    lineWidth: 1,
-                    fillOpacity: 0,
-                    cursor: "pointer",
-                    marker: {
-                        enabled: false,
-                        radius: 0,
-                    },
-                    states: {
-                        hover: {
-                            enabled: true,
-                            lineWidthPlus: 0,
-                            lineWidth: 0,
-                        },
-                    },
-                    dataGrouping: {
-                        enabled: false,
-                    },
-                },
-            },
-            scrollbar: {
-                liveRedraw: false,
-                enabled: false,
-            },
-            rangeSelector: {
-                buttons: [],
-                allButtonsEnabled: false,
-                selected: 1,
-                inputEnabled: false,
-            },
-            navigator: {
-                enabled: false,
-            },
-            xAxis: {
-                type: "datetime",
-                ordinal: false,
-                gridLineWidth: 1,
-                gridLineColor: "#323333",
-                lineColor: "#323333",
-                min: xAxisRange.min,
-                max: xAxisRange.max,
-                tickInterval: xAxisRange.tickInterval,
-                crosshair: {
-                    snap: false,
-                    width: 0.5,
-                    color: "red",
-                },
-                labels: {
-                    align: "center",
-                    formatter: function () {
-                        return formatDataViewerAxisTime(this.value, xAxisRange, timeZone);
-                    },
-                    style: {
-                        color: "#f8f8f8",
-                        fontSize: "10px",
-                    },
-                    y: 35,
-                },
-                tickColor: "#323333",
-            },
-            yAxis: [
-                {
-                    tickAmount: 5,
-                    min: yMin - yPadding,
-                    max: yMax + yPadding,
-                    gridLineWidth: 1,
-                    gridLineColor: "#323333",
-                    lineColor: "#323333",
-                    startOnTick: true,
-                    endOnTick: true,
-                    labels: {
-                        align: "center",
-                        style: {
-                            color: "#afb5bc",
-                            fontSize: "10px",
-                        },
-                        x: -5,
-                        y: 3,
-                    },
-                    opposite: false,
-                },
-            ],
-            tooltip: {
-                split: false,
-                shared: true,
-                followPointer: true,
-                backgroundColor: "#1f1d1d",
-                borderColor: "#292929",
-                borderWidth: 1,
-                style: {
-                    color: "#f8f8f8",
-                    fontSize: "11px",
-                },
-                formatter: function () {
-                    const points = this.points || (this.point ? [this.point] : []);
-                    const header = `<span style="color:#f8f8f8;font-size:10px">${formatDataViewerTime(this.x, timeFormat, timeZone)}</span><br/>`;
-                    return header + points.map((point) => (
-                        `<span style="color:${point.color}">\u25cf</span> <span style="color:#f8f8f8">${point.series.name}: <b>${point.y}</b></span><br/>`
-                    )).join("");
-                },
-            },
-            legend: {
-                enabled: true,
-                align: "left",
-                itemDistance: 15,
-                squareSymbol: true,
-                symbolRadius: 1,
-                itemHoverStyle: {
-                    color: "#23527c",
-                    textDecoration: "underline",
-                },
-                itemStyle: {
-                    color: "#e7e8ea",
-                    cursor: "pointer",
-                    fontSize: "10px",
-                    fontWeight: "normal",
-                    fontFamily: "Open Sans, Helvetica, Arial, sans-serif",
-                    textOverflow: "ellipsis",
-                    textDecoration: "none",
-                },
-                margin: 20,
-            },
-            credits: {
-                enabled: false,
-            },
-        };
-    }, [allPoints, chartSize.height, chartSize.width, series, timeFormat, timeRange, timeZone]);
-
-    if (!options) {
-        return <div className="empty-state">No numeric data on this page</div>;
-    }
+    const zoomControlsDisabled = !Number.isFinite(currentRange.startTime) ||
+        !Number.isFinite(currentRange.endTime) ||
+        !Number.isFinite(navigatorRange.startTime) ||
+        !Number.isFinite(navigatorRange.endTime);
+    const navigatorLabels = useMemo(
+        () => formatDataViewerNavigatorRangeLabels(navigatorRange, timeFormat, timeZone),
+        [navigatorRange, timeFormat, timeZone]
+    );
 
     return (
-        <div ref={containerRef} className="data-viewer-chart">
-            <HighchartsReact ref={chartRef} highcharts={Highcharts} constructorType="stockChart" options={options} />
+        <div className="data-viewer-chart-shell">
+            <button
+                type="button"
+                className="data-viewer-chart-range-shift data-viewer-chart-range-shift-left"
+                title="Move range backward"
+                aria-label="Move range backward"
+                disabled={zoomControlsDisabled}
+                onClick={() => onShiftMainRange?.("backward", currentRange, navigatorRange)}
+            >
+                <Icon name="chevron_left" className="icon-sm" />
+            </button>
+            <div className="data-viewer-chart-footer-form" aria-label="Chart zoom controls">
+                <div className="data-viewer-chart-toolbar-controls">
+                    <div className="data-viewer-chart-toolbar-group">
+                        {[
+                            ["zoom-in", ZoomInFour, "Zoom in", 0.4],
+                            ["zoom-in", ZoomInTwo, "Zoom in", 0.2],
+                            ["focus", undefined, "Focus", undefined],
+                            ["zoom-out", ZoomOutTwo, "Zoom out", 0.2],
+                            ["zoom-out", ZoomOutFour, "Zoom out", 0.4],
+                        ].map(([action, image, label, zoom], index) => (
+                            <button
+                                key={`${action}-${index}`}
+                                type="button"
+                                className="data-viewer-chart-toolbar-button"
+                                title={label}
+                                aria-label={label}
+                                disabled={zoomControlsDisabled}
+                                onClick={() => applyZoomControl(action, zoom)}
+                            >
+                                {image ? (
+                                    <img src={image} alt="" className="data-viewer-chart-toolbar-image" />
+                                ) : (
+                                    <Icon name="center_focus_strong" className="data-viewer-chart-toolbar-icon" />
+                                )}
+                            </button>
+                        ))}
+                    </div>
+                </div>
+            </div>
+            <div
+                ref={containerRef}
+                className={`data-viewer-chart${dragStateRef.current?.mode === "pan" ? " is-panning" : ""}`}
+                data-display-from={Number.isFinite(currentRange.startTime) ? String(Math.floor(currentRange.startTime)) : ""}
+                data-display-to={Number.isFinite(currentRange.endTime) ? String(Math.ceil(currentRange.endTime)) : ""}
+                data-navigator-from={Number.isFinite(navigatorRange.startTime) ? String(Math.floor(navigatorRange.startTime)) : ""}
+                data-navigator-to={Number.isFinite(navigatorRange.endTime) ? String(Math.ceil(navigatorRange.endTime)) : ""}
+            />
+            {dragPreview && (
+                <div
+                    className={`data-viewer-chart-drag-preview data-viewer-chart-drag-preview-${dragPreview.mode}`}
+                    style={{
+                        left: `${48 + Math.max(0, dragPreview.left)}px`,
+                        top: `${dragPreview.top}px`,
+                        width: `${dragPreview.width}px`,
+                        height: `${dragPreview.height}px`,
+                    }}
+                />
+            )}
+            {!hasChartData && (
+                <div className="data-viewer-chart-empty-overlay" aria-live="polite">
+                    No chart data
+                </div>
+            )}
+            {(navigatorLabels.start || navigatorLabels.end) && (
+                <div className="data-viewer-chart-navigator-labels" aria-label="Mini chart time range">
+                    <span title={navigatorLabels.start}>{navigatorLabels.start}</span>
+                    <span title={navigatorLabels.end}>{navigatorLabels.end}</span>
+                </div>
+            )}
+            <button
+                type="button"
+                className="data-viewer-chart-range-shift data-viewer-chart-range-shift-right"
+                title="Move range forward"
+                aria-label="Move range forward"
+                disabled={zoomControlsDisabled}
+                onClick={() => onShiftMainRange?.("forward", currentRange, navigatorRange)}
+            >
+                <Icon name="chevron_right" className="icon-sm" />
+            </button>
         </div>
     );
 }
@@ -670,11 +865,21 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
     const [activeTagTab, setActiveTagTab] = useState("tags");
     const [tagFilter, setTagFilter] = useState("");
     const [collapsedTagFolders, setCollapsedTagFolders] = useState(() => new Set());
-    const [selectedTagName, setSelectedTagName] = useState("");
+    const [selectedTagNames, setSelectedTagNames] = useState([]);
     const [mode, setMode] = useState("raw");
     const [resultPage, setResultPage] = useState(1);
     const [range, setRange] = useState({ from: "", to: "" });
-    const [rangeOpen, setRangeOpen] = useState(false);
+    const [chartRange, setChartRange] = useState({ from: "", to: "" });
+    const [rangeEditor, setRangeEditor] = useState(null);
+    const [splitChartGroups, setSplitChartGroups] = useState([]);
+    const [splitChartRanges, setSplitChartRanges] = useState({});
+    const [chartViewRanges, setChartViewRanges] = useState({});
+    const [chartNavigatorRanges, setChartNavigatorRanges] = useState({});
+    const [openChartMenuId, setOpenChartMenuId] = useState(null);
+    const [chartResults, setChartResults] = useState({});
+    const [splitChartRows, setSplitChartRows] = useState({});
+    const [chartLoading, setChartLoading] = useState(false);
+    const [chartError, setChartError] = useState("");
     const [backwardScan, setBackwardScan] = useState(true);
     const [timeFormat, setTimeFormat] = useState(DEFAULT_TIME_FORMAT);
     const [timeZone, setTimeZone] = useState(DEFAULT_TIME_ZONE);
@@ -682,13 +887,15 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
     const [loading, setLoading] = useState(false);
     const [endLoading, setEndLoading] = useState(false);
     const [error, setError] = useState("");
-    const [result, setResult] = useState({ rows: [], total: 0, page: 1, pageSize: RESULT_PAGE_SIZE });
-    const [chartTimeRange, setChartTimeRange] = useState({ from: "", to: "" });
-
-    const selectedTag = useMemo(
-        () => nodes.find((node) => node.name === selectedTagName) || null,
-        [nodes, selectedTagName]
-    );
+    const [rawRowsPerTag, setRawRowsPerTag] = useState(DEFAULT_DATA_VIEWER_ROWS_PER_TAG);
+    const [result, setResult] = useState({ rows: [], total: 0, page: 1, pageSize: getDataViewerRawPageSize([]) });
+    const [rawPageBounds, setRawPageBounds] = useState(null);
+    const [rawPageRequest, setRawPageRequest] = useState({ page: 1 });
+    const rowsRequestRef = useRef(0);
+    const chartRequestRef = useRef(0);
+    const endPageRequestRef = useRef(0);
+    const selectedTagKey = selectedTagNames.join("\n");
+    const rawPageSize = useMemo(() => getDataViewerRawPageSize(selectedTagNames, rawRowsPerTag), [rawRowsPerTag, selectedTagNames]);
 
     useEffect(() => {
         let alive = true;
@@ -742,19 +949,81 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
     }, [activeTagTab, showAssetTab]);
 
     useEffect(() => {
-        const fallback = defaultSelectedTag(tagRows) || defaultSelectedTag(assetRows);
-        if (!selectedTagName || !selectableRows.some((row) => row.tag.name === selectedTagName)) {
-            setSelectedTagName(fallback?.name || "");
+        const next = normalizeSelectedTagNames(selectedTagNames, selectableRows);
+        if (next.join("\n") !== selectedTagKey) {
+            rowsRequestRef.current += 1;
+            chartRequestRef.current += 1;
+            endPageRequestRef.current += 1;
+            setSelectedTagNames(next);
+            setRawPageRequest(buildDataViewerRawPageRequest({
+                currentPage: resultPage,
+                nextPage: resultPage,
+                pageSize: getDataViewerRawPageSize(next, rawRowsPerTag),
+                currentBounds: rawPageBounds,
+                reason: "tags",
+            }));
         }
-    }, [assetRows, selectableRows, selectedTagName, tagRows]);
+    }, [rawPageBounds, rawRowsPerTag, resultPage, selectableRows, selectedTagKey, selectedTagNames]);
+
+    useEffect(() => {
+        const selected = new Set(selectedTagNames);
+        setSplitChartGroups((current) => {
+            const next = current
+                .map((group) => ({
+                    ...group,
+                    tagNames: (group.tagNames || []).filter((name) => selected.has(name)),
+                }))
+                .filter((group) => group.tagNames.length > 0);
+            const same = next.length === current.length && next.every((group, index) => (
+                group.id === current[index].id &&
+                group.tagNames.join("\n") === (current[index].tagNames || []).join("\n")
+            ));
+            return same ? current : next;
+        });
+    }, [selectedTagNames]);
 
     useEffect(() => {
         setCollapsedTagFolders((prev) => (prev.size === 0 ? prev : new Set()));
     }, [selectedCollectorId, activeTagRows]);
 
     useEffect(() => {
+        rowsRequestRef.current += 1;
+        endPageRequestRef.current += 1;
+        setRawPageBounds(null);
+        setRawPageRequest({ page: 1 });
         setResultPage(1);
-    }, [selectedTagName, range.from, range.to, selectedCollectorId]);
+    }, [selectedCollectorId]);
+
+    const moveRawPage = useCallback((nextPage) => {
+        const request = buildDataViewerRawPageRequest({
+            currentPage: resultPage,
+            nextPage,
+            pageSize: rawPageSize,
+            currentBounds: rawPageBounds,
+            reason: "page",
+        });
+        rowsRequestRef.current += 1;
+        setRawPageRequest(request);
+        setResultPage(request.page);
+    }, [rawPageBounds, rawPageSize, resultPage]);
+
+    const handleRowsPerTagChange = useCallback((value) => {
+        const update = buildDataViewerRawRowsPerTagChange({
+            value,
+            currentRowsPerTag: rawRowsPerTag,
+            selectedTagNames,
+        });
+        if (!update) return rawRowsPerTag;
+
+        rowsRequestRef.current += 1;
+        chartRequestRef.current += 1;
+        endPageRequestRef.current += 1;
+        setRawRowsPerTag(update.rowsPerTag);
+        setRawPageBounds(null);
+        setRawPageRequest(update.rawPageRequest);
+        setResultPage(update.page);
+        return update.rowsPerTag;
+    }, [rawRowsPerTag, selectedTagNames]);
 
     const filteredTagRows = useMemo(() => {
         const q = tagFilter.trim().toLowerCase();
@@ -773,7 +1042,75 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
         () => getVisibleTagRows(filteredTagRows, collapsedTagFolders),
         [collapsedTagFolders, filteredTagRows]
     );
-    const canQuery = Boolean(dbServer && dbTable && selectedTagName);
+    const canQuery = Boolean(dbServer && dbTable && selectedTagNames.length > 0);
+    const chartGroups = useMemo(
+        () => buildDataViewerChartGroups({
+            selectedTagNames,
+            splitGroups: splitChartGroups,
+            globalRange: chartRange,
+            splitRanges: splitChartRanges,
+        }),
+        [chartRange, selectedTagNames, splitChartGroups, splitChartRanges]
+    );
+    const splitAssignedNames = useMemo(() => new Set(splitChartGroups.flatMap((group) => group.tagNames || [])), [splitChartGroups]);
+
+    useEffect(() => {
+        if (!openChartMenuId) return undefined;
+
+        const handlePointerDown = (event) => {
+            if (event.target instanceof Element && event.target.closest(".data-viewer-chart-action-menu")) return;
+            setOpenChartMenuId(null);
+        };
+        const handleKeyDown = (event) => {
+            if (event.key === "Escape") setOpenChartMenuId(null);
+        };
+
+        document.addEventListener("pointerdown", handlePointerDown);
+        document.addEventListener("keydown", handleKeyDown);
+        return () => {
+            document.removeEventListener("pointerdown", handlePointerDown);
+            document.removeEventListener("keydown", handleKeyDown);
+        };
+    }, [openChartMenuId]);
+
+    useEffect(() => {
+        const validGroupIds = new Set(chartGroups.map((group) => group.id));
+        setChartViewRanges((current) => {
+            const next = {};
+            for (const [id, value] of Object.entries(current)) {
+                if (validGroupIds.has(id)) next[id] = value;
+            }
+            return Object.keys(next).length === Object.keys(current).length ? current : next;
+        });
+        setSplitChartRanges((current) => {
+            const next = {};
+            for (const [id, value] of Object.entries(current)) {
+                if (validGroupIds.has(id)) next[id] = value;
+            }
+            return Object.keys(next).length === Object.keys(current).length ? current : next;
+        });
+        setChartNavigatorRanges((current) => {
+            const next = {};
+            for (const [id, value] of Object.entries(current)) {
+                if (validGroupIds.has(id)) next[id] = value;
+            }
+            return Object.keys(next).length === Object.keys(current).length ? current : next;
+        });
+        setChartResults((current) => {
+            const next = {};
+            for (const [id, value] of Object.entries(current)) {
+                if (validGroupIds.has(id)) next[id] = value;
+            }
+            return Object.keys(next).length === Object.keys(current).length ? current : next;
+        });
+        setSplitChartRows((current) => {
+            const next = {};
+            for (const [id, value] of Object.entries(current)) {
+                if (validGroupIds.has(id)) next[id] = value;
+            }
+            return Object.keys(next).length === Object.keys(current).length ? current : next;
+        });
+    }, [chartGroups]);
     const toggleTagFolder = useCallback((key) => {
         setCollapsedTagFolders((prev) => {
             const next = new Set(prev);
@@ -782,11 +1119,95 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
             return next;
         });
     }, []);
+    const handleTagSelectionChange = useCallback((tagName) => {
+        rowsRequestRef.current += 1;
+        chartRequestRef.current += 1;
+        endPageRequestRef.current += 1;
+        const update = buildDataViewerTagSelectionUpdate({
+            selectedTagNames,
+            tagName,
+            currentPage: resultPage,
+            currentBounds: rawPageBounds,
+        });
+        setSelectedTagNames(update.selectedTagNames);
+        setRawPageRequest(update.rawPageRequest);
+    }, [rawPageBounds, resultPage, selectedTagNames]);
+
+    const handleCreateSplitChart = useCallback((tagNames) => {
+        const nextGroups = buildDataViewerSplitGroups({
+            tagNames,
+            selectedTagNames,
+            assignedTagNames: Array.from(splitAssignedNames),
+        });
+        if (nextGroups.length === 0) return;
+        const rangeUpdate = buildDataViewerSplitRangeUpdate({
+            nextGroups,
+            chartViewRanges,
+            chartNavigatorRanges,
+            splitRanges: splitChartRanges,
+        });
+        chartRequestRef.current += 1;
+        setChartViewRanges(rangeUpdate.chartViewRanges);
+        setChartNavigatorRanges(rangeUpdate.chartNavigatorRanges);
+        setSplitChartRanges(rangeUpdate.splitRanges);
+        setSplitChartGroups((current) => ([...current, ...nextGroups]));
+    }, [chartNavigatorRanges, chartViewRanges, selectedTagNames, splitAssignedNames, splitChartRanges]);
+
+    const handleRemoveSplitChart = useCallback((groupId) => {
+        chartRequestRef.current += 1;
+        setSplitChartGroups((current) => current.filter((group) => group.id !== groupId));
+        setSplitChartRanges((current) => {
+            if (!Object.prototype.hasOwnProperty.call(current, groupId)) return current;
+            const next = { ...current };
+            delete next[groupId];
+            return next;
+        });
+        setChartViewRanges((current) => {
+            if (!Object.prototype.hasOwnProperty.call(current, groupId)) return current;
+            const next = { ...current };
+            delete next[groupId];
+            return next;
+        });
+        setChartNavigatorRanges((current) => {
+            if (!Object.prototype.hasOwnProperty.call(current, groupId)) return current;
+            const next = { ...current };
+            delete next[groupId];
+            return next;
+        });
+        setChartResults((current) => {
+            if (!Object.prototype.hasOwnProperty.call(current, groupId)) return current;
+            const next = { ...current };
+            delete next[groupId];
+            return next;
+        });
+        setSplitChartRows((current) => {
+            if (!Object.prototype.hasOwnProperty.call(current, groupId)) return current;
+            const next = { ...current };
+            delete next[groupId];
+            return next;
+        });
+    }, []);
+
+    const handleToggleSplitChart = useCallback((tagName) => {
+        const splitGroup = splitChartGroups.find((group) => (group.tagNames || []).includes(tagName));
+        if (splitGroup) {
+            handleRemoveSplitChart(splitGroup.id);
+            return;
+        }
+        handleCreateSplitChart([tagName]);
+    }, [handleCreateSplitChart, handleRemoveSplitChart, splitChartGroups]);
 
     const fetchRows = useCallback(async () => {
+        const requestId = rowsRequestRef.current + 1;
+        rowsRequestRef.current = requestId;
         if (!canQuery) {
-            setResult({ rows: [], total: 0, page: 1, pageSize: RESULT_PAGE_SIZE });
-            setChartTimeRange({ from: "", to: "" });
+            setResult({ rows: [], total: 0, page: 1, pageSize: rawPageSize });
+            setRawPageBounds(null);
+            setLoading(false);
+            return;
+        }
+        if (!shouldFetchDataViewerRowsForMode(mode)) {
+            setLoading(false);
             return;
         }
         setLoading(true);
@@ -796,40 +1217,120 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
             const queryFrom = resolveTimeRangeInput(range.from, baseDate);
             const queryTo = resolveTimeRangeInput(range.to, baseDate);
             if (queryFrom === null || queryTo === null) {
+                if (rowsRequestRef.current !== requestId) return;
                 setError("Please check the entered time.");
-                setResult({ rows: [], total: 0, page: resultPage, pageSize: RESULT_PAGE_SIZE });
-                setChartTimeRange({ from: "", to: "" });
+                setResult({ rows: [], total: 0, page: resultPage, pageSize: rawPageSize });
+                setRawPageBounds(null);
                 return;
             }
-            setChartTimeRange({ from: queryFrom || "", to: queryTo || "" });
 
+            const requestPage = rawPageRequest?.page || resultPage;
             const data = await queryTagData({
                 server: dbServer,
                 table: dbTable,
-                name: selectedTagName,
+                names: selectedTagNames,
                 valueColumn,
                 stringValueColumn,
                 direction: backwardScan ? "latest" : "oldest",
-                from: queryFrom,
-                to: queryTo,
-                page: resultPage,
-                pageSize: RESULT_PAGE_SIZE,
+                from: rawPageRequest?.from ?? queryFrom,
+                to: rawPageRequest?.to ?? queryTo,
+                page: rawPageRequest?.boundedRange ? undefined : requestPage,
+                pageSize: rawPageSize,
+                boundedRange: rawPageRequest?.boundedRange,
+                cursorSide: rawPageRequest?.cursorSide,
+                cursorTime: rawPageRequest?.cursorTime,
+                cursorName: rawPageRequest?.cursorName,
+                cursorOffset: rawPageRequest?.cursorOffset,
             });
-            setResult(data || { rows: [], total: 0, page: resultPage, pageSize: RESULT_PAGE_SIZE });
+            if (rowsRequestRef.current !== requestId) return;
+            const nextRows = data?.rows || [];
+            const nextBounds = buildDataViewerRawPageBounds(nextRows);
+            setResult(data || { rows: [], total: 0, page: resultPage, pageSize: rawPageSize });
+            setRawPageBounds(nextBounds);
+            if (mode === "chart" && !rawPageRequest?.boundedRange && nextBounds?.pageBounds) {
+                setChartRange(nextBounds.pageBounds);
+                setChartViewRanges((current) => {
+                    if (!Object.prototype.hasOwnProperty.call(current, "default")) return current;
+                    const { default: _defaultRange, ...next } = current;
+                    return next;
+                });
+                setChartNavigatorRanges((current) => {
+                    if (!Object.prototype.hasOwnProperty.call(current, "default")) return current;
+                    const { default: _defaultRange, ...next } = current;
+                    return next;
+                });
+            }
         } catch (e) {
+            if (rowsRequestRef.current !== requestId) return;
             const message = e.reason || e.message || "Failed to load data";
             setError(message);
             notify(message, "error");
-            setResult({ rows: [], total: 0, page: resultPage, pageSize: RESULT_PAGE_SIZE });
-            setChartTimeRange({ from: "", to: "" });
+            setResult({ rows: [], total: 0, page: resultPage, pageSize: rawPageSize });
+            setRawPageBounds(null);
         } finally {
-            setLoading(false);
+            if (rowsRequestRef.current === requestId) {
+                setLoading(false);
+            }
         }
-    }, [backwardScan, canQuery, dbServer, dbTable, notify, range.from, range.to, resultPage, selectedTagName, stringValueColumn, valueColumn]);
+    }, [backwardScan, canQuery, dbServer, dbTable, mode, notify, range.from, range.to, rawPageRequest, rawPageSize, resultPage, selectedTagNames, stringValueColumn, valueColumn]);
 
     useEffect(() => {
         fetchRows();
     }, [fetchRows]);
+
+    useEffect(() => {
+        const requestId = chartRequestRef.current + 1;
+        chartRequestRef.current = requestId;
+
+        if (!canQuery || mode !== "chart") {
+            setChartResults({});
+            setChartError("");
+            setChartLoading(false);
+            return undefined;
+        }
+
+        setChartLoading(true);
+        setChartError("");
+        const nextResults = buildDataViewerChartResultsFromRawRows({
+            rows: result.rows,
+            rowsByGroup: splitChartRows,
+            chartGroups,
+        });
+        if (chartRequestRef.current !== requestId) return undefined;
+        setChartResults(nextResults);
+        setChartNavigatorRanges((current) => {
+            const next = {};
+            for (const group of chartGroups) {
+                next[group.id] = current[group.id] || nextResults[group.id]?.range || group.range;
+            }
+            return next;
+        });
+        setChartLoading(false);
+        return () => {
+            chartRequestRef.current += 1;
+        };
+    }, [canQuery, chartGroups, mode, result.rows, splitChartRows]);
+
+    const handleModeChange = useCallback((nextMode) => {
+        if (nextMode === mode) return;
+
+        if (nextMode === "chart" && mode === "raw") {
+            const update = buildDataViewerRawToChartRangeUpdate({
+                rows: result.rows,
+                rawRange: range,
+                splitGroups: splitChartGroups,
+            });
+            if (update) {
+                chartRequestRef.current += 1;
+                setChartRange(update.chartRange);
+                setChartViewRanges({});
+                setChartNavigatorRanges({});
+                setSplitChartRanges(update.splitRanges);
+            }
+        }
+
+        setMode(nextMode);
+    }, [mode, range, result.rows, splitChartGroups]);
 
     if (!collector) {
         return (
@@ -840,7 +1341,8 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
         );
     }
 
-    const timeRangeButtonText = formatTimeRangeLabel(range.from, range.to);
+    const activeRange = mode === "chart" ? chartRange : range;
+    const timeRangeButtonText = formatTimeRangeLabel(activeRange.from, activeRange.to);
     const timeFormatButtonText = `${getTimeFormatLabel(timeFormat)} / ${getTimeZoneLabel(timeZone)}`;
     const headerLabels = buildDataViewerHeaderLabels(collector.id, dbTable);
     const resultHeading = getResultHeading(mode);
@@ -848,11 +1350,38 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
         hiddenKeys: showAssetTab ? [assetHierarchy?.column || "asset"] : [],
     });
     const handleScanDirectionChange = (nextBackwardScan) => {
+        rowsRequestRef.current += 1;
+        endPageRequestRef.current += 1;
         setBackwardScan(nextBackwardScan);
+        setRawPageBounds(null);
+        setRawPageRequest({ page: 1 });
         setResultPage(1);
+    };
+    const handleRangeApply = (next) => {
+        chartRequestRef.current += 1;
+        setChartViewRanges({});
+        setChartNavigatorRanges({});
+        if (rangeEditor?.type === "split" && rangeEditor.groupId) {
+            setSplitChartRanges((current) => ({
+                ...current,
+                [rangeEditor.groupId]: next,
+            }));
+        } else if (mode === "chart") {
+            setChartRange(next);
+        } else {
+            rowsRequestRef.current += 1;
+            endPageRequestRef.current += 1;
+            setRange(next);
+            setRawPageBounds(null);
+            setRawPageRequest({ page: 1 });
+            setResultPage(1);
+        }
+        setRangeEditor(null);
     };
     const handleEndPage = async () => {
         if (!canQuery || endLoading) return;
+        const requestId = endPageRequestRef.current + 1;
+        endPageRequestRef.current = requestId;
         setEndLoading(true);
         setError("");
         try {
@@ -860,28 +1389,161 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
             const queryFrom = resolveTimeRangeInput(range.from, baseDate);
             const queryTo = resolveTimeRangeInput(range.to, baseDate);
             if (queryFrom === null || queryTo === null) {
+                if (endPageRequestRef.current !== requestId) return;
                 setError("Please check the entered time.");
                 return;
             }
             const data = await queryTagDataTotal({
                 server: dbServer,
                 table: dbTable,
-                name: selectedTagName,
+                names: selectedTagNames,
                 valueColumn,
                 stringValueColumn,
                 direction: backwardScan ? "latest" : "oldest",
                 from: queryFrom,
                 to: queryTo,
-                pageSize: RESULT_PAGE_SIZE,
+                pageSize: rawPageSize,
             });
+            if (endPageRequestRef.current !== requestId) return;
             const lastPage = Number(data?.lastPage || 1);
-            setResultPage(Number.isFinite(lastPage) ? Math.max(1, Math.floor(lastPage)) : 1);
+            const nextPage = Number.isFinite(lastPage) ? Math.max(1, Math.floor(lastPage)) : 1;
+            const request = buildDataViewerRawPageRequest({
+                currentPage: resultPage,
+                nextPage,
+                pageSize: rawPageSize,
+                currentBounds: rawPageBounds,
+                reason: "page",
+            });
+            setRawPageRequest(request);
+            setResultPage(request.page);
         } catch (e) {
+            if (endPageRequestRef.current !== requestId) return;
             const message = e.reason || e.message || "Failed to calculate end page";
             setError(message);
             notify(message, "error");
         } finally {
-            setEndLoading(false);
+            if (endPageRequestRef.current === requestId) {
+                setEndLoading(false);
+            }
+        }
+    };
+    const handleOpenTagAnalyzer = (group, chartData) => {
+        const built = buildNeoWebTagAnalyzerMessage({
+            title: group.title || "OPC UA Data Viewer",
+            table: dbTable,
+            tagNames: group.tagNames,
+            range: chartViewRanges[group.id] || chartData?.range || group.range,
+            valueColumn,
+            stringOnly: Boolean(config.stringOnly),
+        });
+        if (!built.ok) {
+            notify(built.reason || "Cannot open Tag Analyzer.", "error");
+            return;
+        }
+
+        const targetWindow = typeof window !== "undefined" ? window.parent : null;
+        if (!targetWindow || targetWindow === window) {
+            notify("Open this Data Viewer inside neo-web to use Tag Analyzer.", "error");
+            return;
+        }
+        const sent = sendNeoWebTagAnalyzerMessage(built.message, targetWindow, window.location.origin);
+        if (!sent) {
+            notify("Cannot send Tag Analyzer request to neo-web.", "error");
+        }
+    };
+    const handleSetGlobalTime = (groupId) => {
+        const update = buildDataViewerGlobalTimeUpdate({
+            sourceGroupId: groupId,
+            chartGroups,
+            chartViewRanges,
+            chartNavigatorRanges,
+            chartResults,
+        });
+        if (!update) {
+            notify("Cannot set global time from this chart.", "error");
+            return;
+        }
+
+        chartRequestRef.current += 1;
+        setChartViewRanges(update.viewRanges);
+        setChartNavigatorRanges(update.navigatorRanges);
+        setChartRange(update.range);
+        setSplitChartRanges(update.splitRanges);
+    };
+    const handleShiftMainRange = async (group, direction, currentRange, navigatorRange) => {
+        if (!canQuery) return;
+        if (group.id === "default") {
+            const update = buildDataViewerDefaultChartShiftRawPageUpdate({
+                direction,
+                backwardScan,
+                currentPage: resultPage,
+                pageSize: rawPageSize,
+                rowCount: result.rows.length,
+                forceNextPage: Boolean(rawPageRequest?.boundedRange),
+                currentBounds: rawPageBounds,
+            });
+            if (!update) {
+                return;
+            }
+            rowsRequestRef.current += 1;
+            setChartError("");
+            setChartViewRanges((current) => {
+                const { default: _defaultRange, ...next } = current;
+                return next;
+            });
+            setChartNavigatorRanges((current) => {
+                const { default: _defaultRange, ...next } = current;
+                return next;
+            });
+            setRawPageRequest(update.rawPageRequest);
+            setResultPage(update.page);
+            return;
+        }
+
+        const update = buildDataViewerShiftMainRangeUpdate({ direction, currentRange, navigatorRange });
+        if (!update) {
+            return;
+        }
+
+        chartRequestRef.current += 1;
+        setChartError("");
+        setChartViewRanges((current) => ({
+            ...current,
+            [group.id]: update.range,
+        }));
+        setChartNavigatorRanges((current) => ({
+            ...current,
+            [group.id]: update.navigatorRange,
+        }));
+
+        setSplitChartRanges((current) => ({
+            ...current,
+            [group.id]: update.navigatorRange,
+        }));
+
+        try {
+            const data = await queryTagData({
+                server: dbServer,
+                table: dbTable,
+                names: group.tagNames,
+                valueColumn,
+                stringValueColumn,
+                direction: backwardScan ? "latest" : "oldest",
+                from: update.navigatorRange.from,
+                to: update.navigatorRange.to,
+                pageSize: getDataViewerRawPageSize(group.tagNames, rawRowsPerTag),
+                boundedRange: true,
+            });
+            const nextRows = data?.rows || [];
+            chartRequestRef.current += 1;
+            setSplitChartRows((current) => ({
+                ...current,
+                [group.id]: nextRows,
+            }));
+        } catch (e) {
+            const message = e.reason || e.message || "Failed to move chart range";
+            setChartError(message);
+            notify(message, "error");
         }
     };
 
@@ -969,7 +1631,7 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
                                             </div>
                                         );
                                     }
-                                    const checked = selectedTagName === row.tag.name;
+                                    const checked = selectedTagNames.includes(row.tag.name);
                                     return (
                                         <label
                                             key={row.key}
@@ -981,7 +1643,7 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
                                                 <input
                                                     type="checkbox"
                                                     checked={checked}
-                                                    onChange={() => setSelectedTagName(row.tag.name)}
+                                                    onChange={() => handleTagSelectionChange(row.tag.name)}
                                                     aria-label={`${row.tag.name} select`}
                                                 />
                                             </span>
@@ -1036,17 +1698,17 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
                                                 >
                                                     <Icon name="public" className="icon-sm" />
                                                 </button>
-                                                <button type="button" aria-label="Set time range" title={timeRangeButtonText} className="btn btn-sm btn-ghost data-viewer-time-range-button" onClick={() => setRangeOpen(true)}>
+                                                <button type="button" aria-label="Set time range" title={timeRangeButtonText} className="btn btn-sm btn-ghost data-viewer-time-range-button" onClick={() => setRangeEditor({ type: "global" })}>
                                                     <Icon name="calendar_month" className="icon-sm" />
                                                     <span>{timeRangeButtonText}</span>
                                                 </button>
                                             </div>
                                         )}
                                         <div className="data-viewer-segmented data-viewer-mode-control" role="tablist" aria-label="Result mode">
-                                            <button type="button" role="tab" aria-selected={mode === "raw"} className={`data-viewer-segmented-item ${mode === "raw" ? "is-active" : ""}`} onClick={() => setMode("raw")}>
+                                            <button type="button" role="tab" aria-selected={mode === "raw"} className={`data-viewer-segmented-item ${mode === "raw" ? "is-active" : ""}`} onClick={() => handleModeChange("raw")}>
                                                 Raw
                                             </button>
-                                            <button type="button" role="tab" aria-selected={mode === "chart"} className={`data-viewer-segmented-item ${mode === "chart" ? "is-active" : ""}`} onClick={() => setMode("chart")}>
+                                            <button type="button" role="tab" aria-selected={mode === "chart"} className={`data-viewer-segmented-item ${mode === "chart" ? "is-active" : ""}`} onClick={() => handleModeChange("chart")}>
                                                 Chart
                                             </button>
                                         </div>
@@ -1084,29 +1746,167 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
                                         {loading && <div className="empty-state">Loading...</div>}
                                         {!loading && result.rows.length === 0 && <div className="empty-state">No data</div>}
                                     </div>
-                                    <ResultPagination page={resultPage} pageSize={RESULT_PAGE_SIZE} rowCount={result.rows.length} loading={loading} endLoading={endLoading} onPage={setResultPage} onEndPage={handleEndPage} />
+                                    <ResultPagination page={resultPage} pageSize={rawPageSize} rowCount={result.rows.length} loading={loading} endLoading={endLoading} forceNextPage={Boolean(rawPageRequest?.boundedRange)} rowsPerTag={rawRowsPerTag} onRowsPerTagChange={handleRowsPerTagChange} onPage={moveRawPage} onEndPage={handleEndPage} />
                                 </div>
                             )}
                             {canQuery && mode === "chart" && (
-                                <div className="table-card data-viewer-chart-card">
-                                    <div className="table-card-body">
-                                        {loading ? <div className="empty-state">Loading...</div> : <TagLineChart rows={result.rows} timeFormat={timeFormat} timeZone={timeZone} timeRange={chartTimeRange} />}
-                                    </div>
-                                    <ResultPagination page={resultPage} pageSize={RESULT_PAGE_SIZE} rowCount={result.rows.length} loading={loading} endLoading={endLoading} onPage={setResultPage} onEndPage={handleEndPage} />
+                                <div className="data-viewer-chart-stack">
+                                    {chartError && <div className="error-box">{chartError}</div>}
+                                    {chartLoading && <div className="empty-state">Loading...</div>}
+                                    {!chartLoading && chartGroups.map((group) => {
+                                        const chartData = chartResults[group.id] || { series: [], range: group.range };
+                                        const globalTimeUpdate = buildDataViewerGlobalTimeUpdate({
+                                            sourceGroupId: group.id,
+                                            chartGroups,
+                                            chartViewRanges,
+                                            chartNavigatorRanges,
+                                            chartResults,
+                                        });
+                                        const chartMenuOpen = openChartMenuId === group.id;
+                                        return (
+                                            <div key={group.id} className="table-card data-viewer-chart-card">
+                                                <div className="data-viewer-chart-panel-header">
+                                                    <div className="data-viewer-chart-panel-title">
+                                                        <Icon name={group.split ? "call_split" : "query_stats"} className="icon-sm text-primary" />
+                                                        <span className="truncate">{group.title}</span>
+                                                        <span className="badge badge-muted">{group.tagNames.length}</span>
+                                                    </div>
+                                                    {!group.split && group.tagNames.length > 0 && (group.tagNames.length > 1 || splitChartGroups.length > 0) && (
+                                                        <div
+                                                            className="data-viewer-chart-tag-actions"
+                                                            aria-label="Split individual tags"
+                                                            onWheel={(event) => {
+                                                                const target = event.currentTarget;
+                                                                if (target.scrollWidth <= target.clientWidth) return;
+
+                                                                event.preventDefault();
+                                                                target.scrollLeft += event.deltaX || event.deltaY;
+                                                            }}
+                                                        >
+                                                            {group.tagNames.map((tagName) => {
+                                                                const splitGroup = splitChartGroups.find((item) => (item.tagNames || []).includes(tagName));
+                                                                const split = Boolean(splitGroup);
+                                                                return (
+                                                                    <button
+                                                                        key={tagName}
+                                                                        type="button"
+                                                                        className={`data-viewer-chart-tag-chip${split ? " is-split" : ""}`}
+                                                                        title={split ? `Remove split ${tagName}` : `Split ${tagName}`}
+                                                                        onClick={() => handleToggleSplitChart(tagName)}
+                                                                    >
+                                                                        <span className="truncate">{tagName}</span>
+                                                                        <Icon name={split ? "close" : "call_split"} className="icon-sm" />
+                                                                    </button>
+                                                                );
+                                                            })}
+                                                        </div>
+                                                    )}
+                                                    <div className="data-viewer-chart-panel-actions">
+                                                        <div className="data-viewer-chart-action-menu">
+                                                            <button
+                                                                type="button"
+                                                                className="btn btn-sm btn-ghost btn-icon data-viewer-chart-menu-button"
+                                                                title="Chart actions"
+                                                                aria-label="Chart actions"
+                                                                aria-haspopup="menu"
+                                                                aria-expanded={chartMenuOpen}
+                                                                onClick={() => setOpenChartMenuId((current) => (current === group.id ? null : group.id))}
+                                                            >
+                                                                <Icon name="more_vert" className="icon-sm" />
+                                                            </button>
+                                                            {chartMenuOpen && (
+                                                                <div className="data-viewer-chart-menu" role="menu">
+                                                                    <button
+                                                                        type="button"
+                                                                        className="data-viewer-chart-menu-item"
+                                                                        role="menuitem"
+                                                                        onClick={() => {
+                                                                            setOpenChartMenuId(null);
+                                                                            handleOpenTagAnalyzer(group, chartData);
+                                                                        }}
+                                                                    >
+                                                                        <Icon name="monitoring" className="icon-sm" />
+                                                                        <span>Tag Analyzer</span>
+                                                                    </button>
+                                                                    <button
+                                                                        type="button"
+                                                                        className="data-viewer-chart-menu-item"
+                                                                        role="menuitem"
+                                                                        disabled={!globalTimeUpdate}
+                                                                        onClick={() => {
+                                                                            setOpenChartMenuId(null);
+                                                                            handleSetGlobalTime(group.id);
+                                                                        }}
+                                                                    >
+                                                                        <Icon name="schedule" className="icon-sm" />
+                                                                        <span>Global Time</span>
+                                                                    </button>
+                                                                    {group.split && (
+                                                                        <button
+                                                                            type="button"
+                                                                            className="data-viewer-chart-menu-item"
+                                                                            role="menuitem"
+                                                                            onClick={() => {
+                                                                                setOpenChartMenuId(null);
+                                                                                setRangeEditor({ type: "split", groupId: group.id });
+                                                                            }}
+                                                                        >
+                                                                            <Icon name="calendar_month" className="icon-sm" />
+                                                                            <span>Time Range</span>
+                                                                        </button>
+                                                                    )}
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                        {group.split && (
+                                                            <button
+                                                                type="button"
+                                                                className="btn btn-sm btn-ghost btn-icon data-viewer-chart-close-button"
+                                                                title="Remove split chart"
+                                                                aria-label="Remove split chart"
+                                                                onClick={() => handleRemoveSplitChart(group.id)}
+                                                            >
+                                                                <Icon name="close" className="icon-sm" />
+                                                            </button>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                                <div className="table-card-body">
+                                                    <TagEChart
+                                                        series={chartData.series}
+                                                        timeFormat={timeFormat}
+                                                        timeZone={timeZone}
+                                                        timeRange={chartData.range}
+                                                        displayRange={chartViewRanges[group.id]}
+                                                        onDisplayRangeChange={(nextRange, nextNavigatorRange) => {
+                                                            setChartViewRanges((current) => ({
+                                                                ...current,
+                                                                [group.id]: nextRange,
+                                                            }));
+                                                            if (nextNavigatorRange) {
+                                                                setChartNavigatorRanges((current) => ({
+                                                                    ...current,
+                                                                    [group.id]: nextNavigatorRange,
+                                                                }));
+                                                            }
+                                                        }}
+                                                        onShiftMainRange={(direction, currentRange, navigatorRange) => handleShiftMainRange(group, direction, currentRange, navigatorRange)}
+                                                    />
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
                                 </div>
                             )}
                         </section>
                     </div>
                 </div>
             </div>
-            {rangeOpen && (
+            {rangeEditor && (
                 <TimeRangeModal
-                    range={range}
-                    onClose={() => setRangeOpen(false)}
-                    onApply={(next) => {
-                        setRange(next);
-                        setRangeOpen(false);
-                    }}
+                    range={rangeEditor.type === "split" ? (splitChartRanges[rangeEditor.groupId] || chartRange) : activeRange}
+                    onClose={() => setRangeEditor(null)}
+                    onApply={handleRangeApply}
                 />
             )}
             {formatOpen && (

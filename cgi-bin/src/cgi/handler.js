@@ -2001,6 +2001,12 @@ function rowCountValue(row) {
 }
 
 const INTERNAL_QUERY_ROW_FIELDS = new Set(['buffer', 'names']);
+const TAG_DATA_MAX_PAGE_SIZE = 1000000;
+
+function normalizeWebQueryNumericValue(value) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return value;
+  return Math.round(value * 1000000) / 1000000;
+}
 
 function normalizeTagDataRow(row, req) {
   const normalized = {};
@@ -2025,6 +2031,9 @@ function normalizeTagDataRow(row, req) {
   if (valueKey !== 'value' && Object.prototype.hasOwnProperty.call(normalized, valueKey)) {
     normalized.value = normalized[valueKey];
     delete normalized[valueKey];
+  }
+  if (Object.prototype.hasOwnProperty.call(normalized, 'value')) {
+    normalized.value = normalizeWebQueryNumericValue(normalized.value);
   }
 
   return normalized;
@@ -2119,9 +2128,34 @@ function findMetadataColumnName(columns, requestedName) {
   return found ? normalizeText(found.NAME || found.name) : '';
 }
 
+function parseTagDataNames(params) {
+  const rawNames = params && params.names;
+  const names = [];
+
+  if (Array.isArray(rawNames)) {
+    for (const value of rawNames) {
+      const name = String(value || '').trim();
+      if (name) names.push(name);
+    }
+  } else if (rawNames !== undefined && rawNames !== null) {
+    for (const value of String(rawNames).split(',')) {
+      const name = value.trim();
+      if (name) names.push(name);
+    }
+  }
+
+  if (names.length === 0) {
+    const legacyName = String((params && params.name) || '').trim();
+    if (legacyName) names.push(legacyName);
+  }
+
+  return names;
+}
+
 function buildTagDataWhere(params, primaryColumn, timeColumn) {
-  const clauses = [`${primaryColumn} = ?`];
-  const values = [params.name];
+  const placeholders = params.names.map(() => '?').join(', ');
+  const clauses = [`${primaryColumn} IN (${placeholders})`];
+  const values = params.names.slice();
   if (params.from) {
     clauses.push(`${timeColumn} >= ?`);
     values.push(params.from);
@@ -2136,11 +2170,143 @@ function buildTagDataWhere(params, primaryColumn, timeColumn) {
   };
 }
 
+function buildTagDataCursor(req) {
+  if (!req.cursorSide || !req.cursorTime) return null;
+
+  const latest = req.direction !== 'oldest';
+  const next = req.cursorSide === 'next';
+  let timeOp;
+  let nameOp;
+  let orderTime;
+  let orderName;
+  let reverseRows = false;
+
+  if (latest && next) {
+    timeOp = '<';
+    nameOp = '>';
+    orderTime = 'DESC';
+    orderName = 'ASC';
+  } else if (latest) {
+    timeOp = '>';
+    nameOp = '<';
+    orderTime = 'ASC';
+    orderName = 'DESC';
+    reverseRows = true;
+  } else if (next) {
+    timeOp = '>';
+    nameOp = '>';
+    orderTime = 'ASC';
+    orderName = 'ASC';
+  } else {
+    timeOp = '<';
+    nameOp = '<';
+    orderTime = 'DESC';
+    orderName = 'DESC';
+    reverseRows = true;
+  }
+
+  const cursorTimeSql = formatSqlTimestampLiteral(req.cursorTime);
+
+  return {
+    sql: `(${req.timeColumn} ${timeOp} ${cursorTimeSql} OR (${req.timeColumn} = ${cursorTimeSql} AND ${req.primaryColumn} ${nameOp} ?))`,
+    values: [req.cursorName],
+    orderTime,
+    orderName,
+    reverseRows,
+  };
+}
+
+function escapeSqlString(value) {
+  return String(value === undefined || value === null ? '' : value).replace(/'/g, "''");
+}
+
+function formatSqlDateLiteral(value) {
+  if (!(value instanceof Date)) return '';
+  const iso = value.toISOString().replace('T', ' ').replace('Z', '');
+  return `to_date('${escapeSqlString(iso)}')`;
+}
+
+function formatSqlTimestampLiteral(value) {
+  if (!(value instanceof Date)) return "TO_TIMESTAMP('')";
+  const pad = (part, size = 2) => String(part).padStart(size, '0');
+  const timestamp =
+    `${value.getFullYear()}-${pad(value.getMonth() + 1)}-${pad(value.getDate())} ` +
+    `${pad(value.getHours())}:${pad(value.getMinutes())}:${pad(value.getSeconds())}.` +
+    `${pad(value.getMilliseconds(), 3)}`;
+  return `TO_TIMESTAMP('${escapeSqlString(timestamp)}')`;
+}
+
+function buildTagChartTqlWhere(req) {
+  const names = req.names.map((name) => `'${escapeSqlString(name)}'`).join(', ');
+  const clauses = [`${req.primaryColumn} IN (${names})`];
+  if (req.from) {
+    clauses.push(`${req.timeColumn} >= ${formatSqlDateLiteral(req.from)}`);
+  }
+  if (req.to) {
+    clauses.push(`${req.timeColumn} <= ${formatSqlDateLiteral(req.to)}`);
+  }
+  return clauses.join(' AND ');
+}
+
+function buildTagChartSelect(req) {
+  const queryWhere = buildTagChartTqlWhere(req);
+  const query =
+    `SELECT ${req.timeColumn} AS TIME, ${req.primaryColumn} AS NAME, ${req.valueColumn} AS VALUE ` +
+    `FROM ${req.tableRef} WHERE ${queryWhere} ORDER BY ${req.timeColumn} ASC, ${req.primaryColumn} ASC`;
+  return {
+    query,
+  };
+}
+
+function normalizeChartPointTime(value) {
+  if (value instanceof Date) return value.getTime();
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) return Number.NaN;
+    if (Math.abs(value) > 100000000000000) return value / 1000000;
+    return value;
+  }
+
+  const text = String(value === undefined || value === null ? '' : value).trim();
+  if (!text) return Number.NaN;
+  const numeric = Number(text);
+  if (Number.isFinite(numeric)) return normalizeChartPointTime(numeric);
+  return Date.parse(text);
+}
+
+function normalizeChartPointValue(value) {
+  if (value === undefined || value === null || value === '') return null;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
+function buildTagChartSeries(rows) {
+  const seriesByName = new Map();
+  for (const row of rows || []) {
+    const name = String(pickRowValue(row || {}, ['NAME', 'name']) || '').trim();
+    const time = normalizeChartPointTime(pickRowValue(row || {}, ['TIME', 'time']));
+    if (!name || !Number.isFinite(time)) continue;
+    if (!seriesByName.has(name)) {
+      seriesByName.set(name, []);
+    }
+    seriesByName.get(name).push([
+      time,
+      normalizeChartPointValue(pickRowValue(row || {}, ['VALUE', 'value'])),
+    ]);
+  }
+
+  return Array.from(seriesByName.entries()).map(([name, data]) => ({
+    name,
+    data: data.sort((a, b) => a[0] - b[0]),
+  }));
+}
+
 function parseTagDataRequest(params) {
   const table = parseQualifiedTagTable(params && params.table);
+  const names = parseTagDataNames(params);
   const req = {
     ...table,
-    name: String((params && params.name) || '').trim(),
+    name: names[0] || '',
+    names,
     primaryColumn: normalizeIdentifier((params && params.primaryColumn) || 'NAME', 'primaryColumn'),
     timeColumn: normalizeIdentifier((params && params.timeColumn) || 'TIME', 'timeColumn'),
     valueColumn: normalizeIdentifier((params && params.valueColumn) || 'VALUE', 'valueColumn'),
@@ -2151,7 +2317,12 @@ function parseTagDataRequest(params) {
     from: parseOptionalDate(params && params.from, 'from'),
     to: parseOptionalDate(params && params.to, 'to'),
     page: parsePositiveInt(params && params.page, 1, 1, 1000000),
-    pageSize: parsePositiveInt(params && params.pageSize, 100, 1, 1000),
+    pageSize: parsePositiveInt(params && params.pageSize, 100, 1, TAG_DATA_MAX_PAGE_SIZE),
+    boundedRange: params && (params.boundedRange === true || params.boundedRange === 'true'),
+    cursorSide: params && (params.cursorSide === 'next' || params.cursorSide === 'prev') ? params.cursorSide : null,
+    cursorTime: parseOptionalDate(params && params.cursorTime, 'cursorTime'),
+    cursorName: normalizeText(params && params.cursorName),
+    cursorOffset: parsePositiveInt(params && params.cursorOffset, 0, 0, TAG_DATA_MAX_PAGE_SIZE),
   };
   if (!req.name) {
     throw new Error('name is required');
@@ -2231,6 +2402,7 @@ function dbTableTags(db, params, reply) {
  * @param {{
  *   table: string,
  *   name: string,
+ *   names?: string|string[],
  *   valueColumn?: string,
  *   stringValueColumn?: string,
  *   primaryColumn?: string,
@@ -2240,6 +2412,11 @@ function dbTableTags(db, params, reply) {
  *   to?: string,
  *   page?: number,
  *   pageSize?: number,
+ *   boundedRange?: boolean|string,
+ *   cursorSide?: 'next'|'prev',
+ *   cursorTime?: string,
+ *   cursorName?: string,
+ *   cursorOffset?: number,
  * }} params
  * @param {function} reply
  */
@@ -2258,22 +2435,34 @@ function dbTableData(db, params, reply) {
     validateTagDataTable(client, req, db);
 
     const where = buildTagDataWhere(req, req.primaryColumn, req.timeColumn);
-    const offset = (req.page - 1) * req.pageSize;
-    const fetchLimit = offset + req.pageSize;
-    const scan = req.direction === 'oldest' ? 'SCAN_FORWARD' : 'SCAN_BACKWARD';
-    const orderDir = req.direction === 'oldest' ? 'ASC' : 'DESC';
+    const cursor = buildTagDataCursor(req);
+    const queryWhere = cursor ? `${where.sql} AND ${cursor.sql}` : where.sql;
+    const orderTime = cursor ? cursor.orderTime : (req.direction === 'oldest' ? 'ASC' : 'DESC');
+    const orderName = cursor ? cursor.orderName : 'ASC';
+    const scan = orderTime === 'ASC' ? 'SCAN_FORWARD' : 'SCAN_BACKWARD';
+    const offset = cursor ? req.cursorOffset : (req.boundedRange ? 0 : (req.page - 1) * req.pageSize);
+    const limitSql = cursor ? ' LIMIT ?, ?' : (req.boundedRange ? '' : ' LIMIT ?');
+    const limitValues = cursor ? [offset, req.pageSize] : (req.boundedRange ? [] : [offset + req.pageSize]);
     const dataRows = client.query(
       `SELECT /*+ ${scan}(${req.tableRef}) */ * ` +
-      `FROM ${req.tableRef} WHERE ${where.sql} ORDER BY ${req.timeColumn} ${orderDir} LIMIT ?`,
-      [...where.values, fetchLimit]
+      `FROM ${req.tableRef} WHERE ${queryWhere} ORDER BY ${req.timeColumn} ${orderTime}, ${req.primaryColumn} ${orderName}${limitSql}`,
+      [
+        ...where.values,
+        ...(cursor ? cursor.values : []),
+        ...limitValues,
+      ]
     );
-    const rows = (dataRows || []).slice(offset, offset + req.pageSize).map((row) => normalizeTagDataRow(row, req));
+    const pageRows = cursor
+      ? (cursor.reverseRows ? [...(dataRows || [])].reverse() : (dataRows || []))
+      : (req.boundedRange ? (dataRows || []) : (dataRows || []).slice(offset, offset + req.pageSize));
+    const rows = pageRows.map((row) => normalizeTagDataRow(row, req));
 
     reply({
       ok: true,
       data: {
         table: req.tableRef,
         name: req.name,
+        names: req.names,
         direction: req.direction,
         page: req.page,
         pageSize: req.pageSize,
@@ -2303,7 +2492,7 @@ function dbTableDataTotal(db, params, reply) {
 
     const where = buildTagDataWhere(req, req.primaryColumn, req.timeColumn);
     let total = null;
-    if (!req.from && !req.to) {
+    if (req.names.length === 1 && !req.from && !req.to) {
       try {
         const rows = client.query(
           `SELECT ROW_COUNT FROM ${buildTagStatViewRef(req)} WHERE NAME = ?`,
@@ -2328,9 +2517,47 @@ function dbTableDataTotal(db, params, reply) {
       data: {
         table: req.tableRef,
         name: req.name,
+        names: req.names,
         total,
         pageSize: req.pageSize,
         lastPage: Math.max(1, Math.ceil(total / req.pageSize)),
+      },
+    });
+  } catch (err) {
+    reply({ ok: false, reason: errorMessage(err) });
+  } finally {
+    client.close();
+  }
+}
+
+function dbTableChart(db, params, reply) {
+  let req;
+  try {
+    req = parseTagDataRequest(params);
+  } catch (err) {
+    reply({ ok: false, reason: errorMessage(err) });
+    return;
+  }
+
+  const client = new MachbaseClient(db);
+  try {
+    client.connect();
+    validateTagDataTable(client, req, db);
+
+    const query = buildTagChartSelect(req);
+
+    reply({
+      ok: true,
+      data: {
+        type: 'query',
+        table: req.tableRef,
+        name: req.name,
+        names: req.names,
+        range: {
+          from: req.from ? req.from.toISOString() : '',
+          to: req.to ? req.to.toISOString() : '',
+        },
+        query: query.query,
       },
     });
   } catch (err) {
@@ -2600,6 +2827,7 @@ module.exports = {
   dbTableTags,
   dbTableData,
   dbTableDataTotal,
+  dbTableChart,
   nodeDescendants,
   opcuaConnect,
   opcuaRead,

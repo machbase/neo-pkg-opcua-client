@@ -1,6 +1,5 @@
 /**
- * GET /cgi-bin/api/db/table/data?server=xxx&table=xxx&name=xxx
- * GET /cgi-bin/api/db/table/data?server=xxx&table=xxx&names=xxx,yyy
+ * GET /cgi-bin/api/db/table/chart?server=xxx&table=xxx&names=xxx&names=yyy
  */
 
 const path = require('path');
@@ -32,7 +31,7 @@ const handlers = {
       reply({ ok: false, reason: `server '${query.server}' not found` });
       return;
     }
-    const params = {
+    Handler.dbTableChart(db, {
       table: query.table,
       name: query.name,
       names: query.names,
@@ -40,22 +39,9 @@ const handlers = {
       stringValueColumn: query.stringValueColumn,
       primaryColumn: query.primaryColumn,
       timeColumn: query.timeColumn,
-      direction: query.direction,
       from: query.from,
       to: query.to,
-      page: query.page,
-      pageSize: query.pageSize,
-      boundedRange: query.boundedRange,
-      cursorSide: query.cursorSide,
-      cursorTime: query.cursorTime,
-      cursorName: query.cursorName,
-      cursorOffset: query.cursorOffset,
-    };
-    if (query.includeTotal === 'true') {
-      Handler.dbTableDataTotal(db, params, reply);
-      return;
-    }
-    Handler.dbTableData(db, params, reply);
+    }, reply);
   },
 };
 
