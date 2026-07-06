@@ -179,6 +179,7 @@ machbase-neo jsh -v /app=/path/to/neo-tools /app/cgi-bin/neo-collector.js /app/c
 | GET | `/cgi-bin/api/log/tail?name=xxx` | active 로그 파일 SSE tail (`event: line`) |
 | GET | `/cgi-bin/api/log/content?name=xxx` | 로그 파일 내용 조회 (start/end 줄 범위 지원) |
 | GET | `/cgi-bin/api/log/content/all?name=xxx` | 로그 파일 전체 내용 조회 |
+| POST | `/cgi-bin/api/opcua/certificate/self-signed` | OPC UA client self-signed certificate/key 발급 |
 | POST | `/cgi-bin/api/opcua/connect` | OPC UA 서버 접속 확인 (body: `{ endpoint, readRetryInterval? }`) |
 | GET | `/cgi-bin/api/opcua/read?endpoint=xxx&nodes=id1,id2` | OPC UA 노드 일회성 읽기 |
 | POST | `/cgi-bin/api/opcua/write` | OPC UA 노드 일회성 쓰기 (body: `{ endpoint, writes: [{ node, value }] }`) |

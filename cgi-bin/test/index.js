@@ -5,6 +5,7 @@ const suites = [
     "./logger.test.js",
     "./machbase-stream.test.js",
     "./types.test.js",
+    "./certificate.test.js",
     "./opcua-client.test.js",
     "./collector-logic.test.js",
     "./handler.test.js",

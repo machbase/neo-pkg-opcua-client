@@ -7,6 +7,7 @@ function normalizeAuthMode(value) {
 }
 
 const DEFAULT_READ_BATCH_SIZE = 300;
+const DEFAULT_SELF_SIGNED_CERT_DAYS = 3650;
 const DEFAULT_CAPABILITIES = {
     maxNodesPerRead: null,
     maxNodesPerReadSource: "default",
@@ -133,6 +134,13 @@ export function buildOpcuaDirectConnectionRequest(form) {
     const existingName = cleanText(form.existingName);
     if (existingName) request.server = existingName;
     return request;
+}
+
+export function buildOpcuaSelfSignedCertificateRequest(form) {
+    return {
+        name: cleanText(form.name),
+        days: positiveInteger(form.days, DEFAULT_SELF_SIGNED_CERT_DAYS),
+    };
 }
 
 export function buildOpcuaConnectionTarget(source) {

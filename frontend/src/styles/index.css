@@ -330,6 +330,29 @@ textarea {
     min-height: 434px;
 }
 
+.connection-test-error-summary {
+    margin: 0;
+    color: var(--color-on-surface-secondary);
+    font-size: var(--font-size-sm);
+}
+
+.connection-test-error-message {
+    max-height: 240px;
+    margin: 0;
+    padding: var(--spacing-12);
+    overflow: auto;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-base);
+    background-color: var(--color-surface-input);
+    color: var(--color-on-surface);
+    font-family: var(--font-family-mono, monospace);
+    font-size: var(--font-size-sm);
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-break: break-word;
+    overflow-wrap: anywhere;
+}
+
 .pem-file-btn {
     cursor: pointer;
     color: var(--color-primary);

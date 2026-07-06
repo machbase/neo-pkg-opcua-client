@@ -26,6 +26,7 @@ export default function IndexApp() {
     removeOpcuaServer,
     healthCheck: opcuaHealthCheck,
     formHealthCheck: opcuaFormHealthCheck,
+    generateSelfSignedCertificate,
     refreshOpcuaServers,
   } = useOpcuaServers()
   const { selectedCollectorId, setSelectedCollectorId, notify } = useApp()
@@ -156,6 +157,7 @@ export default function IndexApp() {
           onDelete={removeOpcuaServer}
           onHealthCheck={opcuaHealthCheck}
           onFormHealthCheck={opcuaFormHealthCheck}
+          onGenerateSelfSignedCertificate={generateSelfSignedCertificate}
           onRefresh={refreshOpcuaServers}
           onClose={closeOpcuaServerSettings}
           autoOpenForm={autoOpenOpcuaForm}

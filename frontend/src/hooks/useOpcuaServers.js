@@ -74,6 +74,20 @@ export default function useOpcuaServers() {
         []
     );
 
+    const generateSelfSignedCertificate = useCallback(
+        async (form) => {
+            try {
+                const certificate = await opcuaServersApi.generateOpcuaSelfSignedCertificate(form);
+                notify("Certificate generated", "success");
+                return certificate;
+            } catch (e) {
+                notify(e.reason || e.message, "error");
+                throw e;
+            }
+        },
+        [notify]
+    );
+
     return {
         opcuaServers,
         loading,
@@ -82,6 +96,7 @@ export default function useOpcuaServers() {
         removeOpcuaServer,
         healthCheck,
         formHealthCheck,
+        generateSelfSignedCertificate,
         refreshOpcuaServers: fetchOpcuaServers,
     };
 }

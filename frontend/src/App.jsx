@@ -27,6 +27,7 @@ export default function App() {
     removeOpcuaServer,
     healthCheck: opcuaHealthCheck,
     formHealthCheck: opcuaFormHealthCheck,
+    generateSelfSignedCertificate,
     refreshOpcuaServers,
   } = useOpcuaServers()
   const [detail, setDetail] = useState(null)
@@ -195,6 +196,7 @@ export default function App() {
           onDelete={removeOpcuaServer}
           onHealthCheck={opcuaHealthCheck}
           onFormHealthCheck={opcuaFormHealthCheck}
+          onGenerateSelfSignedCertificate={generateSelfSignedCertificate}
           onRefresh={refreshOpcuaServers}
           onClose={closeOpcuaServerSettings}
           autoOpenForm={autoOpenOpcuaForm}
