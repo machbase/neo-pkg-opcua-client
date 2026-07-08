@@ -296,27 +296,6 @@ function getRawRowValueValue(row) {
     return row.value ?? row.VALUE ?? row.Value;
 }
 
-export function buildDataViewerRawPageTimeRange(rows = []) {
-    if (!Array.isArray(rows) || rows.length === 0) return null;
-
-    let min = Number.POSITIVE_INFINITY;
-    let max = Number.NEGATIVE_INFINITY;
-
-    for (const row of rows) {
-        const epochMs = toEpochMs(getRawRowTimeValue(row));
-        if (!Number.isFinite(epochMs)) continue;
-        if (epochMs < min) min = epochMs;
-        if (epochMs > max) max = epochMs;
-    }
-
-    if (!Number.isFinite(min) || !Number.isFinite(max)) return null;
-
-    return {
-        from: new Date(min).toISOString(),
-        to: new Date(max).toISOString(),
-    };
-}
-
 export function buildDataViewerRawPageBounds(rows = []) {
     if (!Array.isArray(rows) || rows.length === 0) return null;
 
@@ -403,26 +382,6 @@ export function hasDataViewerRawNextPage({ rowCount = 0, pageSize = 1, forceOpen
     if (forceOpen) return true;
     const safePageSize = Math.max(1, Math.floor(Number(pageSize) || 1));
     return Math.max(0, Math.floor(Number(rowCount) || 0)) >= safePageSize;
-}
-
-export function buildDataViewerRawToChartRangeUpdate({
-    rows = [],
-    rawRange = { from: "", to: "" },
-    splitGroups = [],
-} = {}) {
-    const chartRange = buildDataViewerRawPageTimeRange(rows);
-    if (!chartRange) return null;
-
-    const splitRanges = {};
-    for (const group of splitGroups || []) {
-        if (group?.id) splitRanges[group.id] = chartRange;
-    }
-
-    return {
-        rawRange,
-        chartRange,
-        splitRanges,
-    };
 }
 
 export function buildDataViewerChartGroups({
@@ -535,14 +494,12 @@ export function buildDataViewerSplitRangeUpdate({
     const nextSplitRanges = { ...splitRanges };
     const sourceViewRange = chartViewRanges?.[sourceGroupId];
     const sourceNavigatorRange = chartNavigatorRanges?.[sourceGroupId];
-    const sourceSplitRange = sourceNavigatorRange || sourceViewRange;
 
     for (const group of nextGroups || []) {
         const id = String(group?.id || "").trim();
         if (!id) continue;
         if (sourceViewRange && !nextViewRanges[id]) nextViewRanges[id] = sourceViewRange;
         if (sourceNavigatorRange && !nextNavigatorRanges[id]) nextNavigatorRanges[id] = sourceNavigatorRange;
-        if (sourceSplitRange && !nextSplitRanges[id]) nextSplitRanges[id] = sourceSplitRange;
     }
 
     return {
@@ -1866,8 +1823,8 @@ export function formatDataViewerNavigatorRangeLabels(range = {}, timeFormat = DE
     const startTime = toEpochMs(range?.startTime ?? range?.from);
     const endTime = toEpochMs(range?.endTime ?? range?.to);
     return {
-        start: Number.isFinite(startTime) ? formatDataViewerTime(startTime, timeFormat, timeZone) : "",
-        end: Number.isFinite(endTime) ? formatDataViewerTime(endTime, timeFormat, timeZone) : "",
+        start: Number.isFinite(startTime) ? formatDataViewerTime(startTime, "YYYY-MM-DD HH24:MI:SS", timeZone) : "",
+        end: Number.isFinite(endTime) ? formatDataViewerTime(endTime, "YYYY-MM-DD HH24:MI:SS", timeZone) : "",
     };
 }
 

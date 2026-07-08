@@ -26,7 +26,6 @@ import {
     buildDataViewerRawPageBounds,
     buildDataViewerRawPageRequest,
     buildDataViewerRawRowsPerTagChange,
-    buildDataViewerRawToChartRangeUpdate,
     buildDataViewerSplitRangeUpdate,
     buildDataViewerSplitGroups,
     buildDataViewerShiftMainRangeUpdate,
@@ -57,7 +56,6 @@ import {
     resolveTimeRangeInput,
     resolveTagNodes,
     sendNeoWebTagAnalyzerMessage,
-    shouldFetchDataViewerRowsForMode,
     showsDataViewerTimeControls,
 } from "./dataViewerModel";
 
@@ -869,10 +867,11 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
     const [mode, setMode] = useState("raw");
     const [resultPage, setResultPage] = useState(1);
     const [range, setRange] = useState({ from: "", to: "" });
-    const [chartRange, setChartRange] = useState({ from: "", to: "" });
+    const [resolvedRange, setResolvedRange] = useState({ from: "", to: "" });
     const [rangeEditor, setRangeEditor] = useState(null);
     const [splitChartGroups, setSplitChartGroups] = useState([]);
     const [splitChartRanges, setSplitChartRanges] = useState({});
+    const [resolvedSplitChartRanges, setResolvedSplitChartRanges] = useState({});
     const [chartViewRanges, setChartViewRanges] = useState({});
     const [chartNavigatorRanges, setChartNavigatorRanges] = useState({});
     const [openChartMenuId, setOpenChartMenuId] = useState(null);
@@ -894,6 +893,7 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
     const rowsRequestRef = useRef(0);
     const chartRequestRef = useRef(0);
     const endPageRequestRef = useRef(0);
+    const splitRangeRequestRef = useRef(0);
     const selectedTagKey = selectedTagNames.join("\n");
     const rawPageSize = useMemo(() => getDataViewerRawPageSize(selectedTagNames, rawRowsPerTag), [rawRowsPerTag, selectedTagNames]);
 
@@ -1047,10 +1047,10 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
         () => buildDataViewerChartGroups({
             selectedTagNames,
             splitGroups: splitChartGroups,
-            globalRange: chartRange,
-            splitRanges: splitChartRanges,
+            globalRange: resolvedRange,
+            splitRanges: resolvedSplitChartRanges,
         }),
-        [chartRange, selectedTagNames, splitChartGroups, splitChartRanges]
+        [resolvedRange, resolvedSplitChartRanges, selectedTagNames, splitChartGroups]
     );
     const splitAssignedNames = useMemo(() => new Set(splitChartGroups.flatMap((group) => group.tagNames || [])), [splitChartGroups]);
 
@@ -1083,6 +1083,13 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
             return Object.keys(next).length === Object.keys(current).length ? current : next;
         });
         setSplitChartRanges((current) => {
+            const next = {};
+            for (const [id, value] of Object.entries(current)) {
+                if (validGroupIds.has(id)) next[id] = value;
+            }
+            return Object.keys(next).length === Object.keys(current).length ? current : next;
+        });
+        setResolvedSplitChartRanges((current) => {
             const next = {};
             for (const [id, value] of Object.entries(current)) {
                 if (validGroupIds.has(id)) next[id] = value;
@@ -1155,8 +1162,15 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
 
     const handleRemoveSplitChart = useCallback((groupId) => {
         chartRequestRef.current += 1;
+        splitRangeRequestRef.current += 1;
         setSplitChartGroups((current) => current.filter((group) => group.id !== groupId));
         setSplitChartRanges((current) => {
+            if (!Object.prototype.hasOwnProperty.call(current, groupId)) return current;
+            const next = { ...current };
+            delete next[groupId];
+            return next;
+        });
+        setResolvedSplitChartRanges((current) => {
             if (!Object.prototype.hasOwnProperty.call(current, groupId)) return current;
             const next = { ...current };
             delete next[groupId];
@@ -1206,10 +1220,6 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
             setLoading(false);
             return;
         }
-        if (!shouldFetchDataViewerRowsForMode(mode)) {
-            setLoading(false);
-            return;
-        }
         setLoading(true);
         setError("");
         try {
@@ -1223,7 +1233,6 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
                 setRawPageBounds(null);
                 return;
             }
-
             const requestPage = rawPageRequest?.page || resultPage;
             const data = await queryTagData({
                 server: dbServer,
@@ -1245,21 +1254,9 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
             if (rowsRequestRef.current !== requestId) return;
             const nextRows = data?.rows || [];
             const nextBounds = buildDataViewerRawPageBounds(nextRows);
+            setResolvedRange({ from: queryFrom ?? "", to: queryTo ?? "" });
             setResult(data || { rows: [], total: 0, page: resultPage, pageSize: rawPageSize });
             setRawPageBounds(nextBounds);
-            if (mode === "chart" && !rawPageRequest?.boundedRange && nextBounds?.pageBounds) {
-                setChartRange(nextBounds.pageBounds);
-                setChartViewRanges((current) => {
-                    if (!Object.prototype.hasOwnProperty.call(current, "default")) return current;
-                    const { default: _defaultRange, ...next } = current;
-                    return next;
-                });
-                setChartNavigatorRanges((current) => {
-                    if (!Object.prototype.hasOwnProperty.call(current, "default")) return current;
-                    const { default: _defaultRange, ...next } = current;
-                    return next;
-                });
-            }
         } catch (e) {
             if (rowsRequestRef.current !== requestId) return;
             const message = e.reason || e.message || "Failed to load data";
@@ -1272,7 +1269,7 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
                 setLoading(false);
             }
         }
-    }, [backwardScan, canQuery, dbServer, dbTable, mode, notify, range.from, range.to, rawPageRequest, rawPageSize, resultPage, selectedTagNames, stringValueColumn, valueColumn]);
+    }, [backwardScan, canQuery, dbServer, dbTable, notify, range.from, range.to, rawPageRequest, rawPageSize, resultPage, selectedTagNames, stringValueColumn, valueColumn]);
 
     useEffect(() => {
         fetchRows();
@@ -1313,24 +1310,14 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
 
     const handleModeChange = useCallback((nextMode) => {
         if (nextMode === mode) return;
-
-        if (nextMode === "chart" && mode === "raw") {
-            const update = buildDataViewerRawToChartRangeUpdate({
-                rows: result.rows,
-                rawRange: range,
-                splitGroups: splitChartGroups,
-            });
-            if (update) {
-                chartRequestRef.current += 1;
-                setChartRange(update.chartRange);
-                setChartViewRanges({});
-                setChartNavigatorRanges({});
-                setSplitChartRanges(update.splitRanges);
-            }
-        }
-
         setMode(nextMode);
-    }, [mode, range, result.rows, splitChartGroups]);
+    }, [mode]);
+
+    const activeRange = range;
+    const rangeEditorRange = useMemo(() => {
+        if (rangeEditor?.type !== "split") return activeRange;
+        return splitChartRanges[rangeEditor.groupId] || activeRange;
+    }, [activeRange, rangeEditor, splitChartRanges]);
 
     if (!collector) {
         return (
@@ -1341,7 +1328,6 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
         );
     }
 
-    const activeRange = mode === "chart" ? chartRange : range;
     const timeRangeButtonText = formatTimeRangeLabel(activeRange.from, activeRange.to);
     const timeFormatButtonText = `${getTimeFormatLabel(timeFormat)} / ${getTimeZoneLabel(timeZone)}`;
     const headerLabels = buildDataViewerHeaderLabels(collector.id, dbTable);
@@ -1357,18 +1343,91 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
         setRawPageRequest({ page: 1 });
         setResultPage(1);
     };
-    const handleRangeApply = (next) => {
-        chartRequestRef.current += 1;
-        setChartViewRanges({});
-        setChartNavigatorRanges({});
+    const handleRangeApply = async (next) => {
         if (rangeEditor?.type === "split" && rangeEditor.groupId) {
+            const group = chartGroups.find((chartGroup) => chartGroup.id === rangeEditor.groupId);
+            if (!group) {
+                setRangeEditor(null);
+                return;
+            }
+            const currentRange = splitChartRanges[rangeEditor.groupId] || { from: "", to: "" };
+            const rangeChanged = currentRange.from !== next.from || currentRange.to !== next.to;
+            let nextRows = null;
+            let nextResolvedRange = null;
+            if (rangeChanged && canQuery) {
+                const splitRequestId = splitRangeRequestRef.current + 1;
+                splitRangeRequestRef.current = splitRequestId;
+                setChartError("");
+                try {
+                    const baseDate = new Date();
+                    const queryFrom = resolveTimeRangeInput(next.from, baseDate);
+                    const queryTo = resolveTimeRangeInput(next.to, baseDate);
+                    if (splitRangeRequestRef.current !== splitRequestId) return;
+                    if (queryFrom === null || queryTo === null) {
+                        setChartError("Please check the entered time.");
+                        return;
+                    }
+                    if (queryFrom && queryTo && new Date(queryFrom).getTime() > new Date(queryTo).getTime()) {
+                        setChartError("From should be earlier than To.");
+                        return;
+                    }
+                    const data = await queryTagData({
+                        server: dbServer,
+                        table: dbTable,
+                        names: group.tagNames,
+                        valueColumn,
+                        stringValueColumn,
+                        direction: backwardScan ? "latest" : "oldest",
+                        from: queryFrom,
+                        to: queryTo,
+                        pageSize: getDataViewerRawPageSize(group.tagNames, rawRowsPerTag),
+                        boundedRange: true,
+                    });
+                    if (splitRangeRequestRef.current !== splitRequestId) return;
+                    nextRows = data?.rows || [];
+                    nextResolvedRange = { from: queryFrom, to: queryTo };
+                } catch (e) {
+                    if (splitRangeRequestRef.current !== splitRequestId) return;
+                    const message = e.reason || e.message || "Failed to update chart range";
+                    setChartError(message);
+                    notify(message, "error");
+                    return;
+                }
+            }
+            if (rangeChanged) {
+                chartRequestRef.current += 1;
+                setChartViewRanges((current) => {
+                    if (!Object.prototype.hasOwnProperty.call(current, rangeEditor.groupId)) return current;
+                    const { [rangeEditor.groupId]: _removed, ...rest } = current;
+                    return rest;
+                });
+                setChartNavigatorRanges((current) => {
+                    if (!Object.prototype.hasOwnProperty.call(current, rangeEditor.groupId)) return current;
+                    const { [rangeEditor.groupId]: _removed, ...rest } = current;
+                    return rest;
+                });
+            }
             setSplitChartRanges((current) => ({
                 ...current,
                 [rangeEditor.groupId]: next,
             }));
-        } else if (mode === "chart") {
-            setChartRange(next);
+            if (nextRows) {
+                chartRequestRef.current += 1;
+                if (nextResolvedRange) {
+                    setResolvedSplitChartRanges((current) => ({
+                        ...current,
+                        [rangeEditor.groupId]: nextResolvedRange,
+                    }));
+                }
+                setSplitChartRows((current) => ({
+                    ...current,
+                    [rangeEditor.groupId]: nextRows,
+                }));
+            }
         } else {
+            chartRequestRef.current += 1;
+            setChartViewRanges({});
+            setChartNavigatorRanges({});
             rowsRequestRef.current += 1;
             endPageRequestRef.current += 1;
             setRange(next);
@@ -1451,7 +1510,7 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
             notify("Cannot send Tag Analyzer request to neo-web.", "error");
         }
     };
-    const handleSetGlobalTime = (groupId) => {
+    const handleSetGlobalTime = async (groupId) => {
         const update = buildDataViewerGlobalTimeUpdate({
             sourceGroupId: groupId,
             chartGroups,
@@ -1464,11 +1523,50 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
             return;
         }
 
+        rowsRequestRef.current += 1;
+        endPageRequestRef.current += 1;
         chartRequestRef.current += 1;
+        const splitRequestId = splitRangeRequestRef.current + 1;
+        splitRangeRequestRef.current = splitRequestId;
+        setRange(update.range);
+        setRawPageBounds(null);
+        setRawPageRequest({ page: 1 });
+        setResultPage(1);
         setChartViewRanges(update.viewRanges);
         setChartNavigatorRanges(update.navigatorRanges);
-        setChartRange(update.range);
         setSplitChartRanges(update.splitRanges);
+        setResolvedSplitChartRanges(update.splitRanges);
+        const splitGroupsToFetch = chartGroups.filter((group) => group.id !== "default" && update.splitRanges[group.id]);
+        setSplitChartRows(Object.fromEntries(splitGroupsToFetch.map((group) => [group.id, []])));
+
+        if (!canQuery || splitGroupsToFetch.length === 0) return;
+
+        try {
+            const nextEntries = await Promise.all(splitGroupsToFetch.map(async (group) => {
+                const groupRange = update.splitRanges[group.id];
+                const data = await queryTagData({
+                    server: dbServer,
+                    table: dbTable,
+                    names: group.tagNames,
+                    valueColumn,
+                    stringValueColumn,
+                    direction: backwardScan ? "latest" : "oldest",
+                    from: groupRange.from,
+                    to: groupRange.to,
+                    pageSize: getDataViewerRawPageSize(group.tagNames, rawRowsPerTag),
+                    boundedRange: true,
+                });
+                return [group.id, data?.rows || []];
+            }));
+            if (splitRangeRequestRef.current !== splitRequestId) return;
+            chartRequestRef.current += 1;
+            setSplitChartRows(Object.fromEntries(nextEntries));
+        } catch (e) {
+            if (splitRangeRequestRef.current !== splitRequestId) return;
+            const message = e.reason || e.message || "Failed to set global time";
+            setChartError(message);
+            notify(message, "error");
+        }
     };
     const handleShiftMainRange = async (group, direction, currentRange, navigatorRange) => {
         if (!canQuery) return;
@@ -1506,6 +1604,8 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
         }
 
         chartRequestRef.current += 1;
+        const splitRequestId = splitRangeRequestRef.current + 1;
+        splitRangeRequestRef.current = splitRequestId;
         setChartError("");
         setChartViewRanges((current) => ({
             ...current,
@@ -1517,6 +1617,10 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
         }));
 
         setSplitChartRanges((current) => ({
+            ...current,
+            [group.id]: update.navigatorRange,
+        }));
+        setResolvedSplitChartRanges((current) => ({
             ...current,
             [group.id]: update.navigatorRange,
         }));
@@ -1534,6 +1638,7 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
                 pageSize: getDataViewerRawPageSize(group.tagNames, rawRowsPerTag),
                 boundedRange: true,
             });
+            if (splitRangeRequestRef.current !== splitRequestId) return;
             const nextRows = data?.rows || [];
             chartRequestRef.current += 1;
             setSplitChartRows((current) => ({
@@ -1541,6 +1646,7 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
                 [group.id]: nextRows,
             }));
         } catch (e) {
+            if (splitRangeRequestRef.current !== splitRequestId) return;
             const message = e.reason || e.message || "Failed to move chart range";
             setChartError(message);
             notify(message, "error");
@@ -1904,7 +2010,7 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
             </div>
             {rangeEditor && (
                 <TimeRangeModal
-                    range={rangeEditor.type === "split" ? (splitChartRanges[rangeEditor.groupId] || chartRange) : activeRange}
+                    range={rangeEditorRange}
                     onClose={() => setRangeEditor(null)}
                     onApply={handleRangeApply}
                 />
