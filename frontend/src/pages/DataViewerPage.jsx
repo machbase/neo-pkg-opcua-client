@@ -3,7 +3,7 @@ import { useNavigate } from "react-router";
 import * as echarts from "echarts";
 import Icon from "../components/common/Icon";
 import { useApp } from "../context/AppContext";
-import { listTableTags, queryTagData, queryTagDataTotal } from "../api/dataViewer";
+import { listTableTags, queryTagBoundaryTime, queryTagData, queryTagDataTotal } from "../api/dataViewer";
 import ZoomInTwo from "../assets/image/btn_zoom in x2@3x.png";
 import ZoomInFour from "../assets/image/btn_zoom in x4@3x.png";
 import ZoomOutTwo from "../assets/image/btn_zoom out x2@3x.png";
@@ -1211,6 +1211,38 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
         handleCreateSplitChart([tagName]);
     }, [handleCreateSplitChart, handleRemoveSplitChart, splitChartGroups]);
 
+    const resolveRangeForTagNames = useCallback(async (targetRange, tagNames) => {
+        const nowDate = new Date();
+        let lastBaseDate;
+        const resolveQueryRange = async (value) => {
+            const text = String(value ?? "").trim();
+            if (!text.startsWith("last")) return resolveTimeRangeInput(value, nowDate);
+
+            if (lastBaseDate === undefined) {
+                const latestTime = await queryTagBoundaryTime({
+                    server: dbServer,
+                    table: dbTable,
+                    names: tagNames,
+                    valueColumn,
+                    stringValueColumn,
+                    direction: "latest",
+                });
+                lastBaseDate = latestTime ? new Date(latestTime) : null;
+            }
+
+            if (!lastBaseDate || Number.isNaN(lastBaseDate.getTime())) return null;
+            return resolveTimeRangeInput(value, lastBaseDate);
+        };
+
+        const from = await resolveQueryRange(targetRange.from);
+        const to = await resolveQueryRange(targetRange.to);
+        return { from, to };
+    }, [dbServer, dbTable, stringValueColumn, valueColumn]);
+
+    const resolveEffectiveRange = useCallback(async () => {
+        return resolveRangeForTagNames(range, selectedTagNames);
+    }, [range, resolveRangeForTagNames, selectedTagNames]);
+
     const fetchRows = useCallback(async () => {
         const requestId = rowsRequestRef.current + 1;
         rowsRequestRef.current = requestId;
@@ -1223,9 +1255,7 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
         setLoading(true);
         setError("");
         try {
-            const baseDate = new Date();
-            const queryFrom = resolveTimeRangeInput(range.from, baseDate);
-            const queryTo = resolveTimeRangeInput(range.to, baseDate);
+            const { from: queryFrom, to: queryTo } = await resolveEffectiveRange();
             if (queryFrom === null || queryTo === null) {
                 if (rowsRequestRef.current !== requestId) return;
                 setError("Please check the entered time.");
@@ -1269,7 +1299,7 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
                 setLoading(false);
             }
         }
-    }, [backwardScan, canQuery, dbServer, dbTable, notify, range.from, range.to, rawPageRequest, rawPageSize, resultPage, selectedTagNames, stringValueColumn, valueColumn]);
+    }, [backwardScan, canQuery, dbServer, dbTable, notify, rawPageRequest, rawPageSize, resolveEffectiveRange, resultPage, selectedTagNames, stringValueColumn, valueColumn]);
 
     useEffect(() => {
         fetchRows();
@@ -1359,9 +1389,7 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
                 splitRangeRequestRef.current = splitRequestId;
                 setChartError("");
                 try {
-                    const baseDate = new Date();
-                    const queryFrom = resolveTimeRangeInput(next.from, baseDate);
-                    const queryTo = resolveTimeRangeInput(next.to, baseDate);
+                    const { from: queryFrom, to: queryTo } = await resolveRangeForTagNames(next, group.tagNames);
                     if (splitRangeRequestRef.current !== splitRequestId) return;
                     if (queryFrom === null || queryTo === null) {
                         setChartError("Please check the entered time.");
@@ -1444,9 +1472,7 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
         setEndLoading(true);
         setError("");
         try {
-            const baseDate = new Date();
-            const queryFrom = resolveTimeRangeInput(range.from, baseDate);
-            const queryTo = resolveTimeRangeInput(range.to, baseDate);
+            const { from: queryFrom, to: queryTo } = await resolveEffectiveRange();
             if (queryFrom === null || queryTo === null) {
                 if (endPageRequestRef.current !== requestId) return;
                 setError("Please check the entered time.");

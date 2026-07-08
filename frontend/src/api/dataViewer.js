@@ -46,6 +46,27 @@ export function queryTagData({
     return request("GET", `/cgi-bin/api/db/table/data?${params}`);
 }
 
+export async function queryTagBoundaryTime({
+    server,
+    table,
+    names,
+    valueColumn,
+    stringValueColumn,
+    direction,
+}) {
+    const data = await queryTagData({
+        server,
+        table,
+        names,
+        valueColumn,
+        stringValueColumn,
+        direction,
+        pageSize: 1,
+    });
+    const row = Array.isArray(data?.rows) ? data.rows[0] : null;
+    return row?.time ?? row?.TIME ?? row?.Time ?? null;
+}
+
 export function buildDataViewerChartQueryPath({
     server,
     table,
