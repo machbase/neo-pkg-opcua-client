@@ -4101,7 +4101,7 @@ label.switch input:checked + .switch-slider::before {
     box-sizing: border-box;
     display: flex;
     flex-direction: column;
-    gap: var(--spacing-12);
+    gap: var(--spacing-20);
     flex: 1;
     width: calc(100% + var(--spacing-12));
     min-height: 0;
@@ -4201,6 +4201,26 @@ label.switch input:checked + .switch-slider::before {
 
 .data-viewer-chart-card {
     flex: 0 0 auto;
+}
+
+.data-viewer-chart-card.is-main {
+    border-color: var(--color-border);
+}
+
+.data-viewer-chart-card.is-main .data-viewer-chart-panel-header {
+    background-color: var(--color-surface-elevated);
+}
+
+.data-viewer-chart-card.is-main + .data-viewer-chart-card.is-split {
+    margin-top: var(--spacing-12);
+}
+
+.data-viewer-chart-card.is-split {
+    border-left: 3px solid var(--color-primary);
+}
+
+.data-viewer-chart-card.is-split .data-viewer-chart-panel-header {
+    background-color: rgba(0, 95, 184, 0.14);
 }
 
 .data-viewer-chart-card .table-card-body {

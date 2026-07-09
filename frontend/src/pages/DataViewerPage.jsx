@@ -1896,7 +1896,7 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
                                         });
                                         const chartMenuOpen = openChartMenuId === group.id;
                                         return (
-                                            <div key={group.id} className="table-card data-viewer-chart-card">
+                                            <div key={group.id} className={`table-card data-viewer-chart-card ${group.split ? "is-split" : "is-main"}`}>
                                                 <div className="data-viewer-chart-panel-header">
                                                     <div className="data-viewer-chart-panel-title">
                                                         <Icon name={group.split ? "call_split" : "query_stats"} className="icon-sm text-primary" />
