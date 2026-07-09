@@ -1214,9 +1214,9 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
     const resolveRangeForTagNames = useCallback(async (targetRange, tagNames) => {
         const nowDate = new Date();
         let lastBaseDate;
-        const resolveQueryRange = async (value) => {
+        const resolveQueryRange = async (value, boundary) => {
             const text = String(value ?? "").trim();
-            if (!text.startsWith("last")) return resolveTimeRangeInput(value, nowDate);
+            if (!text.startsWith("last")) return resolveTimeRangeInput(value, nowDate, boundary);
 
             if (lastBaseDate === undefined) {
                 const latestTime = await queryTagBoundaryTime({
@@ -1231,11 +1231,11 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
             }
 
             if (!lastBaseDate || Number.isNaN(lastBaseDate.getTime())) return null;
-            return resolveTimeRangeInput(value, lastBaseDate);
+            return resolveTimeRangeInput(value, lastBaseDate, boundary);
         };
 
-        const from = await resolveQueryRange(targetRange.from);
-        const to = await resolveQueryRange(targetRange.to);
+        const from = await resolveQueryRange(targetRange.from, "from");
+        const to = await resolveQueryRange(targetRange.to, "to");
         return { from, to };
     }, [dbServer, dbTable, stringValueColumn, valueColumn]);
 

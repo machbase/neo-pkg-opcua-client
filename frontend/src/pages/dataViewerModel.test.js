@@ -1521,6 +1521,13 @@ test("resolveTimeRangeInput supports now and last quick ranges", () => {
     assert.equal(resolveTimeRangeInput("last-5m", base), "2026-06-01T11:55:00.000Z");
 });
 
+test("resolveTimeRangeInput keeps last range end inclusive after precision loss", () => {
+    const base = new Date("2026-07-07T16:18:09.016Z");
+
+    assert.equal(resolveTimeRangeInput("last-5m", base, "from"), "2026-07-07T16:13:09.016Z");
+    assert.equal(resolveTimeRangeInput("last", base, "to"), "2026-07-07T16:18:09.017Z");
+});
+
 test("formatTimeRangeLabel keeps relative quick ranges readable", () => {
     assert.equal(formatTimeRangeLabel("last-5m", "last"), "last-5m ~ last");
     assert.equal(formatTimeRangeLabel("", ""), "Time range not set");

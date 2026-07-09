@@ -1697,16 +1697,21 @@ function applyRelativeTime(value, baseDate) {
     return date;
 }
 
-export function resolveTimeRangeInput(value, baseDate = new Date()) {
+function ceilDateToNextMillisecond(date) {
+    return new Date(date.getTime() + 1);
+}
+
+export function resolveTimeRangeInput(value, baseDate = new Date(), boundary = "from") {
+    const formatResolvedDate = (date) => (boundary === "to" ? ceilDateToNextMillisecond(date) : date).toISOString();
     const text = String(value || "").trim();
     if (!text) return "";
 
     const relativeDate = applyRelativeTime(text, baseDate);
-    if (relativeDate) return relativeDate.toISOString();
+    if (relativeDate) return formatResolvedDate(relativeDate);
 
     const date = new Date(text.includes("T") ? text : text.replace(" ", "T"));
     if (Number.isNaN(date.getTime())) return null;
-    return date.toISOString();
+    return formatResolvedDate(date);
 }
 
 function toDate(value) {
