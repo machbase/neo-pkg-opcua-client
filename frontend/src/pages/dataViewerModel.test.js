@@ -9,12 +9,10 @@ import {
     buildDataViewerEChartOption,
     buildDataViewerGlobalTimeUpdate,
     buildDataViewerChartResultsFromRawRows,
-    buildDataViewerRawPageTimeRange,
     buildDataViewerRawPageBounds,
     buildDataViewerRawPageRequest,
     buildDataViewerRawRowsPerTagChange,
     buildDataViewerDefaultChartShiftRawPageUpdate,
-    buildDataViewerRawToChartRangeUpdate,
     buildDataViewerSplitRangeUpdate,
     buildDataViewerSplitGroups,
     buildDataViewerShiftMainRangeUpdate,
@@ -447,36 +445,6 @@ test("buildDataViewerRawRowsPerTagChange resets raw paging to page one", () => {
     );
 });
 
-test("buildDataViewerRawPageTimeRange returns the current raw page time span", () => {
-    assert.deepEqual(
-        buildDataViewerRawPageTimeRange([
-            { time: "2026-06-25T05:09:58.534Z", name: "sensor.a" },
-            { time: "2026-06-25T05:09:56.100Z", name: "sensor.b" },
-            { time: "2026-06-25T05:10:01.001Z", name: "sensor.a" },
-        ]),
-        {
-            from: "2026-06-25T05:09:56.100Z",
-            to: "2026-06-25T05:10:01.001Z",
-        }
-    );
-
-    assert.deepEqual(
-        buildDataViewerRawPageTimeRange([
-            { TIME: "2026-06-25T05:09:58.534Z" },
-            { Time: "2026-06-25T05:09:59.534Z" },
-        ]),
-        {
-            from: "2026-06-25T05:09:58.534Z",
-            to: "2026-06-25T05:09:59.534Z",
-        }
-    );
-});
-
-test("buildDataViewerRawPageTimeRange ignores rows without valid time", () => {
-    assert.equal(buildDataViewerRawPageTimeRange([]), null);
-    assert.equal(buildDataViewerRawPageTimeRange([{ time: "" }, { time: "not-a-date" }]), null);
-});
-
 test("buildDataViewerRawPageBounds returns first, last, and time range for the current page", () => {
     assert.deepEqual(
         buildDataViewerRawPageBounds([
@@ -684,43 +652,6 @@ test("hasDataViewerRawNextPage opens next page during bounded tag refresh", () =
         }),
         true
     );
-});
-
-test("buildDataViewerRawToChartRangeUpdate keeps raw range unchanged and prepares chart range", () => {
-    const rawRange = { from: "now-1h", to: "now" };
-
-    assert.deepEqual(
-        buildDataViewerRawToChartRangeUpdate({
-            rows: [
-                { time: "2026-06-25T05:09:58.534Z" },
-                { time: "2026-06-25T05:10:01.001Z" },
-            ],
-            rawRange,
-            splitGroups: [
-                { id: "split:a", title: "sensor.a", tagNames: ["sensor.a"] },
-                { id: "split:b", title: "sensor.b", tagNames: ["sensor.b"] },
-            ],
-        }),
-        {
-            rawRange,
-            chartRange: {
-                from: "2026-06-25T05:09:58.534Z",
-                to: "2026-06-25T05:10:01.001Z",
-            },
-            splitRanges: {
-                "split:a": {
-                    from: "2026-06-25T05:09:58.534Z",
-                    to: "2026-06-25T05:10:01.001Z",
-                },
-                "split:b": {
-                    from: "2026-06-25T05:09:58.534Z",
-                    to: "2026-06-25T05:10:01.001Z",
-                },
-            },
-        }
-    );
-
-    assert.equal(buildDataViewerRawToChartRangeUpdate({ rows: [], rawRange }), null);
 });
 
 test("toggleSelectedTagName removes existing tags or appends new tags", () => {
@@ -995,7 +926,7 @@ test("buildDataViewerSplitGroups skips duplicates, missing tags, and already spl
     ]);
 });
 
-test("buildDataViewerSplitRangeUpdate preserves default ranges and seeds new split ranges", () => {
+test("buildDataViewerSplitRangeUpdate preserves display ranges without seeding split ranges", () => {
     const update = buildDataViewerSplitRangeUpdate({
         nextGroups: [
             { id: "split:a", title: "sensor.a", tagNames: ["sensor.a"] },
@@ -1029,13 +960,11 @@ test("buildDataViewerSplitRangeUpdate preserves default ranges and seeds new spl
         },
         splitRanges: {
             "split:old": { startTime: 2500, endTime: 4500 },
-            "split:a": { startTime: 0, endTime: 5000 },
-            "split:b": { startTime: 0, endTime: 5000 },
         },
     });
 });
 
-test("buildDataViewerGlobalTimeUpdate uses visible range first and applies it to every chart range", () => {
+test("buildDataViewerGlobalTimeUpdate uses the source chart time and display ranges globally", () => {
     const update = buildDataViewerGlobalTimeUpdate({
         sourceGroupId: "split:b",
         chartGroups: [
@@ -1537,11 +1466,31 @@ test("formatDataViewerNavigatorRangeLabels renders mini chart boundary labels", 
             "UTC"
         ),
         {
-            start: "2026-06-01 12:34:56.789",
-            end: "2026-06-01 12:35:01.789",
+            start: "2026-06-01 12:34:56",
+            end: "2026-06-01 12:35:01",
         }
     );
     assert.deepEqual(formatDataViewerNavigatorRangeLabels({}, "YYYY-MM-DD HH24:MI:SS.mmm", "UTC"), { start: "", end: "" });
+});
+
+test("getDataViewerChartRangeMs prefers resolved query range over data extent", () => {
+    const resolvedStart = Date.parse("2026-06-01T12:00:00.000Z");
+    const resolvedEnd = Date.parse("2026-06-01T12:00:10.000Z");
+    const points = [
+        [Date.parse("2026-06-01T12:00:03.000Z"), 1],
+        [Date.parse("2026-06-01T12:00:07.000Z"), 2],
+    ];
+
+    assert.deepEqual(
+        getDataViewerChartRangeMs(points, {
+            from: new Date(resolvedStart).toISOString(),
+            to: new Date(resolvedEnd).toISOString(),
+        }),
+        {
+            startTime: resolvedStart,
+            endTime: resolvedEnd,
+        }
+    );
 });
 
 test("formatDataViewerTime supports Neo time format and timezone", () => {
@@ -1570,6 +1519,13 @@ test("resolveTimeRangeInput supports now and last quick ranges", () => {
     assert.equal(resolveTimeRangeInput("last", base), "2026-06-01T12:00:00.000Z");
     assert.equal(resolveTimeRangeInput("now-5m", base), "2026-06-01T11:55:00.000Z");
     assert.equal(resolveTimeRangeInput("last-5m", base), "2026-06-01T11:55:00.000Z");
+});
+
+test("resolveTimeRangeInput keeps last range end inclusive after precision loss", () => {
+    const base = new Date("2026-07-07T16:18:09.016Z");
+
+    assert.equal(resolveTimeRangeInput("last-5m", base, "from"), "2026-07-07T16:13:09.016Z");
+    assert.equal(resolveTimeRangeInput("last", base, "to"), "2026-07-07T16:18:09.017Z");
 });
 
 test("formatTimeRangeLabel keeps relative quick ranges readable", () => {

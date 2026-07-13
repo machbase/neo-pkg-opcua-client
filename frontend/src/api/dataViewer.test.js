@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import {
     buildSeriesFromChartRows,
     buildDataViewerChartQueryPath,
+    queryTagBoundaryTime,
     queryTagData,
     queryTagDataTotal,
     queryTagChartData,
@@ -142,6 +143,38 @@ test("queryTagData omits page when refreshing within current page bounds", async
         assert.ok(url.includes("from=2026-06-25T05%3A09%3A56.100Z"));
         assert.ok(url.includes("to=2026-06-25T05%3A10%3A01.001Z"));
         assert.equal(url.includes("page=4"), false);
+    } finally {
+        globalThis.fetch = originalFetch;
+    }
+});
+
+test("queryTagBoundaryTime loads one boundary row and returns its time", async () => {
+    const originalFetch = globalThis.fetch;
+    const calls = [];
+    globalThis.fetch = async (url, options = {}) => {
+        calls.push({ url: String(url), options });
+        return {
+            status: 200,
+            text: async () => JSON.stringify({
+                ok: true,
+                data: { rows: [{ TIME: "2026-07-07 16:18:09.016" }] },
+            }),
+        };
+    };
+
+    try {
+        const time = await queryTagBoundaryTime({
+            server: "local",
+            table: "TAG",
+            names: ["sensor.a", "sensor.b"],
+            direction: "latest",
+        });
+
+        assert.equal(time, "2026-07-07 16:18:09.016");
+        const url = calls[0].url;
+        assert.ok(url.includes("direction=latest"));
+        assert.ok(url.includes("pageSize=1"));
+        assert.ok(url.includes("names=sensor.a%2Csensor.b"));
     } finally {
         globalThis.fetch = originalFetch;
     }
