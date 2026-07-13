@@ -66,11 +66,50 @@ function getMaxNodesPerReadText(capabilities) {
     return limit ? String(limit) : "Unlimited";
 }
 
+function ConnectionTestErrorModal({ message, onClose }) {
+    return (
+        <div
+            className="modal-overlay"
+            onMouseDown={(e) => {
+                e.stopPropagation();
+                onClose();
+            }}
+        >
+            <div className="modal modal-md" onMouseDown={(e) => e.stopPropagation()}>
+                <div className="modal-header">
+                    <div className="modal-header-title">
+                        <Icon name="error" className="text-error" />
+                        Connection Test Failed
+                    </div>
+                    <button
+                        type="button"
+                        onClick={onClose}
+                        className="p-4 hover:bg-surface-hover rounded-base tooltip"
+                        data-tooltip="Close"
+                    >
+                        <Icon name="close" />
+                    </button>
+                </div>
+                <div className="modal-body space-y-12">
+                    <p className="connection-test-error-summary">The OPC UA server connection test failed.</p>
+                    <pre className="connection-test-error-message">{message}</pre>
+                </div>
+                <div className="modal-footer">
+                    <button type="button" onClick={onClose} className="btn btn-primary">
+                        Close
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+}
+
 export default function OpcuaServerForm({ server, onSave, onConnectionTest, onClose }) {
     const isEdit = Boolean(server);
     const [saving, setSaving] = useState(false);
     const [testing, setTesting] = useState(false);
     const [testResult, setTestResult] = useState(null);
+    const [connectionErrorMessage, setConnectionErrorMessage] = useState("");
     const [draggingField, setDraggingField] = useState(null);
     const [activeTab, setActiveTab] = useState("server");
     const [connectionReady, setConnectionReady] = useState(() => isEdit);
@@ -85,17 +124,23 @@ export default function OpcuaServerForm({ server, onSave, onConnectionTest, onCl
 
     useEffect(() => {
         const handleKey = (e) => {
-            if (e.key === "Escape") onClose();
+            if (e.key !== "Escape") return;
+            if (connectionErrorMessage) {
+                setConnectionErrorMessage("");
+                return;
+            }
+            onClose();
         };
         document.addEventListener("keydown", handleKey);
         return () => document.removeEventListener("keydown", handleKey);
-    }, [onClose]);
+    }, [connectionErrorMessage, onClose]);
 
     const update = (patch, options = {}) => {
         setForm((prev) => ({ ...prev, ...patch }));
         if (options.resetConnection) {
             setConnectionReady(false);
             setTestResult(null);
+            setConnectionErrorMessage("");
         }
     };
 
@@ -151,6 +196,7 @@ export default function OpcuaServerForm({ server, onSave, onConnectionTest, onCl
         if (!onConnectionTest || !form.endpoint || testing) return;
         setTesting(true);
         setTestResult(null);
+        setConnectionErrorMessage("");
         try {
             const result = await onConnectionTest({ ...form, existingName: server?.name || "" });
             const capabilities = result?.capabilities || DEFAULT_CAPABILITIES;
@@ -160,8 +206,10 @@ export default function OpcuaServerForm({ server, onSave, onConnectionTest, onCl
             setActiveTab("server");
             setTestResult({ type: "success", message: "Connected" });
         } catch (e) {
+            const message = e.reason || e.message || "Connection failed";
             setConnectionReady(false);
-            setTestResult({ type: "error", message: e.reason || e.message || "Connection failed" });
+            setTestResult(null);
+            setConnectionErrorMessage(message);
         } finally {
             setTesting(false);
         }
@@ -407,10 +455,10 @@ export default function OpcuaServerForm({ server, onSave, onConnectionTest, onCl
                     </div>
 
                     <div className="modal-footer">
-                        {testResult && (
+                        {testResult && testResult.type === "success" && (
                             <span
                                 className="text-xs mr-auto"
-                                style={{ color: testResult.type === "success" ? "var(--color-success)" : "var(--color-danger)" }}
+                                style={{ color: "var(--color-success)" }}
                             >
                                 {testResult.message}
                             </span>
@@ -433,6 +481,12 @@ export default function OpcuaServerForm({ server, onSave, onConnectionTest, onCl
                     </div>
                 </form>
             </div>
+            {connectionErrorMessage && (
+                <ConnectionTestErrorModal
+                    message={connectionErrorMessage}
+                    onClose={() => setConnectionErrorMessage("")}
+                />
+            )}
         </div>
     );
 }

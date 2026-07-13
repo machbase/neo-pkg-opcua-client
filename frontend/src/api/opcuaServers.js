@@ -2,6 +2,7 @@ import { request } from "./client.js";
 import {
     buildOpcuaConnectionTarget,
     buildOpcuaDirectConnectionRequest,
+    buildOpcuaSelfSignedCertificateRequest,
     buildOpcuaServerPayload,
     mapOpcuaServerListItem,
 } from "./opcuaServerModel.js";
@@ -9,6 +10,7 @@ import {
 export {
     buildOpcuaConnectionTarget,
     buildOpcuaDirectConnectionRequest,
+    buildOpcuaSelfSignedCertificateRequest,
     buildOpcuaServerPayload,
     mapOpcuaServerListItem,
 };
@@ -50,3 +52,6 @@ export const checkOpcuaFormConnection = (form, readRetryInterval) =>
         ...buildOpcuaDirectConnectionRequest(form),
         readRetryInterval,
     });
+
+export const generateOpcuaSelfSignedCertificate = (form) =>
+    request("POST", "/cgi-bin/api/opcua/certificate/self-signed", buildOpcuaSelfSignedCertificateRequest(form));

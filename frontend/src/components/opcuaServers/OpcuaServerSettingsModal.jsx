@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import ConfirmDialog from "../common/ConfirmDialog";
 import Icon from "../common/Icon";
+import OpcuaCertificateGeneratorModal from "./OpcuaCertificateGeneratorModal";
 import OpcuaServerForm from "./OpcuaServerForm";
 
 const STATUS_BADGE = {
@@ -40,11 +41,13 @@ export default function OpcuaServerSettingsModal({
     onDelete,
     onHealthCheck,
     onFormHealthCheck,
+    onGenerateSelfSignedCertificate,
     onRefresh,
     onClose,
     autoOpenForm = false,
 }) {
     const [showForm, setShowForm] = useState(autoOpenForm);
+    const [showCertificateGenerator, setShowCertificateGenerator] = useState(false);
     const [editingServer, setEditingServer] = useState(null);
     const [confirmDelete, setConfirmDelete] = useState(null);
     const [healthResults, setHealthResults] = useState({});
@@ -56,11 +59,11 @@ export default function OpcuaServerSettingsModal({
 
     useEffect(() => {
         const handleKey = (e) => {
-            if (e.key === "Escape" && !showForm && !confirmDelete) onClose();
+            if (e.key === "Escape" && !showForm && !showCertificateGenerator && !confirmDelete) onClose();
         };
         document.addEventListener("keydown", handleKey);
         return () => document.removeEventListener("keydown", handleKey);
-    }, [onClose, showForm, confirmDelete]);
+    }, [onClose, showForm, showCertificateGenerator, confirmDelete]);
 
     const handleSave = async (data) => {
         try {
@@ -189,6 +192,16 @@ export default function OpcuaServerSettingsModal({
                     </div>
 
                     <div className="modal-footer">
+                        <button
+                            type="button"
+                            onClick={() => setShowCertificateGenerator(true)}
+                            disabled={!onGenerateSelfSignedCertificate}
+                            className="btn btn-primary btn-icon tooltip mr-auto"
+                            data-tooltip="Generate Certificate"
+                            aria-label="Generate Certificate"
+                        >
+                            <Icon name="key" />
+                        </button>
                         <button onClick={onClose} className="btn btn-content btn-ghost">
                             Close
                         </button>
@@ -216,6 +229,13 @@ export default function OpcuaServerSettingsModal({
                         setEditingServer(null);
                         if (autoOpenForm) onClose();
                     }}
+                />
+            )}
+
+            {showCertificateGenerator && (
+                <OpcuaCertificateGeneratorModal
+                    onGenerate={onGenerateSelfSignedCertificate}
+                    onClose={() => setShowCertificateGenerator(false)}
                 />
             )}
 

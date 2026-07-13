@@ -1019,6 +1019,64 @@ OPC UA 서버 profile을 등록합니다. Collector와 one-shot OPC UA API는 `s
 
 ---
 
+### POST /opcua/certificate/self-signed
+
+OPC UA secure mode에서 사용할 self-signed client certificate/key를 발급합니다. 이 API는 Neo Web `/web/api/keys`를 사용하지 않고 package `cgi-bin`에서 직접 발급합니다.
+
+이 기능은 Neo 런타임의 JSH `crypto.generateAuthKeyPair('rsa')`, `crypto.generateX509Certificate(...)` API가 필요합니다.
+
+**요청 본문**
+
+```json
+{
+  "name": "opc-main",
+  "days": 3650
+}
+```
+
+| 필드 | 필수 | 설명 |
+|------|------|------|
+| `name` | Y | 인증서 `CN`, `SAN DNS`, `SAN URI`에 사용할 이름 |
+| `days` | N | 인증서 유효기간 일 수. 생략하면 `3650`입니다 |
+
+생성되는 인증서는 RSA self-signed 인증서입니다. subject에는 필요한 값만 넣습니다.
+
+| 인증서 항목 | 값 |
+|------------|----|
+| `CN` | 요청 `name` |
+| `SAN DNS` | 요청 `name` |
+| `SAN URI` | `urn:machbase:neo-pkg-opcua-client:${name}` |
+
+**응답 (성공)**
+
+```json
+{
+  "ok": true,
+  "data": {
+    "certificatePem": "-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----\n",
+    "keyPem": "-----BEGIN RSA PRIVATE KEY-----\n...\n-----END RSA PRIVATE KEY-----\n",
+    "certificateDer": "MIIC...",
+    "applicationUri": "urn:machbase:neo-pkg-opcua-client:opc-main",
+    "commonName": "opc-main"
+  }
+}
+```
+
+`certificatePem`과 `keyPem`은 `/opcua/server`의 `security.certificatePem`, `security.keyPem`에 그대로 전달하면 됩니다.
+패키지 UI는 `${name}_certificate.zip` 파일 하나로 다운로드하며, ZIP 안에는 `${name}_cert.pem`, `${name}_key.pem` 두 파일이 들어갑니다.
+
+`certificateDer`는 DER 바이너리가 필요한 외부 trust 등록 흐름에서 사용할 수 있도록 base64로 함께 반환합니다.
+
+**응답 (실패)**
+
+| 조건 | reason |
+|------|--------|
+| `name` 누락 | `"name is required"` |
+| 경로 구분자 또는 `..` 포함 | `"invalid certificate name"` |
+| Neo 런타임에 JSH crypto 생성 API 없음 | `"JSH crypto certificate generation API is required"` |
+
+---
+
 ### GET /opcua/server?name=
 
 OPC UA 서버 profile을 조회합니다.

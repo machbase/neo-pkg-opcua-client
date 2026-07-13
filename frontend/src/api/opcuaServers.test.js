@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import {
     buildOpcuaConnectionTarget,
     buildOpcuaDirectConnectionRequest,
+    buildOpcuaSelfSignedCertificateRequest,
     buildOpcuaServerPayload,
     mapOpcuaServerListItem,
     resolveReadBatchSizeAfterConnection,
@@ -342,6 +343,35 @@ test("buildOpcuaServerPayload sends SignAndEncrypt security without exposing Sig
                 certificatePem: "-----BEGIN CERTIFICATE-----\nCERT\n-----END CERTIFICATE-----\n",
                 keyPem: "-----BEGIN PRIVATE KEY-----\nKEY\n-----END PRIVATE KEY-----\n",
             },
+        }
+    );
+});
+
+test("buildOpcuaSelfSignedCertificateRequest sends only name and default validity", () => {
+    assert.deepEqual(
+        buildOpcuaSelfSignedCertificateRequest({
+            name: "opc-main",
+            endpoint: "opc.tcp://secure:4840",
+            securityMode: "SignAndEncrypt",
+            certificatePem: "ignored",
+            keyPem: "ignored",
+        }),
+        {
+            name: "opc-main",
+            days: 3650,
+        }
+    );
+});
+
+test("buildOpcuaSelfSignedCertificateRequest sends custom validity", () => {
+    assert.deepEqual(
+        buildOpcuaSelfSignedCertificateRequest({
+            name: "opc-main",
+            days: 30,
+        }),
+        {
+            name: "opc-main",
+            days: 30,
         }
     );
 });

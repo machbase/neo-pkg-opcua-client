@@ -54,11 +54,48 @@ test("OpcuaServerForm supports in-form connection test and PEM file drop", () =>
     const source = readSource("OpcuaServerForm.jsx");
 
     assert.match(source, /Connection Test/);
+    assert.match(source, /ConnectionTestErrorModal/);
+    assert.match(source, /Connection Test Failed/);
+    assert.match(source, /setConnectionErrorMessage\(message\)/);
+    assert.match(source, /testResult && testResult\.type === "success"/);
+    assert.doesNotMatch(source, /testResult\.type === "success" \? "var\(--color-success\)" : "var\(--color-danger\)"/);
     assert.match(source, /type="file"/);
     assert.match(source, /handlePemFileChange\(e, "certificatePem"\)/);
     assert.match(source, /handlePemFileChange\(e, "keyPem"\)/);
     assert.match(source, /onDrop=\{\(e\) => handlePemDrop\(e, "certificatePem"\)\}/);
     assert.match(source, /onDrop=\{\(e\) => handlePemDrop\(e, "keyPem"\)\}/);
+});
+
+test("OpcuaCertificateGeneratorModal supports certificate generation and ZIP download", () => {
+    const source = readSource("OpcuaCertificateGeneratorModal.jsx");
+    const formSource = readSource("OpcuaServerForm.jsx");
+    const settingsSource = readSource("OpcuaServerSettingsModal.jsx");
+    const hookSource = readSource("../../hooks/useOpcuaServers.js");
+
+    assert.match(source, /Generate Certificate/);
+    assert.match(source, /Generate/);
+    assert.match(source, /Valid days/);
+    assert.match(source, /onGenerate/);
+    assert.match(source, /handleGenerate/);
+    assert.match(source, /createZipBlob/);
+    assert.match(source, /certificatePem/);
+    assert.match(source, /keyPem/);
+    assert.match(source, /Download ZIP/);
+    assert.match(source, /className="btn btn-content btn-primary"/);
+    assert.doesNotMatch(source, /Generated/);
+    assert.doesNotMatch(source, /Download cert\.pem/);
+    assert.doesNotMatch(source, /Download key\.pem/);
+    assert.doesNotMatch(source, /Download \.cer/);
+    assert.match(source, /applicationUri/);
+    assert.match(hookSource, /Certificate generated/);
+    assert.doesNotMatch(hookSource, /Self-signed certificate generated/);
+    assert.doesNotMatch(formSource, /Generate self-signed/);
+    assert.match(settingsSource, /data-tooltip="Generate Certificate"/);
+    assert.match(settingsSource, /aria-label="Generate Certificate"/);
+    assert.match(settingsSource, /btn btn-primary btn-icon tooltip mr-auto/);
+    assert.match(settingsSource, /key/);
+    assert.doesNotMatch(settingsSource, />\s*Generate cert\s*</);
+    assert.match(settingsSource, /OpcuaCertificateGeneratorModal/);
 });
 
 test("OpcuaServerForm separates server and security inputs into tabs", () => {
