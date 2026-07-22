@@ -19,5 +19,6 @@ Instead of running a separate external collector, you can register database serv
 - **OPC UA Node Browsing** - Browse the server address space and select nodes for collection instead of entering every item manually
 - **Flexible Node Mapping** - Map OPC UA nodes to target database columns and keep the collection layout aligned with your table design
 - **Transform During Collection** - Apply simple expressions while collecting so values can be adjusted before they are written
+- **Derived Tag Generation** - Create additional tags from values read in the same OPC UA collection cycle
 - **Separate Database Server Configuration** - Register database connection settings once and reuse them across multiple jobs
 - **Operational Monitoring** - Check running state, monitored node count, last update time, live logs, and saved log files from the dashboard

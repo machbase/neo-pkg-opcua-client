@@ -298,6 +298,212 @@ function makeHandler() {
 
 const runner = new TestRunner();
 
+// ── expressionValidate ───────────────────────────────────────────────────────
+
+runner.run('Handler: expressionValidate', {
+    'validates expression and returns sample result': (t) => {
+        const H = makeHandler();
+        let result;
+        H.expressionValidate({
+            expression: 'A * B / C',
+            variables: { A: 'voltage', B: 'current', C: 'scale' },
+            sampleValues: { A: 10, B: 20, C: 2 },
+        }, (r) => { result = r; });
+
+        t.assert(result.ok, 'should be ok');
+        t.assertEqual(result.data.result, 100);
+        t.assertDeepEqual(result.data.usedVariables, ['A', 'B', 'C']);
+        t.assert(result.data.supportedFunctions.includes('sqrt'), 'supportedFunctions should be included');
+    },
+
+    'rejects invalid expression': (t) => {
+        const H = makeHandler();
+        let result;
+        H.expressionValidate({
+            expression: 'PI + A',
+            variables: { A: 'voltage' },
+        }, (r) => { result = r; });
+
+        t.assert(!result.ok, 'should not be ok');
+        t.assert(result.reason.includes('use <PI>'), 'reason should explain constant syntax');
+    },
+});
+
+// ── collectorValidate ────────────────────────────────────────────────────────
+
+runner.run('Handler: collectorValidate', {
+    'validates derived collector config without writing config or opcua profile': (t) => {
+        const H = makeHandler();
+        let result;
+        H.collectorValidate({
+            name: 'col-a',
+            mode: 'create',
+            config: {
+                timePolicy: 'sourceTime',
+                opcua: {
+                    endpoint: 'opc.tcp://h:4840',
+                    nodes: [
+                        { nodeId: 'ns=1;s=v', name: 'voltage' },
+                        { nodeId: 'ns=1;s=c', name: 'current' },
+                    ],
+                },
+                derivedTags: [{
+                    name: 'power',
+                    expression: 'A * B',
+                    variables: { A: 'voltage', B: 'current' },
+                    timeSource: 'latest',
+                    onError: 'previous',
+                }],
+            },
+        }, (r) => { result = r; });
+
+        t.assert(result.ok, 'should be ok');
+        t.assertEqual(result.data.effectiveTimePolicy, 'sourceTime');
+        t.assertEqual(result.data.effectiveBadStatusPolicy, 'skip');
+        t.assertEqual(result.data.derivedTags[0].name, 'power');
+        t.assertEqual(Object.keys(mockCGI._configs).length, 0, 'config should not be written');
+        t.assertEqual(Object.keys(mockCGI._opcuaServers).length, 0, 'opcua profile should not be auto-created');
+    },
+
+    'accepts badStatusPolicy ignore': (t) => {
+        const H = makeHandler();
+        let result;
+        H.collectorValidate({
+            name: 'col-a',
+            mode: 'create',
+            config: {
+                badStatusPolicy: 'ignore',
+                opcua: {
+                    endpoint: 'opc.tcp://h:4840',
+                    nodes: [{ nodeId: 'ns=1;s=v', name: 'voltage' }],
+                },
+            },
+        }, (r) => { result = r; });
+
+        t.assert(result.ok, 'should be ok');
+        t.assertEqual(result.data.effectiveBadStatusPolicy, 'ignore');
+    },
+
+    'rejects invalid badStatusPolicy': (t) => {
+        const H = makeHandler();
+        let result;
+        H.collectorValidate({
+            name: 'col-a',
+            mode: 'create',
+            config: {
+                badStatusPolicy: 'null',
+                opcua: {
+                    endpoint: 'opc.tcp://h:4840',
+                    nodes: [{ nodeId: 'ns=1;s=v', name: 'voltage' }],
+                },
+            },
+        }, (r) => { result = r; });
+
+        t.assert(!result.ok, 'should not be ok');
+        t.assert(result.reason.includes("badStatusPolicy must be 'skip' or 'ignore'"));
+    },
+
+    'returns warnings for unused variables and latest timestamp selection': (t) => {
+        const H = makeHandler();
+        let result;
+        H.collectorValidate({
+            name: 'col-a',
+            config: {
+                opcua: {
+                    endpoint: 'opc.tcp://h:4840',
+                    nodes: [
+                        { nodeId: 'ns=1;s=v', name: 'voltage' },
+                        { nodeId: 'ns=1;s=c', name: 'current' },
+                    ],
+                },
+                derivedTags: [{
+                    name: 'calc',
+                    expression: 'A + 1',
+                    variables: { A: 'voltage', B: 'current' },
+                }],
+            },
+        }, (r) => { result = r; });
+
+        t.assert(result.ok, 'should be ok');
+        const codes = result.data.warnings.map(w => w.code);
+        t.assert(codes.includes('unused-variable'), 'unused variable warning should be returned');
+        t.assert(codes.includes('latest-uses-unused-variable-time'), 'latest timestamp warning should be returned');
+    },
+
+    'rejects unknown source tag reference': (t) => {
+        const H = makeHandler();
+        let result;
+        H.collectorValidate({
+            name: 'col-a',
+            config: {
+                opcua: {
+                    endpoint: 'opc.tcp://h:4840',
+                    nodes: [{ nodeId: 'ns=1;s=v', name: 'voltage' }],
+                },
+                derivedTags: [{
+                    name: 'calc',
+                    expression: 'A',
+                    variables: { A: 'missing' },
+                }],
+            },
+        }, (r) => { result = r; });
+
+        t.assert(!result.ok, 'should not be ok');
+        t.assert(result.reason.includes("unknown source tag 'missing'"));
+    },
+
+    'rejects null errorValue instead of coercing it to zero': (t) => {
+        const H = makeHandler();
+        let result;
+        H.collectorValidate({
+            name: 'col-a',
+            config: {
+                opcua: {
+                    endpoint: 'opc.tcp://h:4840',
+                    nodes: [{ nodeId: 'ns=1;s=v', name: 'voltage' }],
+                },
+                derivedTags: [{
+                    name: 'calc',
+                    expression: 'A',
+                    variables: { A: 'voltage' },
+                    onError: 'value',
+                    errorValue: null,
+                }],
+            },
+        }, (r) => { result = r; });
+
+        t.assert(!result.ok, 'should not be ok');
+        t.assert(result.reason.includes('errorValue must be a finite number'));
+    },
+
+    'merges existing config for update dry-run without writing it': (t) => {
+        const H = makeHandler();
+        mockCGI._opcuaServers['opc-main'] = { endpoint: 'opc.tcp://h:4840' };
+        mockCGI._configs['col-a'] = {
+            opcua: {
+                server: 'opc-main',
+                interval: 2000,
+                nodes: [{ nodeId: 'ns=1;s=v', name: 'voltage' }],
+            },
+            timePolicy: 'requestTime',
+            badStatusPolicy: 'ignore',
+            derivedTags: [],
+        };
+
+        let result;
+        H.collectorValidate({
+            name: 'col-a',
+            mode: 'update',
+            config: { log: { level: 'debug' } },
+        }, (r) => { result = r; });
+
+        t.assert(result.ok, 'should be ok');
+        t.assertEqual(result.data.effectiveTimePolicy, 'requestTime');
+        t.assertEqual(result.data.effectiveBadStatusPolicy, 'ignore');
+        t.assertEqual(mockCGI._configs['col-a'].log, undefined, 'dry-run must not write merged config');
+    },
+});
+
 // ── collectorPost ────────────────────────────────────────────────────────────
 
 runner.run('Handler: collectorPost', {
@@ -308,10 +514,43 @@ runner.run('Handler: collectorPost', {
         t.assert(result.ok, 'should be ok');
         t.assertEqual(result.data.name, 'col-a');
         t.assertNotNull(mockCGI._configs['col-a'], 'config should be written');
+        t.assertEqual(mockCGI._configs['col-a'].badStatusPolicy, 'skip');
+        t.assertEqual(mockCGI._configs['col-a'].timePolicy, 'sourceTime');
+        t.assertEqual(mockCGI._configs['col-a'].stringOnly, false);
+        t.assertEqual(mockCGI._configs['col-a'].derivedTags.length, 0);
+        t.assertEqual(mockCGI._configs['col-a'].opcua.interval, 1000);
+        t.assertEqual(mockCGI._configs['col-a'].opcua.readRetryInterval, 100);
+        t.assertEqual(mockCGI._configs['col-a'].log.level, 'info');
+        t.assertEqual(mockCGI._configs['col-a'].log.maxFiles, 10);
         t.assertEqual(mockCGI._configs['col-a'].opcua.server, 'col-a-opcua');
         t.assertEqual(mockCGI._configs['col-a'].opcua.endpoint, undefined, 'legacy endpoint should be removed');
         t.assertEqual(mockCGI._opcuaServers['col-a-opcua'].endpoint, 'opc.tcp://h:4840');
         t.assert(mockService._installed['col-a'], 'service should be installed');
+    },
+
+    'stores trimmed source and derived tag configuration': (t) => {
+        const H = makeHandler();
+        let result;
+        H.collectorPost('col-a', {
+            opcua: {
+                endpoint: 'opc.tcp://h:4840',
+                nodes: [{ nodeId: 'ns=1;s=a', name: ' source ' }],
+            },
+            derivedTags: [{
+                name: ' calc ',
+                expression: ' A + 1 ',
+                variables: { A: ' source ' },
+                timeSource: ' A ',
+            }],
+        }, (r) => { result = r; });
+
+        t.assert(result.ok, 'should be ok');
+        const stored = mockCGI._configs['col-a'];
+        t.assertEqual(stored.opcua.nodes[0].name, 'source');
+        t.assertEqual(stored.derivedTags[0].name, 'calc');
+        t.assertEqual(stored.derivedTags[0].expression, 'A + 1');
+        t.assertEqual(stored.derivedTags[0].variables.A, 'source');
+        t.assertEqual(stored.derivedTags[0].timeSource, 'A');
     },
 
     'returns error when collector already exists': (t) => {
@@ -369,6 +608,33 @@ runner.run('Handler: collectorPost', {
         t.assert(mockService._installed['col-a'], 'service should be installed');
     },
 
+    'auto-create sizes primary column for derived tag names': (t) => {
+        const H = makeHandler();
+        const longName = 'TAG_' + 'Y'.repeat(90);
+        mockCGI._servers['server-a'] = { host: 'h', port: 5656, user: 'sys', password: 'pw' };
+
+        let result;
+        H.collectorPost('col-a', {
+            autoCreateTable: true,
+            db: 'server-a',
+            dbTable: 'auto_tag',
+            opcua: {
+                interval: 1000,
+                endpoint: 'opc.tcp://h:4840',
+                nodes: [{ nodeId: 'ns=1;s=a', name: 'SRC' }],
+            },
+            derivedTags: [{
+                name: longName,
+                expression: 'A',
+                variables: { A: 'SRC' },
+            }],
+        }, (r) => { result = r; });
+
+        t.assert(result.ok, 'should be ok');
+        const created = mockMachbaseClient.createdTables[0];
+        t.assertEqual(created.schema.columns[0].length, 95);
+    },
+
     'rejects existing table when tag name exceeds primary column length': (t) => {
         const H = makeHandler();
         mockCGI._servers['server-a'] = { host: 'h', port: 5656, user: 'SYS', password: 'pw' };
@@ -392,6 +658,61 @@ runner.run('Handler: collectorPost', {
 
         t.assert(!result.ok, 'should not be ok');
         t.assert(result.reason.includes('tag name length 8 exceeds NAME VARCHAR(5)'), 'reason should explain tag name length');
+        t.assert(!mockCGI._configs['col-a'], 'config should not be written');
+        t.assert(!mockCGI._opcuaServers['col-a-opcua'], 'auto-created opcua server should be rolled back');
+    },
+
+    'rejects derived tag name collision with source tag name': (t) => {
+        const H = makeHandler();
+
+        let result;
+        H.collectorPost('col-a', {
+            opcua: {
+                interval: 1000,
+                endpoint: 'opc.tcp://h:4840',
+                nodes: [{ nodeId: 'ns=1;s=a', name: 'SRC' }],
+            },
+            derivedTags: [{
+                name: 'SRC',
+                expression: 'A',
+                variables: { A: 'SRC' },
+            }],
+        }, (r) => { result = r; });
+
+        t.assert(!result.ok, 'should not be ok');
+        t.assert(result.reason.includes("conflicts with source tag name"));
+        t.assert(!mockCGI._configs['col-a'], 'config should not be written');
+    },
+
+    'rejects derived null fallback on summarized value column': (t) => {
+        const H = makeHandler();
+        mockCGI._servers['server-a'] = { host: 'h', port: 5656, user: 'SYS', password: 'pw' };
+        mockMachbaseClient.tableMeta = { ID: 10, TYPE: 6, NAME: 'TAG' };
+        mockMachbaseClient.columns = [
+            { NAME: 'NAME', TYPE: 5, ID: 0, FLAG: 0x8000000, LENGTH: 100 },
+            { NAME: 'TIME', TYPE: 6, ID: 1, FLAG: 0x1000000, LENGTH: 8 },
+            { NAME: 'VALUE', TYPE: 20, ID: 2, FLAG: 0x2000000, LENGTH: 8 },
+        ];
+
+        let result;
+        H.collectorPost('col-a', {
+            db: 'server-a',
+            dbTable: 'TAG',
+            opcua: {
+                interval: 1000,
+                endpoint: 'opc.tcp://h:4840',
+                nodes: [{ nodeId: 'ns=1;s=a', name: 'SRC' }],
+            },
+            derivedTags: [{
+                name: 'CALC',
+                expression: 'A',
+                variables: { A: 'SRC' },
+                onError: 'null',
+            }],
+        }, (r) => { result = r; });
+
+        t.assert(!result.ok, 'should not be ok');
+        t.assert(result.reason.includes("onError 'null' is not allowed for SUMMARIZED column 'VALUE'"));
         t.assert(!mockCGI._configs['col-a'], 'config should not be written');
         t.assert(!mockCGI._opcuaServers['col-a-opcua'], 'auto-created opcua server should be rolled back');
     },
@@ -552,6 +873,109 @@ runner.run('Handler: collectorPut', {
         t.assert(result.ok, 'should be ok');
         t.assertEqual(mockCGI._configs['col-a'].db, 'server-b');
         t.assertEqual(mockCGI._configs['col-a'].opcua.server, 'col-a-opcua');
+    },
+
+    'preserves backend and unknown fields omitted by the client': (t) => {
+        const H = makeHandler();
+        mockCGI._opcuaServers['opc-main'] = { endpoint: 'opc.tcp://h:4840' };
+        mockCGI._configs['col-a'] = {
+            timePolicy: 'requestTime',
+            badStatusPolicy: 'ignore',
+            derivedTags: [{
+                name: 'power',
+                expression: 'A * 2',
+                variables: { A: 'source' },
+            }],
+            futureOption: { enabled: true },
+            opcua: {
+                server: 'opc-main',
+                interval: 2000,
+                nodes: [{ nodeId: 'ns=1;s=a', name: 'source' }],
+                futureOption: 'keep',
+            },
+            log: { level: 'info', maxFiles: 5, futureOption: 'keep' },
+        };
+
+        let result;
+        H.collectorPut('col-a', {
+            opcua: {
+                server: 'opc-main',
+                interval: 3000,
+                nodes: [{ nodeId: 'ns=1;s=a', name: 'source' }],
+            },
+            log: { level: 'debug' },
+        }, (r) => { result = r; });
+
+        t.assert(result.ok, 'should be ok');
+        const stored = mockCGI._configs['col-a'];
+        t.assertEqual(stored.timePolicy, 'requestTime');
+        t.assertEqual(stored.badStatusPolicy, 'ignore');
+        t.assertEqual(stored.derivedTags[0].name, 'power');
+        t.assertEqual(stored.futureOption.enabled, true);
+        t.assertEqual(stored.opcua.futureOption, 'keep');
+        t.assertEqual(stored.log.futureOption, 'keep');
+        t.assertEqual(stored.log.maxFiles, 5);
+        t.assertEqual(stored.log.level, 'debug');
+    },
+
+    'replaces explicitly supplied arrays and allows derived tags to be cleared': (t) => {
+        const H = makeHandler();
+        mockCGI._opcuaServers['opc-main'] = { endpoint: 'opc.tcp://h:4840' };
+        mockCGI._configs['col-a'] = {
+            opcua: {
+                server: 'opc-main',
+                nodes: [{ nodeId: 'ns=1;s=old', name: 'old' }],
+            },
+            derivedTags: [{ name: 'calc', expression: 'A', variables: { A: 'old' } }],
+        };
+
+        let result;
+        H.collectorPut('col-a', {
+            opcua: { nodes: [{ nodeId: 'ns=1;s=new', name: 'new' }] },
+            derivedTags: [],
+        }, (r) => { result = r; });
+
+        t.assert(result.ok, 'should be ok');
+        t.assertEqual(mockCGI._configs['col-a'].opcua.nodes.length, 1);
+        t.assertEqual(mockCGI._configs['col-a'].opcua.nodes[0].name, 'new');
+        t.assertEqual(mockCGI._configs['col-a'].derivedTags.length, 0);
+    },
+
+    'switches from a named opcua server to a legacy endpoint': (t) => {
+        const H = makeHandler();
+        mockCGI._opcuaServers['opc-main'] = { endpoint: 'opc.tcp://old:4840' };
+        mockCGI._configs['col-a'] = { opcua: { server: 'opc-main' } };
+
+        let result;
+        H.collectorPut('col-a', {
+            opcua: { endpoint: 'opc.tcp://new:4840' },
+        }, (r) => { result = r; });
+
+        t.assert(result.ok, 'should be ok');
+        t.assertEqual(mockCGI._configs['col-a'].opcua.server, 'col-a-opcua');
+        t.assertEqual(mockCGI._configs['col-a'].opcua.endpoint, undefined);
+        t.assertEqual(mockCGI._opcuaServers['col-a-opcua'].endpoint, 'opc.tcp://new:4840');
+    },
+
+    'normalizes storage mode changes from string-only to value column': (t) => {
+        const H = makeHandler();
+        mockCGI._opcuaServers['opc-main'] = { endpoint: 'opc.tcp://h:4840' };
+        mockCGI._configs['col-a'] = {
+            opcua: { server: 'opc-main' },
+            stringOnly: true,
+            stringValueColumn: 'STR_VALUE',
+        };
+
+        let result;
+        H.collectorPut('col-a', {
+            opcua: { server: 'opc-main' },
+            valueColumn: 'VALUE',
+        }, (r) => { result = r; });
+
+        t.assert(result.ok, 'should be ok');
+        t.assertEqual(mockCGI._configs['col-a'].stringOnly, false);
+        t.assertEqual(mockCGI._configs['col-a'].valueColumn, 'VALUE');
+        t.assertEqual(mockCGI._configs['col-a'].stringValueColumn, undefined);
     },
 
     'stops and restarts service when running': (t) => {
@@ -2878,4 +3302,4 @@ runner.run('Handler: nodeDescendants', {
     },
 });
 
-runner.summary();
+if (!runner.summary()) process.exit(1);

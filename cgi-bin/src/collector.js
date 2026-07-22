@@ -6,6 +6,7 @@ const { MachbaseStream } = require("./db/stream.js");
 const Service = require("./cgi/service.js");
 const { CGI, DATA_DIR } = require("./cgi/cgi_util.js");
 const { Logger } = require("./lib/logger.js");
+const Expression = require("./expression/evaluator.js");
 
 function _configuredColumn(value) {
     return value === undefined || value === null || value === '' ? null : value;
@@ -50,6 +51,30 @@ const NUMERIC_DATA_TYPES = new Set([
     'Integer', 'UInteger', 'Number',
 ]);
 const STRING_DATA_TYPES = new Set(['String']);
+const TIME_POLICY_SOURCE = 'sourceTime';
+const TIME_POLICY_REQUEST = 'requestTime';
+const BAD_STATUS_POLICY_SKIP = 'skip';
+const BAD_STATUS_POLICY_IGNORE = 'ignore';
+
+function _hasOwn(obj, key) {
+    return Object.prototype.hasOwnProperty.call(obj || {}, key);
+}
+
+function _normalizeText(value) {
+    return value === undefined || value === null ? '' : String(value).trim();
+}
+
+function _isValidDate(value) {
+    return value instanceof Date && Number.isFinite(value.getTime());
+}
+
+function _finiteNumber(value) {
+    if (value === undefined || value === null || (typeof value === 'string' && value.trim() === '')) {
+        return null;
+    }
+    const num = Number(value);
+    return Number.isFinite(num) ? num : null;
+}
 
 function _utf8ByteLength(text) {
     let bytes = 0;
@@ -98,7 +123,9 @@ class Collector {
         const configuredValueColumn = _configuredColumn(config.valueColumn);
         const valueColumn = stringOnly ? null : (configuredValueColumn || "VALUE");
         const stringValueColumn = config.stringValueColumn || null;
-        this.nodes = config.opcua.nodes;
+        this.nodes = config.opcua.nodes.map(node => Object.assign({}, node, {
+            name: _normalizeText(node && node.name),
+        }));
         this.nodeIds = this.nodes.map(n => n.nodeId);
         this.interval = config.opcua.interval;
         this._opcuaConfig = _resolveOpcuaConfig(config);
@@ -132,8 +159,74 @@ class Collector {
         this._warnSummaryEvery = WARN_SUMMARY_EVERY;
         this._warnSummaryIntervalMs = WARN_SUMMARY_INTERVAL_MS;
         this._now = () => Date.now();
+        this._timePolicy = this._normalizeTimePolicy(config.timePolicy);
+        this._badStatusPolicy = this._normalizeBadStatusPolicy(config.badStatusPolicy);
+        this._derivedLastValidValues = {};
+        this._derivedTags = this._compileDerivedTags(config.derivedTags || []);
         this._schedulerActive = false;
         this._nextRunAt = null;
+    }
+
+    _normalizeTimePolicy(value) {
+        const policy = _normalizeText(value) || TIME_POLICY_SOURCE;
+        if (policy === TIME_POLICY_SOURCE || policy === TIME_POLICY_REQUEST) {
+            return policy;
+        }
+        this._logger.warn("invalid timePolicy, using sourceTime", { timePolicy: value });
+        return TIME_POLICY_SOURCE;
+    }
+
+    _normalizeBadStatusPolicy(value) {
+        const policy = _normalizeText(value) || BAD_STATUS_POLICY_SKIP;
+        if (policy === BAD_STATUS_POLICY_SKIP || policy === BAD_STATUS_POLICY_IGNORE) {
+            return policy;
+        }
+        this._logger.warn("invalid badStatusPolicy, using skip", { badStatusPolicy: value });
+        return BAD_STATUS_POLICY_SKIP;
+    }
+
+    _compileDerivedTags(tags) {
+        if (!Array.isArray(tags) || tags.length === 0) {
+            return [];
+        }
+        if (this._stringOnly) {
+            this._logger.warn("derivedTags ignored in stringOnly mode", { count: tags.length });
+            return [];
+        }
+
+        const compiled = [];
+        for (const tag of tags) {
+            const name = _normalizeText(tag && tag.name);
+            try {
+                const variables = tag && tag.variables && typeof tag.variables === 'object' && !Array.isArray(tag.variables)
+                    ? Object.keys(tag.variables).reduce((result, alias) => {
+                        result[alias] = _normalizeText(tag.variables[alias]);
+                        return result;
+                    }, {})
+                    : {};
+                const aliases = Object.keys(variables).sort();
+                const expression = _normalizeText(tag && tag.expression);
+                const compiledExpression = Expression.compile(expression, { variables: aliases });
+                compiled.push({
+                    name,
+                    expression,
+                    variables,
+                    aliases,
+                    usedVariables: compiledExpression.usedVariables,
+                    compiled: compiledExpression,
+                    timeSource: _normalizeText(tag && tag.timeSource) || 'latest',
+                    onChanged: tag && tag.onChanged === true,
+                    onError: _normalizeText(tag && tag.onError) || 'skip',
+                    errorValue: tag && tag.errorValue,
+                });
+            } catch (e) {
+                this._warnRepeated(`derived-compile-failed:${name}`, "derived tag compile failed", {
+                    name,
+                    error: e && e.message ? e.message : String(e),
+                });
+            }
+        }
+        return compiled;
     }
 
     _storageMode() {
@@ -151,8 +244,24 @@ class Collector {
         return result && result.statusCode !== undefined && result.statusCode !== 0 && result.statusCode !== 'StatusGood';
     }
 
-    _timestampOf(result) {
-        return result && result.sourceTimestamp ? new Date(result.sourceTimestamp) : new Date();
+    _shouldSkipBadStatus(result) {
+        return this._isBadStatus(result) && this._badStatusPolicy === BAD_STATUS_POLICY_SKIP;
+    }
+
+    _sourceTimestampOf(result) {
+        if (!result || result.sourceTimestamp === undefined || result.sourceTimestamp === null || result.sourceTimestamp === '') {
+            return null;
+        }
+        const ts = new Date(result.sourceTimestamp);
+        return _isValidDate(ts) ? ts : null;
+    }
+
+    _timestampOf(result, requestTs) {
+        const fallbackTs = _isValidDate(requestTs) ? requestTs : new Date();
+        if (this._timePolicy === TIME_POLICY_REQUEST) {
+            return fallbackTs;
+        }
+        return this._sourceTimestampOf(result) || fallbackTs;
     }
 
     _advanceLastTs(lastTs, ts) {
@@ -343,13 +452,17 @@ class Collector {
         this._clearWarnState(this._nodeWarnKey('unsupported-numeric-value', node));
     }
 
-    _buildStandardRow(node, result) {
-        const ts = this._timestampOf(result);
+    _buildStandardRow(node, result, requestTs) {
+        const ts = this._timestampOf(result, requestTs);
         const rawValue = result ? result.value : null;
         const dataTypeHint = this._nodeDataTypeHint(node);
         let numericValue = null;
         let stringValue = null;
         let storedValue;
+
+        if (this._shouldSkipBadStatus(result)) {
+            return { skipped: true, ts, rawValue, value: null, stringValue: null, reason: 'bad-status' };
+        }
 
         if (this._stringOnly) {
             stringValue = this._coerceStringValue(rawValue, node);
@@ -466,6 +579,178 @@ class Collector {
             return result >= 1 ? 1 : (result <= 0 ? 0 : result);
         }
         return result;
+    }
+
+    _buildSourceStates(results, requestTs) {
+        const states = {};
+        this.nodes.forEach((node, idx) => {
+            const result = results[idx] || {};
+            const rawValue = result.value;
+            const badStatus = this._isBadStatus(result);
+            const skipBadStatus = this._shouldSkipBadStatus(result);
+            let numericValue = null;
+            let numericAvailable = false;
+            let numericReason = '';
+
+            if (skipBadStatus) {
+                numericReason = 'bad-status';
+            } else if (this._canNormalizeNumericValue(rawValue)) {
+                numericValue = this._normalizeValue(rawValue, node);
+                if (Number.isFinite(numericValue)) {
+                    numericAvailable = true;
+                } else {
+                    numericReason = 'non-finite';
+                }
+            } else {
+                numericReason = 'non-numeric';
+            }
+
+            states[node.name] = {
+                node,
+                result,
+                rawValue,
+                badStatus,
+                badStatusPolicy: this._badStatusPolicy,
+                sourceTs: this._sourceTimestampOf(result),
+                ts: this._timestampOf(result, requestTs),
+                numericValue,
+                numericAvailable,
+                numericReason,
+            };
+        });
+        return states;
+    }
+
+    _derivedWarnKey(prefix, tag) {
+        return `${prefix}:${tag && tag.name ? tag.name : ''}`;
+    }
+
+    _derivedTimestamp(tag, sourceStates, requestTs) {
+        const fallbackTs = _isValidDate(requestTs) ? requestTs : new Date();
+        if (this._timePolicy === TIME_POLICY_REQUEST) {
+            return fallbackTs;
+        }
+
+        const timeSource = tag.timeSource || 'latest';
+        if (timeSource !== 'latest') {
+            const sourceName = tag.variables[timeSource];
+            const state = sourceName ? sourceStates[sourceName] : null;
+            return (state && state.sourceTs) || fallbackTs;
+        }
+
+        let latest = null;
+        for (const alias of tag.aliases) {
+            const sourceName = tag.variables[alias];
+            const state = sourceName ? sourceStates[sourceName] : null;
+            if (state && state.sourceTs) {
+                latest = this._advanceLastTs(latest, state.sourceTs);
+            }
+        }
+        return latest || fallbackTs;
+    }
+
+    _fallbackDerivedValue(tag, error) {
+        const policy = tag.onError || 'skip';
+        if (policy === 'null') {
+            return { skipped: false, value: null, policy };
+        }
+        if (policy === 'value') {
+            const value = _finiteNumber(tag.errorValue);
+            if (value === null) {
+                return { skipped: true, policy, reason: 'invalid-error-value' };
+            }
+            return { skipped: false, value, policy };
+        }
+        if (policy === 'previous') {
+            if (_hasOwn(this._derivedLastValidValues, tag.name)) {
+                return { skipped: false, value: this._derivedLastValidValues[tag.name], policy };
+            }
+            return { skipped: true, policy, reason: 'previous-unavailable' };
+        }
+        if (policy !== 'skip') {
+            this._warnRepeated(this._derivedWarnKey('derived-invalid-on-error', tag), "derived tag invalid onError policy", {
+                name: tag.name,
+                onError: policy,
+            });
+        }
+        return { skipped: true, policy: 'skip', reason: error && error.message ? error.message : 'calculation-failed' };
+    }
+
+    _evaluateDerivedTags(sourceStates, requestTs) {
+        const rows = [];
+        for (const tag of this._derivedTags) {
+            const values = {};
+            let inputError = null;
+            for (const alias of tag.usedVariables) {
+                const sourceName = tag.variables[alias];
+                const state = sourceName ? sourceStates[sourceName] : null;
+                if (!state || !state.numericAvailable) {
+                    inputError = new Error(`variable '${alias}' source '${sourceName || ''}' is ${state ? state.numericReason : 'missing'}`);
+                    break;
+                }
+                values[alias] = state.numericValue;
+            }
+
+            let value;
+            let calculated = false;
+            let error = inputError;
+            if (!error) {
+                try {
+                    value = tag.compiled.evaluate(values);
+                    calculated = true;
+                    this._derivedLastValidValues[tag.name] = value;
+                    const recovery = this._recoverWarnState(this._derivedWarnKey('derived-eval-failed', tag));
+                    if (recovery) {
+                        this._logger.info("derived tag calculation recovered", Object.assign({ name: tag.name }, recovery));
+                    }
+                } catch (e) {
+                    error = e;
+                }
+            }
+
+            if (!calculated) {
+                this._warnRepeated(this._derivedWarnKey('derived-eval-failed', tag), "derived tag calculation failed", {
+                    name: tag.name,
+                    expression: tag.expression,
+                    onError: tag.onError,
+                    error: error && error.message ? error.message : String(error),
+                });
+                const fallback = this._fallbackDerivedValue(tag, error);
+                if (fallback.skipped) {
+                    rows.push({
+                        skipped: true,
+                        name: tag.name,
+                        reason: fallback.reason || 'calculation-failed',
+                    });
+                    continue;
+                }
+                value = fallback.value;
+            }
+
+            const ts = this._derivedTimestamp(tag, sourceStates, requestTs);
+            if (tag.onChanged === true) {
+                if (this._hasPreviousValue(tag.name, value)) {
+                    this._logger.trace("skip unchanged", { name: tag.name, value });
+                    rows.push({ skipped: true, name: tag.name, ts, value, reason: 'unchanged' });
+                    continue;
+                }
+                this._rememberPreviousValue(tag.name, value);
+            }
+
+            this._logger.trace("derived", {
+                name: tag.name,
+                ts: ts.toISOString(),
+                value,
+            });
+            rows.push({
+                skipped: false,
+                name: tag.name,
+                ts,
+                value,
+                calculated,
+            });
+        }
+        return rows;
     }
 
     _isDbOpen() {
@@ -610,26 +895,14 @@ class Collector {
             return;
         }
 
-        const file = path.join(DATA_DIR, `${this.collectorName}.last-time.json`);
-        let ts;
-        try {
-            const data = JSON.parse(fs.readFileSync(file, 'utf8'));
-            ts = data.ts;
-            if (!ts || typeof ts !== 'number') {
-                return;
-            }
-        } catch (_) {
-            return;
-        }
-
         let client;
         try {
             client = new MachbaseClient(this._dbConf);
             client.connect();
             if (this._isJsonMode()) {
                 const rows = client.query(
-                    `SELECT ${this._primaryColumnName}, ${this._valueColumn} FROM ${this._table} WHERE ${this._primaryColumnName} = ? AND ${this._baseTimeColumnName} >= ? ORDER BY ${this._baseTimeColumnName} DESC`,
-                    [this.collectorName, new Date(ts)]
+                    `SELECT /*+ SCAN_BACKWARD(${this._table}) */ ${this._primaryColumnName}, ${this._valueColumn} FROM ${this._table} WHERE ${this._primaryColumnName} = ? LIMIT 1`,
+                    [this.collectorName]
                 );
                 const first = rows && rows[0] ? rows[0] : null;
                 const payload = first ? this._parseStoredJson(first[this._valueColumn]) : null;
@@ -641,44 +914,34 @@ class Collector {
                     }
                 }
             } else if (this._stringOnly) {
-                const names = onChangedNodes.map(n => n.name);
-                const placeholders = names.map(() => '?').join(', ');
-                const rows = client.query(
-                    `SELECT ${this._primaryColumnName}, ${this._stringValueColumn} FROM ${this._table} WHERE ${this._primaryColumnName} IN (${placeholders}) AND ${this._baseTimeColumnName} >= ? ORDER BY ${this._baseTimeColumnName} DESC`,
-                    [...names, new Date(ts)]
-                );
-                for (const row of rows) {
-                    const tagName = row[this._primaryColumnName];
-                    if (tagName in this._previousValues) {
-                        continue;
-                    }
-                    const val = row[this._stringValueColumn];
+                for (const node of onChangedNodes) {
+                    const rows = client.query(
+                        `SELECT /*+ SCAN_BACKWARD(${this._table}) */ ${this._primaryColumnName}, ${this._stringValueColumn} FROM ${this._table} WHERE ${this._primaryColumnName} = ? LIMIT 1`,
+                        [node.name]
+                    );
+                    const first = rows && rows[0] ? rows[0] : null;
+                    const val = first ? first[this._stringValueColumn] : null;
                     if (val !== undefined && val !== null) {
-                        this._rememberPreviousValue(tagName, val);
+                        this._rememberPreviousValue(node.name, val);
                     }
                 }
             } else {
-                const names = onChangedNodes.map(n => n.name);
-                const placeholders = names.map(() => '?').join(', ');
                 const columns = [this._primaryColumnName, this._valueColumn];
                 if (this._stringValueColumn) {
                     columns.push(this._stringValueColumn);
                 }
-                const rows = client.query(
-                    `SELECT ${columns.join(', ')} FROM ${this._table} WHERE ${this._primaryColumnName} IN (${placeholders}) AND ${this._baseTimeColumnName} >= ? ORDER BY ${this._baseTimeColumnName} DESC`,
-                    [...names, new Date(ts)]
-                );
-                for (const row of rows) {
-                    const tagName = row[this._primaryColumnName];
-                    if (tagName in this._previousValues) {
-                        continue;
-                    }
-                    let val = row[this._valueColumn];
-                    if (this._stringValueColumn && row[this._stringValueColumn] !== undefined && row[this._stringValueColumn] !== null) {
-                        val = row[this._stringValueColumn];
+                for (const node of onChangedNodes) {
+                    const rows = client.query(
+                        `SELECT /*+ SCAN_BACKWARD(${this._table}) */ ${columns.join(', ')} FROM ${this._table} WHERE ${this._primaryColumnName} = ? LIMIT 1`,
+                        [node.name]
+                    );
+                    const first = rows && rows[0] ? rows[0] : null;
+                    let val = first ? first[this._valueColumn] : null;
+                    if (first && this._stringValueColumn && first[this._stringValueColumn] !== undefined && first[this._stringValueColumn] !== null) {
+                        val = first[this._stringValueColumn];
                     }
                     if (val !== undefined && val !== null) {
-                        this._rememberPreviousValue(tagName, val);
+                        this._rememberPreviousValue(node.name, val);
                     }
                 }
             }
@@ -686,6 +949,77 @@ class Collector {
             this._logger.debug("loaded initial values from db", { count });
         } catch (e) {
             this._logger.warn("failed to load initial values from db", { error: e && e.message ? e.message : String(e) });
+        } finally {
+            if (client) {
+                try {
+                    client.close();
+                } catch (_) {}
+            }
+        }
+    }
+
+    _derivedStateTags() {
+        return this._derivedTags.filter(tag => tag.onError === 'previous' || tag.onChanged === true);
+    }
+
+    _rememberDerivedPreviousValue(name, value) {
+        const num = _finiteNumber(value);
+        if (num !== null) {
+            this._derivedLastValidValues[name] = num;
+        }
+    }
+
+    _restoreDerivedStoredValue(tag, value) {
+        if (tag.onChanged === true) {
+            this._rememberPreviousValue(tag.name, value);
+        }
+        if (tag.onError === 'previous') {
+            this._rememberDerivedPreviousValue(tag.name, value);
+        }
+    }
+
+    _loadInitialDerivedValuesFromDb() {
+        const stateTags = this._derivedStateTags();
+        if (stateTags.length === 0 || !this.collectorName || this._stringOnly) {
+            return;
+        }
+
+        let client;
+        try {
+            client = new MachbaseClient(this._dbConf);
+            client.connect();
+            if (this._isJsonMode()) {
+                const rows = client.query(
+                    `SELECT /*+ SCAN_BACKWARD(${this._table}) */ ${this._primaryColumnName}, ${this._valueColumn} FROM ${this._table} WHERE ${this._primaryColumnName} = ? LIMIT 1`,
+                    [this.collectorName]
+                );
+                const first = rows && rows[0] ? rows[0] : null;
+                const payload = first ? this._parseStoredJson(first[this._valueColumn]) : null;
+                if (payload && typeof payload === 'object') {
+                    for (const tag of stateTags) {
+                        if (_hasOwn(payload, tag.name)) {
+                            this._restoreDerivedStoredValue(tag, payload[tag.name]);
+                        }
+                    }
+                }
+            } else {
+                for (const tag of stateTags) {
+                    const rows = client.query(
+                        `SELECT /*+ SCAN_BACKWARD(${this._table}) */ ${this._primaryColumnName}, ${this._valueColumn} FROM ${this._table} WHERE ${this._primaryColumnName} = ? LIMIT 1`,
+                        [tag.name]
+                    );
+                    const first = rows && rows[0] ? rows[0] : null;
+                    if (first && _hasOwn(first, this._valueColumn)) {
+                        this._restoreDerivedStoredValue(tag, first[this._valueColumn]);
+                    }
+                }
+            }
+            this._logger.debug("loaded initial derived values from db", {
+                onChangedCount: stateTags.filter(tag => tag.onChanged === true && _hasOwn(this._previousValues, tag.name)).length,
+                previousCount: Object.keys(this._derivedLastValidValues).length,
+            });
+        } catch (e) {
+            this._logger.warn("failed to load initial derived values from db", { error: e && e.message ? e.message : String(e) });
         } finally {
             if (client) {
                 try {
@@ -761,7 +1095,9 @@ class Collector {
                 this._opcuaConnected = true;
             }
 
+            const requestTs = new Date();
             const results = this.opcua.read(this.nodeIds);
+            const sourceStates = this._buildSourceStates(results, requestTs);
             let lastTs = null;
             let appendErr = null;
             let collectedCount = 0;
@@ -772,17 +1108,34 @@ class Collector {
 
                 this.nodes.forEach((node, idx) => {
                     const result = results[idx] || {};
-                    const ts = this._timestampOf(result);
-                    lastTs = this._advanceLastTs(lastTs, ts);
+                    const state = sourceStates[node.name] || {};
+                    const ts = state.ts || this._timestampOf(result, requestTs);
+                    const badStatus = this._isBadStatus(result);
+                    const skipBadStatus = this._shouldSkipBadStatus(result);
 
-                    if (this._isBadStatus(result)) {
-                        this._warnRepeated(this._nodeWarnKey('opcua-bad-status', node), "opcua bad status", { nodeId: node.nodeId, name: node.name, statusCode: result.statusCode });
+                    if (badStatus) {
+                        this._warnRepeated(this._nodeWarnKey('opcua-bad-status', node), "opcua bad status", {
+                            nodeId: node.nodeId,
+                            name: node.name,
+                            statusCode: result.statusCode,
+                            badStatusPolicy: this._badStatusPolicy,
+                        });
                     } else {
                         this._clearWarnState(this._nodeWarnKey('opcua-bad-status', node));
                     }
+                    if (skipBadStatus) {
+                        this._logger.trace("skip bad status", {
+                            nodeId: node.nodeId,
+                            name: node.name,
+                            statusCode: result.statusCode,
+                            badStatusPolicy: this._badStatusPolicy,
+                        });
+                        return;
+                    }
+                    lastTs = this._advanceLastTs(lastTs, ts);
 
                     const rawValue = result.value;
-                    const jsonValue = this._isBadStatus(result) ? null : this._normalizeJsonValue(rawValue, node);
+                    const jsonValue = this._normalizeJsonValue(rawValue, node);
                     const fields = { nodeId: node.nodeId, name: node.name, ts: ts.toISOString(), jsonValue };
                     if (rawValue !== jsonValue) {
                         fields.rawValue = rawValue;
@@ -801,6 +1154,20 @@ class Collector {
                     shouldAppend = true;
                 });
 
+                const derivedRows = this._evaluateDerivedTags(sourceStates, requestTs);
+                for (const derived of derivedRows) {
+                    if (derived.skipped) {
+                        if (derived.reason === 'unchanged') {
+                            lastTs = this._advanceLastTs(lastTs, derived.ts);
+                            payload[derived.name] = derived.value;
+                        }
+                        continue;
+                    }
+                    lastTs = this._advanceLastTs(lastTs, derived.ts);
+                    payload[derived.name] = derived.value;
+                    shouldAppend = true;
+                }
+
                 if (!shouldAppend) {
                     this._logger.trace("all nodes skipped, nothing to append");
                     return;
@@ -809,7 +1176,7 @@ class Collector {
                 const payloadText = JSON.stringify(payload);
                 const row = {
                     [this._primaryColumnName]: this.collectorName,
-                    [this._baseTimeColumnName]: lastTs || new Date(),
+                    [this._baseTimeColumnName]: lastTs || requestTs,
                     [this._valueColumn]: payloadText,
                 };
                 this._logger.trace("append", {
@@ -825,17 +1192,36 @@ class Collector {
                 this.nodes.forEach((node, idx) => {
                     const result = results[idx] || {};
                     if (this._isBadStatus(result)) {
-                        this._warnRepeated(this._nodeWarnKey('opcua-bad-status', node), "opcua bad status", { nodeId: node.nodeId, name: node.name, statusCode: result.statusCode });
+                        this._warnRepeated(this._nodeWarnKey('opcua-bad-status', node), "opcua bad status", {
+                            nodeId: node.nodeId,
+                            name: node.name,
+                            statusCode: result.statusCode,
+                            badStatusPolicy: this._badStatusPolicy,
+                        });
                     } else {
                         this._clearWarnState(this._nodeWarnKey('opcua-bad-status', node));
                     }
-                    const built = this._buildStandardRow(node, result);
+                    const built = this._buildStandardRow(node, result, requestTs);
                     if (built.skipped) {
                         return;
                     }
                     lastTs = this._advanceLastTs(lastTs, built.ts);
                     rows.push(built.row);
                 });
+
+                const derivedRows = this._evaluateDerivedTags(sourceStates, requestTs);
+                for (const derived of derivedRows) {
+                    if (derived.skipped) {
+                        continue;
+                    }
+                    const row = {
+                        [this._primaryColumnName]: derived.name,
+                        [this._baseTimeColumnName]: derived.ts,
+                        [this._valueColumn]: derived.value,
+                    };
+                    rows.push(row);
+                    lastTs = this._advanceLastTs(lastTs, derived.ts);
+                }
 
                 if (rows.length === 0) {
                     this._logger.trace("all nodes skipped, nothing to append");
@@ -869,6 +1255,7 @@ class Collector {
             this._opcuaConnected = false;
             this._closeDb();
             this._previousValues = {};
+            this._derivedLastValidValues = {};
         }
     }
 
@@ -923,11 +1310,15 @@ class Collector {
             user: this._dbConf.user,
             interval: this.interval,
             nodes: this.nodes.length,
+            derivedTags: this._derivedTags.length,
+            timePolicy: this._timePolicy,
+            badStatusPolicy: this._badStatusPolicy,
             endpoint: this.opcua.endpoint,
         });
         this._openDb();
         if (this._isDbOpen()) {
             this._loadInitialValuesFromDb();
+            this._loadInitialDerivedValuesFromDb();
         }
         this._schedulerActive = true;
         this._nextRunAt = this._now() + this.interval;

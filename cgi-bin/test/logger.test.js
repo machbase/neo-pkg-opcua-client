@@ -127,7 +127,7 @@ runner.run("Logger", {
     },
 });
 
-runner.summary();
+if (!runner.summary()) process.exit(1);
 
 function _extractTimestamp(line, stage) {
     const prefix = "[INFO] ";

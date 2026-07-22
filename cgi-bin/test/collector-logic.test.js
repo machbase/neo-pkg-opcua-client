@@ -554,10 +554,12 @@ runner.run('Collector.collect — stringOnly', {
         const { c, dbQueries } = makeCollector(config, {
             queryRows: [{ NAME: 'sensor.time', TEXT_VALUE: 'same' }],
         });
-        fs.writeFileSync(path.join(os.tmpdir(), `${c.collectorName}.last-time.json`), JSON.stringify({ ts: 1000 }));
         c.start();
         t.assertEqual(dbQueries.length, 1, 'initial load should query db once');
-        t.assert(dbQueries[0].sql.indexOf('SELECT NAME, TEXT_VALUE') >= 0, 'query should select string column');
+        t.assert(dbQueries[0].sql.indexOf('NAME, TEXT_VALUE') >= 0, 'query should select string column');
+        t.assert(dbQueries[0].sql.indexOf('SCAN_BACKWARD') >= 0, 'query should scan latest row');
+        t.assert(dbQueries[0].sql.indexOf('WHERE NAME = ?') >= 0, 'query should filter one tag');
+        t.assert(dbQueries[0].sql.indexOf('LIMIT 1') >= 0, 'query should read one row');
         t.assertEqual(c._previousValues['sensor.time'], 'same');
         clearTimeout(c.timer);
     },
@@ -598,7 +600,78 @@ runner.run('Collector.collect — json mode', {
         clearTimeout(c.timer);
     },
 
-    'stores failed node values as null in JSON payload': (t) => {
+    'bad status skips source row by default in standard mode': (t) => {
+        const config = {
+            ...baseConfig,
+            opcua: {
+                ...baseConfig.opcua,
+                nodes: [
+                    { nodeId: 'ns=1;s=Status', name: 'status' },
+                    { nodeId: 'ns=1;s=Temp', name: 'temp' },
+                ],
+            },
+            derivedTags: [{
+                name: 'sum',
+                expression: 'A + B',
+                variables: { A: 'status', B: 'temp' },
+                onError: 'value',
+                errorValue: -1,
+            }],
+        };
+        const { c, dbStream } = makeCollector(config);
+        c.start();
+        c.opcua.readResult = [
+            { value: 10, statusCode: 123, sourceTimestamp: 1000 },
+            { value: 5, sourceTimestamp: 2000 },
+        ];
+        dbStream.appended = [];
+        c.collect();
+        const byName = {};
+        for (const row of dbStream.appended) {
+            byName[row.name] = row;
+        }
+        t.assert(!byName.status, 'bad status source should be skipped by default');
+        t.assertEqual(byName.temp.value, 5);
+        t.assertEqual(byName.sum.value, -1, 'derived tag should follow onError when a source has bad status');
+        clearTimeout(c.timer);
+    },
+
+    'badStatusPolicy ignore uses bad status value in standard mode and derived tags': (t) => {
+        const config = {
+            ...baseConfig,
+            badStatusPolicy: 'ignore',
+            opcua: {
+                ...baseConfig.opcua,
+                nodes: [
+                    { nodeId: 'ns=1;s=Status', name: 'status' },
+                    { nodeId: 'ns=1;s=Temp', name: 'temp' },
+                ],
+            },
+            derivedTags: [{
+                name: 'sum',
+                expression: 'A + B',
+                variables: { A: 'status', B: 'temp' },
+            }],
+        };
+        const { c, dbStream } = makeCollector(config);
+        c.start();
+        c.opcua.readResult = [
+            { value: 10, statusCode: 123, sourceTimestamp: 1000 },
+            { value: 5, sourceTimestamp: 2000 },
+        ];
+        dbStream.appended = [];
+        c.collect();
+        const byName = {};
+        for (const row of dbStream.appended) {
+            byName[row.name] = row;
+        }
+        t.assertEqual(byName.status.value, 10, 'bad status source value should be used');
+        t.assertEqual(byName.temp.value, 5);
+        t.assertEqual(byName.sum.value, 15, 'derived tag should use ignored bad status value');
+        clearTimeout(c.timer);
+    },
+
+    'skips bad status node values in JSON payload by default': (t) => {
         const config = {
             ...baseConfig,
             valueColumn: 'PAYLOAD',
@@ -622,7 +695,37 @@ runner.run('Collector.collect — json mode', {
         c.collect();
         t.assertEqual(dbStream.appended.length, 1, 'json mode should still append');
         const payload = JSON.parse(dbStream.appended[0].PAYLOAD);
-        t.assertNull(payload.status, 'bad status should become null');
+        t.assert(!Object.prototype.hasOwnProperty.call(payload, 'status'), 'bad status should be omitted by default');
+        t.assertEqual(payload.serverTime, '2026-04-22T10:00:00Z');
+        clearTimeout(c.timer);
+    },
+
+    'badStatusPolicy ignore uses bad status value in JSON payload': (t) => {
+        const config = {
+            ...baseConfig,
+            badStatusPolicy: 'ignore',
+            valueColumn: 'PAYLOAD',
+            opcua: {
+                ...baseConfig.opcua,
+                nodes: [
+                    { nodeId: 'ns=1;s=Status', name: 'status' },
+                    { nodeId: 'ns=1;s=ServerTime', name: 'serverTime' },
+                ],
+            },
+        };
+        const dbStream = new MockMachbaseStream();
+        dbStream.valueColumnFamily = 'JSON';
+        const { c } = makeCollector(config, { dbStream });
+        c.start();
+        c.opcua.readResult = [
+            { value: true, statusCode: 123, sourceTimestamp: 1000 },
+            { value: '2026-04-22T10:00:00Z', sourceTimestamp: 2000 },
+        ];
+        dbStream.appended = [];
+        c.collect();
+        t.assertEqual(dbStream.appended.length, 1, 'json mode should append one row');
+        const payload = JSON.parse(dbStream.appended[0].PAYLOAD);
+        t.assertEqual(payload.status, true, 'bad status value should be used when policy is ignore');
         t.assertEqual(payload.serverTime, '2026-04-22T10:00:00Z');
         clearTimeout(c.timer);
     },
@@ -655,6 +758,460 @@ runner.run('Collector.collect — json mode', {
         t.assertEqual(dbStream.appended.length, 0, 'unchanged json payload should be skipped');
         t.assert(!dbStream.flushed, 'append should not be called');
         t.assertEqual(detailWrites.length, 0, 'lastCollectedAt should not be updated');
+        clearTimeout(c.timer);
+    },
+});
+
+runner.run('Collector.collect — derived tags', {
+    'default mode appends derived rows using normalized source values and latest timestamp': (t) => {
+        const config = {
+            ...baseConfig,
+            opcua: {
+                ...baseConfig.opcua,
+                nodes: [
+                    { nodeId: 'ns=1;s=Voltage', name: 'voltage', bias: 1, multiplier: 2 },
+                    { nodeId: 'ns=1;s=Current', name: 'current' },
+                ],
+            },
+            derivedTags: [{
+                name: 'power',
+                expression: 'A * B',
+                variables: { A: 'voltage', B: 'current' },
+            }],
+        };
+        const { c, dbStream } = makeCollector(config);
+        c.start();
+        c.opcua.readResult = [
+            { value: 10, sourceTimestamp: 1000 },
+            { value: 3, sourceTimestamp: 2000 },
+        ];
+        dbStream.appended = [];
+        c.collect();
+        t.assertEqual(dbStream.appended.length, 3, 'source rows plus derived row should be appended');
+        t.assertEqual(dbStream.appended[2].name, 'power');
+        t.assertEqual(dbStream.appended[2].value, 66, 'derived should use normalized voltage');
+        t.assertEqual(dbStream.appended[2].time.getTime(), 2000, 'latest source timestamp should be used');
+        clearTimeout(c.timer);
+    },
+
+    'runtime trims source and variable tag names from directly edited config': (t) => {
+        const config = {
+            ...baseConfig,
+            opcua: {
+                ...baseConfig.opcua,
+                nodes: [{ nodeId: 'ns=1;s=A', name: ' source ' }],
+            },
+            derivedTags: [{
+                name: ' calc ',
+                expression: ' A + 1 ',
+                variables: { A: ' source ' },
+            }],
+        };
+        const { c, dbStream } = makeCollector(config);
+        c.start();
+        c.opcua.readResult = [{ value: 2, sourceTimestamp: 1000 }];
+        dbStream.appended = [];
+        c.collect();
+        t.assertEqual(dbStream.appended[0].name, 'source');
+        t.assertEqual(dbStream.appended[1].name, 'calc');
+        t.assertEqual(dbStream.appended[1].value, 3);
+        clearTimeout(c.timer);
+    },
+
+    'timeSource alias can select a timestamp not used by latest': (t) => {
+        const config = {
+            ...baseConfig,
+            opcua: {
+                ...baseConfig.opcua,
+                nodes: [
+                    { nodeId: 'ns=1;s=Voltage', name: 'voltage' },
+                    { nodeId: 'ns=1;s=Current', name: 'current' },
+                ],
+            },
+            derivedTags: [{
+                name: 'power',
+                expression: 'A * B',
+                variables: { A: 'voltage', B: 'current' },
+                timeSource: 'A',
+            }],
+        };
+        const { c, dbStream } = makeCollector(config);
+        c.start();
+        c.opcua.readResult = [
+            { value: 10, sourceTimestamp: 1000 },
+            { value: 3, sourceTimestamp: 2000 },
+        ];
+        dbStream.appended = [];
+        c.collect();
+        t.assertEqual(dbStream.appended[2].time.getTime(), 1000, 'timeSource A should select voltage timestamp');
+        clearTimeout(c.timer);
+    },
+
+    'requestTime uses one timestamp for original and derived rows': (t) => {
+        const config = {
+            ...baseConfig,
+            timePolicy: 'requestTime',
+            opcua: {
+                ...baseConfig.opcua,
+                nodes: [
+                    { nodeId: 'ns=1;s=A', name: 'a' },
+                    { nodeId: 'ns=1;s=B', name: 'b' },
+                ],
+            },
+            derivedTags: [{
+                name: 'sum',
+                expression: 'A + B',
+                variables: { A: 'a', B: 'b' },
+                timeSource: 'A',
+            }],
+        };
+        const { c, dbStream } = makeCollector(config);
+        c.start();
+        c.opcua.readResult = [
+            { value: 1, sourceTimestamp: 1000 },
+            { value: 2, sourceTimestamp: 2000 },
+        ];
+        dbStream.appended = [];
+        c.collect();
+        t.assertEqual(dbStream.appended.length, 3, 'source rows plus derived row should be appended');
+        const ts = dbStream.appended[0].time.getTime();
+        t.assertEqual(dbStream.appended[1].time.getTime(), ts);
+        t.assertEqual(dbStream.appended[2].time.getTime(), ts);
+        t.assert(ts !== 1000 && ts !== 2000, 'requestTime should ignore source timestamps');
+        clearTimeout(c.timer);
+    },
+
+    'json mode adds derived values into the same payload': (t) => {
+        const config = {
+            ...baseConfig,
+            valueColumn: 'PAYLOAD',
+            opcua: {
+                ...baseConfig.opcua,
+                nodes: [
+                    { nodeId: 'ns=1;s=A', name: 'a' },
+                    { nodeId: 'ns=1;s=B', name: 'b' },
+                ],
+            },
+            derivedTags: [{
+                name: 'sum',
+                expression: 'A + B',
+                variables: { A: 'a', B: 'b' },
+            }],
+        };
+        const dbStream = new MockMachbaseStream();
+        dbStream.valueColumnFamily = 'JSON';
+        const { c } = makeCollector(config, { dbStream });
+        c.start();
+        c.opcua.readResult = [
+            { value: 1, sourceTimestamp: 1000 },
+            { value: 2, sourceTimestamp: 2000 },
+        ];
+        dbStream.appended = [];
+        c.collect();
+        t.assertEqual(dbStream.appended.length, 1, 'json mode should append one row');
+        const payload = JSON.parse(dbStream.appended[0].PAYLOAD);
+        t.assertEqual(payload.a, 1);
+        t.assertEqual(payload.b, 2);
+        t.assertEqual(payload.sum, 3);
+        clearTimeout(c.timer);
+    },
+
+    'onError value stores configured fallback when calculation fails': (t) => {
+        const config = {
+            ...baseConfig,
+            opcua: {
+                ...baseConfig.opcua,
+                nodes: [
+                    { nodeId: 'ns=1;s=A', name: 'a' },
+                    { nodeId: 'ns=1;s=B', name: 'b' },
+                ],
+            },
+            derivedTags: [{
+                name: 'ratio',
+                expression: 'A / B',
+                variables: { A: 'a', B: 'b' },
+                onError: 'value',
+                errorValue: -1,
+            }],
+        };
+        const { c, dbStream } = makeCollector(config);
+        c.start();
+        c.opcua.readResult = [
+            { value: 10, sourceTimestamp: 1000 },
+            { value: 0, sourceTimestamp: 2000 },
+        ];
+        dbStream.appended = [];
+        c.collect();
+        t.assertEqual(dbStream.appended[2].name, 'ratio');
+        t.assertEqual(dbStream.appended[2].value, -1);
+        clearTimeout(c.timer);
+    },
+
+    'null source value applies derived onError policies': (t) => {
+        const config = {
+            ...baseConfig,
+            opcua: {
+                ...baseConfig.opcua,
+                nodes: [
+                    { nodeId: 'ns=1;s=A', name: 'a' },
+                    { nodeId: 'ns=1;s=B', name: 'b' },
+                ],
+            },
+            derivedTags: [
+                {
+                    name: 'null_value',
+                    expression: 'A + B',
+                    variables: { A: 'a', B: 'b' },
+                    onError: 'value',
+                    errorValue: 42,
+                },
+                {
+                    name: 'null_null',
+                    expression: 'A + B',
+                    variables: { A: 'a', B: 'b' },
+                    onError: 'null',
+                },
+                {
+                    name: 'null_skip',
+                    expression: 'A + B',
+                    variables: { A: 'a', B: 'b' },
+                    onError: 'skip',
+                },
+            ],
+        };
+        const { c, dbStream } = makeCollector(config);
+        c.start();
+        c.opcua.readResult = [
+            { value: 10, sourceTimestamp: 1000 },
+            { value: null, sourceTimestamp: 2000 },
+        ];
+        dbStream.appended = [];
+        c.collect();
+        const byName = {};
+        for (const row of dbStream.appended) {
+            byName[row.name] = row;
+        }
+        t.assert(byName.a, 'numeric source should append');
+        t.assert(!byName.b, 'null numeric source should be skipped');
+        t.assertEqual(byName.null_value.value, 42);
+        t.assertNull(byName.null_null.value);
+        t.assert(!byName.null_skip, 'skip policy should omit derived row');
+        clearTimeout(c.timer);
+    },
+
+    'onError previous stores last valid derived value when calculation fails': (t) => {
+        const config = {
+            ...baseConfig,
+            opcua: {
+                ...baseConfig.opcua,
+                nodes: [
+                    { nodeId: 'ns=1;s=A', name: 'a' },
+                    { nodeId: 'ns=1;s=B', name: 'b' },
+                ],
+            },
+            derivedTags: [{
+                name: 'ratio',
+                expression: 'A / B',
+                variables: { A: 'a', B: 'b' },
+                onError: 'previous',
+            }],
+        };
+        const { c, dbStream } = makeCollector(config);
+        c.start();
+        c._derivedLastValidValues.ratio = 5;
+        c.opcua.readResult = [
+            { value: 10, sourceTimestamp: 1000 },
+            { value: 0, sourceTimestamp: 2000 },
+        ];
+        dbStream.appended = [];
+        c.collect();
+        t.assertEqual(dbStream.appended[2].name, 'ratio');
+        t.assertEqual(dbStream.appended[2].value, 5);
+        clearTimeout(c.timer);
+    },
+
+    'previous initialization queries each derived tag without IN': (t) => {
+        const config = {
+            ...baseConfig,
+            opcua: {
+                ...baseConfig.opcua,
+                nodes: [{ nodeId: 'ns=1;s=A', name: 'a' }],
+            },
+            derivedTags: [{
+                name: 'calc',
+                expression: 'A',
+                variables: { A: 'a' },
+                onError: 'previous',
+            }],
+        };
+        const { c, dbQueries } = makeCollector(config, {
+            queryRows: [{ NAME: 'calc', VALUE: 123 }],
+        });
+        c.start();
+        t.assertEqual(dbQueries.length, 1, 'one query should be executed for one derived previous tag');
+        t.assert(dbQueries[0].sql.indexOf('WHERE NAME = ?') >= 0, 'query should use equality');
+        t.assert(dbQueries[0].sql.indexOf(' IN ') < 0, 'query should not use IN');
+        t.assertEqual(dbQueries[0].values[0], 'calc');
+        t.assertEqual(c._derivedLastValidValues.calc, 123);
+        clearTimeout(c.timer);
+    },
+
+    'onChanged initialization restores the latest derived value': (t) => {
+        const config = {
+            ...baseConfig,
+            opcua: {
+                ...baseConfig.opcua,
+                nodes: [{ nodeId: 'ns=1;s=A', name: 'a' }],
+            },
+            derivedTags: [{
+                name: 'calc',
+                expression: 'A',
+                variables: { A: 'a' },
+                onChanged: true,
+            }],
+        };
+        const { c, dbQueries } = makeCollector(config, {
+            queryRows: [{ NAME: 'calc', VALUE: 123 }],
+        });
+        c.start();
+        t.assertEqual(dbQueries.length, 1, 'one query should restore one derived tag');
+        t.assertEqual(c._previousValues.calc, 123);
+        clearTimeout(c.timer);
+    },
+
+    'one initial query restores both previous and onChanged state': (t) => {
+        const config = {
+            ...baseConfig,
+            opcua: {
+                ...baseConfig.opcua,
+                nodes: [{ nodeId: 'ns=1;s=A', name: 'a' }],
+            },
+            derivedTags: [{
+                name: 'calc',
+                expression: 'A',
+                variables: { A: 'a' },
+                onChanged: true,
+                onError: 'previous',
+            }],
+        };
+        const { c, dbQueries } = makeCollector(config, {
+            queryRows: [{ NAME: 'calc', VALUE: 123 }],
+        });
+        c.start();
+        t.assertEqual(dbQueries.length, 1, 'combined state should use one query');
+        t.assertEqual(c._previousValues.calc, 123);
+        t.assertEqual(c._derivedLastValidValues.calc, 123);
+        clearTimeout(c.timer);
+    },
+
+    'JSON mode restores derived onChanged state from the latest payload': (t) => {
+        const config = {
+            ...baseConfig,
+            valueColumn: 'PAYLOAD',
+            opcua: {
+                ...baseConfig.opcua,
+                nodes: [{ nodeId: 'ns=1;s=A', name: 'a' }],
+            },
+            derivedTags: [{
+                name: 'calc',
+                expression: 'A',
+                variables: { A: 'a' },
+                onChanged: true,
+            }],
+        };
+        const dbStream = new MockMachbaseStream();
+        dbStream.valueColumnFamily = 'JSON';
+        const { c } = makeCollector(config, {
+            dbStream,
+            queryRows: [{ NAME: 'collector-a', PAYLOAD: '{"calc":123}' }],
+        });
+        c.start();
+        t.assertEqual(c._previousValues.calc, 123);
+        clearTimeout(c.timer);
+    },
+
+    'NULL stored value does not initialize derived previous': (t) => {
+        const config = {
+            ...baseConfig,
+            valueColumn: 'PAYLOAD',
+            opcua: {
+                ...baseConfig.opcua,
+                nodes: [{ nodeId: 'ns=1;s=A', name: 'a' }],
+            },
+            derivedTags: [{
+                name: 'calc',
+                expression: 'A',
+                variables: { A: 'a' },
+                onError: 'previous',
+            }],
+        };
+        const dbStream = new MockMachbaseStream();
+        dbStream.valueColumnFamily = 'JSON';
+        const { c } = makeCollector(config, {
+            dbStream,
+            queryRows: [{ NAME: 'collector-a', PAYLOAD: '{"calc":null}' }],
+        });
+        c.start();
+        t.assert(!Object.prototype.hasOwnProperty.call(c._derivedLastValidValues, 'calc'));
+        clearTimeout(c.timer);
+    },
+
+    'derived onChanged skips unchanged derived value while original rows still append': (t) => {
+        const config = {
+            ...baseConfig,
+            opcua: {
+                ...baseConfig.opcua,
+                nodes: [
+                    { nodeId: 'ns=1;s=A', name: 'a' },
+                    { nodeId: 'ns=1;s=B', name: 'b' },
+                ],
+            },
+            derivedTags: [{
+                name: 'sum',
+                expression: 'A + B',
+                variables: { A: 'a', B: 'b' },
+                onChanged: true,
+            }],
+        };
+        const { c, dbStream } = makeCollector(config);
+        c.start();
+        c.opcua.readResult = [
+            { value: 1, sourceTimestamp: 1000 },
+            { value: 2, sourceTimestamp: 2000 },
+        ];
+        c.collect();
+        dbStream.appended = [];
+        c.collect();
+        t.assertEqual(dbStream.appended.length, 2, 'only original rows should append on second collect');
+        t.assert(!dbStream.appended.some(row => row.name === 'sum'), 'derived row should be skipped');
+        clearTimeout(c.timer);
+    },
+
+    'JSON rows retain unchanged derived values when a source causes append': (t) => {
+        const config = {
+            ...baseConfig,
+            valueColumn: 'PAYLOAD',
+            opcua: {
+                ...baseConfig.opcua,
+                nodes: [{ nodeId: 'ns=1;s=A', name: 'a' }],
+            },
+            derivedTags: [{
+                name: 'calc',
+                expression: 'A',
+                variables: { A: 'a' },
+                onChanged: true,
+            }],
+        };
+        const dbStream = new MockMachbaseStream();
+        dbStream.valueColumnFamily = 'JSON';
+        const { c } = makeCollector(config, { dbStream });
+        c.start();
+        c.opcua.readResult = [{ value: 1, sourceTimestamp: 1000 }];
+        c.collect();
+        dbStream.appended = [];
+        c.collect();
+        t.assertEqual(dbStream.appended.length, 1, 'source without onChanged should append a JSON row');
+        t.assertEqual(JSON.parse(dbStream.appended[0].PAYLOAD).calc, 1, 'unchanged derived key should remain in payload');
         clearTimeout(c.timer);
     },
 });
@@ -709,7 +1266,7 @@ runner.run('Collector.collect — tag key columns', {
         clearTimeout(c.timer);
     },
 
-    'onChanged initial load queries primary and basetime column names': (t) => {
+    'onChanged initial load queries latest row by primary column': (t) => {
         const dbStream = new MockMachbaseStream();
         dbStream.primaryColumnName = 'TAG_ID';
         dbStream.baseTimeColumnName = 'TS';
@@ -724,13 +1281,40 @@ runner.run('Collector.collect — tag key columns', {
             dbStream,
             queryRows: [{ TAG_ID: 'sensor.temp', VALUE: 11 }],
         });
-        fs.writeFileSync(path.join(os.tmpdir(), `${c.collectorName}.last-time.json`), JSON.stringify({ ts: 1000 }));
         c.start();
         t.assertEqual(dbQueries.length, 1, 'initial load should query db once');
-        t.assert(dbQueries[0].sql.indexOf('SELECT TAG_ID, VALUE') >= 0, 'query should select custom primary column');
-        t.assert(dbQueries[0].sql.indexOf('WHERE TAG_ID IN') >= 0, 'query should filter custom primary column');
-        t.assert(dbQueries[0].sql.indexOf('TS >=') >= 0, 'query should filter custom basetime column');
+        t.assert(dbQueries[0].sql.indexOf('TAG_ID, VALUE') >= 0, 'query should select custom primary column');
+        t.assert(dbQueries[0].sql.indexOf('WHERE TAG_ID = ?') >= 0, 'query should filter one tag');
+        t.assert(dbQueries[0].sql.indexOf('LIMIT 1') >= 0, 'query should read one row');
         t.assertEqual(c._previousValues['sensor.temp'], 11);
+        clearTimeout(c.timer);
+    },
+
+    'onChanged initial load queries each source tag without time boundary or IN': (t) => {
+        const config = {
+            ...baseConfig,
+            opcua: {
+                ...baseConfig.opcua,
+                nodes: [
+                    { nodeId: 'ns=1;s=A', name: 'source.a', onChanged: true },
+                    { nodeId: 'ns=1;s=B', name: 'source.b', onChanged: true },
+                ],
+            },
+        };
+        const { c, dbQueries } = makeCollector(config, {
+            queryRows: [{ NAME: 'ignored-by-keyed-query', VALUE: 11 }],
+        });
+        c.start();
+        t.assertEqual(dbQueries.length, 2, 'each source tag should use one query');
+        for (const query of dbQueries) {
+            t.assert(query.sql.indexOf('SCAN_BACKWARD') >= 0, 'query should scan latest row');
+            t.assert(query.sql.indexOf('WHERE NAME = ?') >= 0, 'query should filter one tag');
+            t.assert(query.sql.indexOf('LIMIT 1') >= 0, 'query should read one row');
+            t.assert(query.sql.indexOf(' IN ') < 0, 'query should not use IN');
+            t.assert(query.sql.indexOf(' >= ') < 0, 'query should not use a time boundary');
+        }
+        t.assertEqual(c._previousValues['source.a'], 11);
+        t.assertEqual(c._previousValues['source.b'], 11);
         clearTimeout(c.timer);
     },
 });
@@ -1248,4 +1832,4 @@ runner.run('Collector.start / close', {
     },
 });
 
-runner.summary();
+if (!runner.summary()) process.exit(1);

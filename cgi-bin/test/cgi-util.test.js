@@ -8,44 +8,78 @@ const { obfuscateSecret, revealSecret } = require('../src/cgi/secret.js');
 
 const runner = new TestRunner();
 
-function withQueryString(queryString, fn) {
-    const hadPrevious = Object.prototype.hasOwnProperty.call(process.env, 'QUERY_STRING');
-    const previous = process.env.QUERY_STRING;
-    process.env.QUERY_STRING = queryString;
-    try {
-        fn();
-    } finally {
-        if (hadPrevious) {
-            process.env.QUERY_STRING = previous;
-        } else {
-            delete process.env.QUERY_STRING;
-        }
-    }
-}
-
 runner.run('CGI util', {
+    'collector config overlays legacy values on fresh defaults': (t) => {
+        const name = 'unit_legacy_config_' + Date.now();
+        const configDir = path.resolve(__dirname, '..', 'conf.d');
+        const filePath = path.join(configDir, name + '.json');
+        try {
+            fs.mkdirSync(configDir, { recursive: true });
+            fs.writeFileSync(filePath, JSON.stringify({
+                opcua: { endpoint: 'opc.tcp://127.0.0.1:4840' },
+                db: 'localhost',
+                dbTable: 'TAG',
+            }), 'utf8');
+            const config = CGI.getConfig(name);
+            t.assertEqual(config.timePolicy, 'sourceTime');
+            t.assertEqual(config.badStatusPolicy, 'skip');
+            t.assertDeepEqual(config.derivedTags, []);
+            t.assertEqual(config.opcua.interval, 1000);
+            t.assertEqual(config.opcua.readRetryInterval, 100);
+            t.assertDeepEqual(config.opcua.nodes, []);
+            t.assertEqual(config.opcua.endpoint, 'opc.tcp://127.0.0.1:4840');
+            t.assertEqual(config.db, 'localhost');
+            t.assertEqual(config.log.level, 'info');
+            t.assertEqual(config.log.maxFiles, 10);
+        } finally {
+            CGI.removeConfig(name);
+        }
+    },
+
+    'collector config write persists backend defaults': (t) => {
+        const name = 'unit_write_defaults_' + Date.now();
+        const configDir = path.resolve(__dirname, '..', 'conf.d');
+        const filePath = path.join(configDir, name + '.json');
+        try {
+            CGI.writeConfig(name, {
+                opcua: { endpoint: 'opc.tcp://127.0.0.1:4840' },
+            });
+            const stored = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+            t.assertEqual(stored.timePolicy, 'sourceTime');
+            t.assertEqual(stored.badStatusPolicy, 'skip');
+            t.assertDeepEqual(stored.derivedTags, []);
+            t.assertEqual(stored.stringOnly, false);
+            t.assertEqual(stored.opcua.interval, 1000);
+            t.assertEqual(stored.opcua.readRetryInterval, 100);
+            t.assertDeepEqual(stored.opcua.nodes, []);
+            t.assertEqual(stored.log.level, 'info');
+            t.assertEqual(stored.log.maxFiles, 10);
+        } finally {
+            CGI.removeConfig(name);
+        }
+    },
+
     'parseQuery decodes plus as space and preserves encoded plus': (t) => {
-        withQueryString('name=Simulation+Examples_Functions_Ramp4&literal=A%2BB&space=A%20B&tag+name=value+1', () => {
-            const query = CGI.parseQuery();
-            t.assertEqual(query.name, 'Simulation Examples_Functions_Ramp4');
-            t.assertEqual(query.literal, 'A+B');
-            t.assertEqual(query.space, 'A B');
-            t.assertEqual(query['tag name'], 'value 1');
+        const query = CGI.parseQuery({
+            queryString: 'name=Simulation+Examples_Functions_Ramp4&literal=A%2BB&space=A%20B&tag+name=value+1',
         });
+        t.assertEqual(query.name, 'Simulation Examples_Functions_Ramp4');
+        t.assertEqual(query.literal, 'A+B');
+        t.assertEqual(query.space, 'A B');
+        t.assertEqual(query['tag name'], 'value 1');
     },
 
     'parseQuery uses the last value for repeated keys by default': (t) => {
-        withQueryString('names=area%2C1&names=sensor.b', () => {
-            const query = CGI.parseQuery();
-            t.assertEqual(query.names, 'sensor.b');
-        });
+        const query = CGI.parseQuery({ queryString: 'names=area%2C1&names=sensor.b' });
+        t.assertEqual(query.names, 'sensor.b');
     },
 
     'parseQuery preserves repeated array keys when requested': (t) => {
-        withQueryString('names=area%2C1&names=sensor.b', () => {
-            const query = CGI.parseQuery({ arrayKeys: ['names'] });
-            t.assertDeepEqual(query.names, ['area,1', 'sensor.b']);
+        const query = CGI.parseQuery({
+            queryString: 'names=area%2C1&names=sensor.b',
+            arrayKeys: ['names'],
         });
+        t.assertDeepEqual(query.names, ['area,1', 'sensor.b']);
     },
 
     'resolveLogFilePath returns absolute log path': (t) => {
@@ -159,4 +193,4 @@ runner.run('CGI util', {
     },
 });
 
-runner.summary();
+if (!runner.summary()) process.exit(1);
