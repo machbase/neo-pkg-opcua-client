@@ -202,4 +202,4 @@ runner.run('TableSchema', {
     },
 });
 
-runner.summary();
+if (!runner.summary()) process.exit(1);

@@ -73,8 +73,9 @@ Machbase TAG Table
 
 - 기본 모드: `valueColumn`이 숫자 컬럼이면 기존 TAG 수집 방식으로 노드별 row를 저장한다. boolean 값은 `1/0`으로 저장한다.
 - 문자열 보조 컬럼: `stringValueColumn`을 설정하면 숫자/boolean이 아닌 값은 문자열로 변환해 해당 `VARCHAR` 컬럼에 저장한다. TAG 테이블 제약 때문에 이 경우 `valueColumn`에는 `0` placeholder를 기록하고, 숫자/boolean 행의 보조 컬럼은 비워 둔다.
-- JSON 모드: `valueColumn`이 JSON 컬럼이면 collector당 1 row를 저장한다. TAG primary key 컬럼에는 collector 이름, JSON key는 `nodes[].name`을 사용한다. boolean은 `true/false`를 유지하고, 개별 노드 읽기 실패는 해당 key를 `null`로 저장한다.
+- JSON 모드: `valueColumn`이 JSON 컬럼이면 collector당 1 row를 저장한다. TAG primary key 컬럼에는 collector 이름, JSON key는 `nodes[].name`을 사용한다. boolean은 `true/false`를 유지한다. bad status source는 기본적으로 payload key를 만들지 않고, `badStatusPolicy: "ignore"`일 때만 statusCode를 무시하고 value를 저장한다.
 - String-only 모드: `stringOnly: true`이면 `valueColumn`을 사용하지 않고 모든 노드 값을 문자열로 변환해 `stringValueColumn`에 저장한다. `valueColumn`은 생략하거나 빈 문자열(`""`)로 보낼 수 있고, `stringValueColumn`은 필수 `VARCHAR` 컬럼이다. 테이블에 NULL 불가 `SUMMARIZED` 값 컬럼이 있으면 사용할 수 없다.
+- Derived tag: `derivedTags[]`가 있으면 같은 `opcua.read()` cycle의 source tag 값으로 수식을 계산해 추가 tag를 생성한다. 기본 모드에서는 추가 row, JSON 모드에서는 같은 payload의 추가 key로 저장한다. String-only 모드에서는 지원하지 않는다.
 - TAG key/time 컬럼: 저장 대상 primary key와 basetime 컬럼은 `M$SYS_COLUMNS.FLAG`의 `PRIMARY KEY` / `BASETIME` 플래그로 감지한다. 플래그가 없을 때만 기존 호환을 위해 `NAME` / `TIME` 컬럼명으로 fallback한다.
 
 ## 구조
@@ -86,6 +87,7 @@ neo-tools/
     ├── api/
     │   ├── collector.js        # POST/GET/PUT/DELETE  /cgi-bin/api/collector
     │   ├── collector/
+    │   │   ├── validate.js     # POST   /cgi-bin/api/collector/validate
     │   │   ├── list.js         # GET    /cgi-bin/api/collector/list
     │   │   ├── install.js      # POST   /cgi-bin/api/collector/install?name=xxx
     │   │   ├── last-time.js    # GET    /cgi-bin/api/collector/last-time?name=xxx
@@ -107,6 +109,8 @@ neo-tools/
     │   │   ├── content.js      # GET    /cgi-bin/api/log/content?name=xxx
     │   │   └── content/
     │   │       └── all.js      # GET    /cgi-bin/api/log/content/all?name=xxx
+    │   ├── expression/
+    │   │   └── validate.js     # POST   /cgi-bin/api/expression/validate
     │   └── opcua/
     │       ├── connect.js      # POST   /cgi-bin/api/opcua/connect
     │       ├── read.js         # GET    /cgi-bin/api/opcua/read?endpoint=xxx&nodes=id1,id2
@@ -121,6 +125,9 @@ neo-tools/
     │   │   ├── handler.js          # API 비즈니스 로직
     │   │   └── service.js          # service lifecycle wrapper
     │   ├── collector.js            # Collector 클래스
+    │   ├── expression/
+    │   │   ├── evaluator.js        # derived tag 수식 parser/evaluator
+    │   │   └── limits.js           # 수식 제한값
     │   ├── lib/
     │   │   └── logger.js           # Logger / LogRotator 클래스
     │   ├── db/
@@ -137,7 +144,8 @@ neo-tools/
     │   ├── opcua-client.test.js
     │   ├── machbase-client.test.js
     │   ├── machbase-stream.test.js
-    │   ├── collector.test.js
+    │   ├── expression-evaluator.test.js
+    │   ├── collector-logic.test.js
     │   └── handler.test.js
     └── docs/
 ```
@@ -158,14 +166,16 @@ machbase-neo jsh -v /app=/path/to/neo-tools /app/cgi-bin/neo-collector.js /app/c
 | 메서드 | 경로 | 설명 |
 |--------|------|------|
 | GET | `/cgi-bin/api/collector/list` | 수집기 목록 조회 (`installed`, `running` 상태 포함) |
+| POST | `/cgi-bin/api/collector/validate` | 수집기 설정 dry-run 검증 |
 | POST | `/cgi-bin/api/collector` | 수집기 등록 + service install (body: `{ name, config }`) |
 | GET | `/cgi-bin/api/collector?name=xxx` | 수집기 단건 조회 |
-| PUT | `/cgi-bin/api/collector?name=xxx` | 수집기 설정 수정. 실행 중이면 service stop -> start |
+| PUT | `/cgi-bin/api/collector?name=xxx` | 수집기 설정 부분 수정. 기존/기본 설정 병합 후 저장, 실행 중이면 service stop -> start |
 | DELETE | `/cgi-bin/api/collector?name=xxx` | 수집기 삭제 + service uninstall |
 | POST | `/cgi-bin/api/collector/install?name=xxx` | config-only 수집기의 service 설치 |
 | GET | `/cgi-bin/api/collector/last-time?name=xxx` | 마지막 성공 수집 시간 조회 (epoch ms) |
 | POST | `/cgi-bin/api/collector/start?name=xxx` | 등록된 service 시작 |
 | POST | `/cgi-bin/api/collector/stop?name=xxx` | 등록된 service 종료 |
+| POST | `/cgi-bin/api/expression/validate` | derived tag 수식 단독 검증 |
 | POST | `/cgi-bin/api/db/server` | DB 서버 접속 정보 등록 (body: `{ name, host, port, user, password }`) |
 | GET | `/cgi-bin/api/db/server?name=xxx` | DB 서버 단건 조회 |
 | PUT | `/cgi-bin/api/db/server?name=xxx` | DB 서버 접속 정보 수정 |
@@ -188,7 +198,13 @@ machbase-neo jsh -v /app=/path/to/neo-tools /app/cgi-bin/neo-collector.js /app/c
 ## 테스트
 
 ```bash
-machbase-neo jsh -v /app=<프로젝트 경로> /app/cgi-bin/test/index.js
+node cgi-bin/test/index.js
+```
+
+Expression evaluator는 실제 JSH에서도 별도 smoke test를 실행한다.
+
+```bash
+machbase-neo jsh -v /app=<프로젝트 경로> /app/cgi-bin/test/expression-evaluator.test.js
 ```
 
 ## 문서

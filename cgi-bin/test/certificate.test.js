@@ -89,3 +89,5 @@ runner.run('OPC UA self-signed certificate generation', {
         t.assertEqual(buildOpcuaApplicationUri('opc-main'), 'urn:machbase:neo-pkg-opcua-client:opc-main');
     },
 });
+
+if (!runner.summary()) process.exit(1);

@@ -10,6 +10,7 @@ const {
   protectOpcuaServerConfig,
   revealOpcuaServerConfig,
 } = require('./secret.js');
+const { mergeCollectorConfig } = require('../config/collector-config.js');
 
 const APP_DIR = process.argv[1].slice(0, process.argv[1].lastIndexOf('/cgi-bin/') + '/cgi-bin'.length);
 const CONF_DIR = path.join(APP_DIR, 'conf.d');
@@ -116,7 +117,7 @@ class CGI {
   static getConfig(name) {
     try {
       const raw = fs.readFileSync(path.join(CONF_DIR, `${name}.json`), 'utf8');
-      return JSON.parse(raw);
+      return mergeCollectorConfig(JSON.parse(raw));
     } catch (_) {
       return null;
     }
@@ -130,7 +131,7 @@ class CGI {
   static writeConfig(name, config) {
     const filePath = path.join(CONF_DIR, `${name}.json`);
     const tmpPath = `${filePath}.${Date.now()}.tmp`;
-    fs.writeFileSync(tmpPath, JSON.stringify(config, null, 2), 'utf8');
+    fs.writeFileSync(tmpPath, JSON.stringify(mergeCollectorConfig(config), null, 2), 'utf8');
     fs.renameSync(tmpPath, filePath);
   }
 
@@ -385,11 +386,13 @@ class CGI {
   /**
    * QUERY_STRING 환경변수를 파싱하여 키-값 객체로 반환한다.
    * 기본 동작은 기존 CGI API와 같게 반복 키의 마지막 값을 사용한다.
-   * @param {{ arrayKeys?: string[] }} [options]
+   * @param {{ arrayKeys?: string[], queryString?: string }} [options]
    * @returns {Record<string, string|string[]>}
    */
   static parseQuery(options = {}) {
-    const qs = getEnv('QUERY_STRING') || '';
+    const qs = options.queryString !== undefined
+      ? String(options.queryString || '')
+      : (getEnv('QUERY_STRING') || '');
     const result = {};
     const arrayKeys = new Set(Array.isArray(options.arrayKeys) ? options.arrayKeys : []);
     for (const part of qs.split('&')) {

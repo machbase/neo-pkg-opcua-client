@@ -180,4 +180,4 @@ delete require.cache[opcuaClientPath];
 delete require.cache['opcua'];
 Module._resolveFilename = _origResolve;
 
-runner.summary();
+if (!runner.summary()) process.exit(1);

@@ -8,6 +8,8 @@ const Service = require('./service.js');
 const { MachbaseClient } = require('../db/client.js');
 const { Column, TableSchema, ColumnType, FLAG_PRIMARY, FLAG_BASETIME, FLAG_SUMMARIZED, FLAG_METADATA } = require('../db/types.js');
 const OpcuaClient = require('../opcua/opcua-client.js');
+const Expression = require('../expression/evaluator.js');
+const { mergeCollectorConfig } = require('../config/collector-config.js');
 const { AttributeID, StatusCode } = require('opcua');
 
 // ── Shared helpers ──────────────────────────────────────────────────────────
@@ -261,6 +263,24 @@ const AUTO_TABLE_STRING_COLUMN = 'STR_VALUE';
 const AUTO_TABLE_NAME_MIN_LENGTH = 80;
 const AUTO_TABLE_STRING_LENGTH = 1024;
 const AUTO_TABLE_NAME_LENGTH_STEP = 5;
+const TIME_POLICY_SOURCE = 'sourceTime';
+const TIME_POLICY_REQUEST = 'requestTime';
+const TIME_POLICIES = {
+  [TIME_POLICY_SOURCE]: true,
+  [TIME_POLICY_REQUEST]: true,
+};
+const BAD_STATUS_POLICY_SKIP = 'skip';
+const BAD_STATUS_POLICY_IGNORE = 'ignore';
+const BAD_STATUS_POLICIES = {
+  [BAD_STATUS_POLICY_SKIP]: true,
+  [BAD_STATUS_POLICY_IGNORE]: true,
+};
+const DERIVED_ON_ERROR_POLICIES = {
+  skip: true,
+  null: true,
+  value: true,
+  previous: true,
+};
 
 function normalizeIdentifier(value, label) {
   const normalized = String(value || '').trim().toUpperCase();
@@ -293,12 +313,15 @@ function findUserRow(users, userName) {
 }
 
 function autoCreateTableNameLength(config) {
-  const nodes = config && config.opcua && Array.isArray(config.opcua.nodes)
-    ? config.opcua.nodes
-    : [];
   let maxLen = AUTO_TABLE_NAME_MIN_LENGTH;
-  for (const node of nodes) {
-    const name = node && node.name != null ? String(node.name) : '';
+  const names = [];
+  for (const node of collectorNodeList(config)) {
+    names.push(node && node.name != null ? String(node.name) : '');
+  }
+  for (const tag of collectorDerivedTagList(config)) {
+    names.push(tag && tag.name != null ? String(tag.name) : '');
+  }
+  for (const name of names) {
     if (name.length > maxLen) {
       maxLen = name.length;
     }
@@ -843,30 +866,387 @@ function applyAutoCreateConfig(config, tableName) {
   config.stringOnly = false;
 }
 
-function maxTagNameLengthForConfig(collectorName, config, columns) {
-  const valueColumn = String(config && config.valueColumn ? config.valueColumn : AUTO_TABLE_VALUE_COLUMN).toUpperCase();
-  const selectedValueColumn = (columns || []).find((col) => String(col.NAME || '').toUpperCase() === valueColumn);
-  const isJsonMode = selectedValueColumn && ColumnType.fromCode(selectedValueColumn.TYPE) === ColumnType.JSON;
-  if (isJsonMode) {
-    return String(collectorName || '').length;
-  }
+function columnName(column) {
+  return String((column && (column.NAME || column.name)) || '').toUpperCase();
+}
 
-  const nodes = config && config.opcua && Array.isArray(config.opcua.nodes)
+function columnLength(column) {
+  return Number((column && (column.LENGTH !== undefined ? column.LENGTH : column.length)) || 0);
+}
+
+function columnFlag(column) {
+  return Number((column && (column.FLAG !== undefined ? column.FLAG : column.flag)) || 0);
+}
+
+function columnType(column) {
+  if (!column) return ColumnType.UNKNOWN;
+  if (column.columnType) return column.columnType;
+  return ColumnType.fromCode(column.TYPE);
+}
+
+function findColumnByName(columns, name) {
+  const requested = String(name || '').toUpperCase();
+  return (columns || []).find((col) => columnName(col) === requested) || null;
+}
+
+function selectedCollectorValueColumn(config, columns) {
+  const valueColumn = String(config && config.valueColumn ? config.valueColumn : AUTO_TABLE_VALUE_COLUMN).toUpperCase();
+  return findColumnByName(columns, valueColumn);
+}
+
+function isCollectorJsonMode(config, columns) {
+  const selectedValueColumn = selectedCollectorValueColumn(config, columns);
+  return selectedValueColumn && columnType(selectedValueColumn) === ColumnType.JSON;
+}
+
+function collectorNodeList(config) {
+  return config && config.opcua && Array.isArray(config.opcua.nodes)
     ? config.opcua.nodes
     : [];
+}
+
+function collectorDerivedTagList(config) {
+  return config && Array.isArray(config.derivedTags) ? config.derivedTags : [];
+}
+
+function maxNameLength(items, nameFn) {
   let maxLen = 0;
-  for (const node of nodes) {
-    const tagName = node && node.name != null ? String(node.name) : '';
-    if (tagName.length > maxLen) {
-      maxLen = tagName.length;
+  for (const item of items || []) {
+    const name = nameFn(item);
+    if (name.length > maxLen) {
+      maxLen = name.length;
     }
   }
   return maxLen;
 }
 
-function validateCollectorTagNameLength(name, config) {
+function maxTagNameLengthForConfig(collectorName, config, columns) {
+  if (isCollectorJsonMode(config, columns)) {
+    return String(collectorName || '').length;
+  }
+
+  const nodeMax = maxNameLength(collectorNodeList(config), node => (node && node.name != null ? String(node.name) : ''));
+  const derivedMax = maxNameLength(collectorDerivedTagList(config), tag => (tag && tag.name != null ? String(tag.name) : ''));
+  return Math.max(nodeMax, derivedMax);
+}
+
+function mergeCollectorUpdateConfig(currentConfig, requestConfig) {
+  if (!isPlainObject(requestConfig)) {
+    throw userFacingError('config is required');
+  }
+
+  const nextConfig = mergeCollectorConfig(currentConfig, requestConfig);
+  const requestedOpcua = isPlainObject(requestConfig.opcua) ? requestConfig.opcua : null;
+
+  if (requestedOpcua) {
+    const requestedServer = normalizeText(requestedOpcua.server);
+    const requestedEndpoint = normalizeText(requestedOpcua.endpoint);
+    if (requestedServer) {
+      nextConfig.opcua.server = requestedServer;
+      delete nextConfig.opcua.endpoint;
+    } else if (requestedEndpoint) {
+      nextConfig.opcua.endpoint = requestedEndpoint;
+      delete nextConfig.opcua.server;
+    }
+  }
+
+  if (hasOwn(requestConfig, 'valueColumn') && requestConfig.stringOnly !== true) {
+    nextConfig.stringOnly = false;
+    if (!hasOwn(requestConfig, 'stringValueColumn')) {
+      delete nextConfig.stringValueColumn;
+    }
+  }
+  if (hasOwn(requestConfig, 'stringValueColumn') && !normalizeText(requestConfig.stringValueColumn)) {
+    delete nextConfig.stringValueColumn;
+  }
+  if (requestConfig.stringOnly === true) {
+    delete nextConfig.valueColumn;
+  }
+
+  return nextConfig;
+}
+
+function normalizeTimePolicy(config) {
+  const raw = config && hasOwn(config, 'timePolicy') ? normalizeText(config.timePolicy) : '';
+  const policy = raw || TIME_POLICY_SOURCE;
+  if (!TIME_POLICIES[policy]) {
+    throw userFacingError(`timePolicy must be '${TIME_POLICY_SOURCE}' or '${TIME_POLICY_REQUEST}'`);
+  }
+  return policy;
+}
+
+function normalizeBadStatusPolicy(config) {
+  const raw = config && hasOwn(config, 'badStatusPolicy') ? normalizeText(config.badStatusPolicy) : '';
+  const policy = raw || BAD_STATUS_POLICY_SKIP;
+  if (!BAD_STATUS_POLICIES[policy]) {
+    throw userFacingError(`badStatusPolicy must be '${BAD_STATUS_POLICY_SKIP}' or '${BAD_STATUS_POLICY_IGNORE}'`);
+  }
+  return policy;
+}
+
+function isPlainObject(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function sortedKeys(obj) {
+  return Object.keys(obj || {}).sort();
+}
+
+function pushDerivedWarning(warnings, code, message, tagName, detail) {
+  const warning = { code, message };
+  if (tagName) warning.tag = tagName;
+  if (detail) warning.detail = detail;
+  warnings.push(warning);
+}
+
+function normalizeDerivedOnChanged(value) {
+  if (value === undefined || value === null) return false;
+  if (typeof value !== 'boolean') {
+    throw userFacingError('derivedTags[].onChanged must be boolean');
+  }
+  return value;
+}
+
+function normalizeDerivedOnError(tag) {
+  const policy = normalizeText(tag && tag.onError) || 'skip';
+  if (!DERIVED_ON_ERROR_POLICIES[policy]) {
+    throw userFacingError("derivedTags[].onError must be one of 'skip', 'null', 'value', or 'previous'");
+  }
+  if (policy === 'value') {
+    if (!hasOwn(tag, 'errorValue')) {
+      throw userFacingError("derivedTags[].errorValue is required when onError is 'value'");
+    }
+    if (tag.errorValue === null || tag.errorValue === undefined
+      || (typeof tag.errorValue === 'string' && tag.errorValue.trim() === '')) {
+      throw userFacingError('derivedTags[].errorValue must be a finite number');
+    }
+    const value = Number(tag.errorValue);
+    if (!Number.isFinite(value)) {
+      throw userFacingError('derivedTags[].errorValue must be a finite number');
+    }
+    return { policy, errorValue: value };
+  }
+  return { policy };
+}
+
+function validateDerivedAlias(alias) {
+  if (!/^[A-Z]$/.test(String(alias || ''))) {
+    throw userFacingError(`invalid derived variable alias '${alias}'`);
+  }
+}
+
+function sourceNodeNameMap(config, requireNames) {
+  const map = {};
+  const nodes = collectorNodeList(config);
+  for (let i = 0; i < nodes.length; i++) {
+    const name = normalizeText(nodes[i] && nodes[i].name);
+    if (!name) {
+      if (requireNames) {
+        throw userFacingError(`config.opcua.nodes[${i}].name is required when derivedTags are used`);
+      }
+      continue;
+    }
+    if (map[name]) {
+      throw userFacingError(`duplicate source tag name '${name}'`);
+    }
+    map[name] = true;
+  }
+  return map;
+}
+
+function objectFromList(values) {
+  const map = {};
+  for (const value of values || []) {
+    map[value] = true;
+  }
+  return map;
+}
+
+function validateDerivedConfig(config) {
+  const timePolicy = normalizeTimePolicy(config);
+  const badStatusPolicy = normalizeBadStatusPolicy(config);
+  const raw = config && hasOwn(config, 'derivedTags') ? config.derivedTags : null;
+  const warnings = [];
+  const summary = {
+    effectiveTimePolicy: timePolicy,
+    effectiveBadStatusPolicy: badStatusPolicy,
+    derivedTags: [],
+    warnings,
+  };
+
+  if (raw === undefined || raw === null) {
+    return summary;
+  }
+  if (!Array.isArray(raw)) {
+    throw userFacingError('derivedTags must be an array');
+  }
+  if (raw.length > Expression.EXPRESSION_LIMITS.maxDerivedTagsPerCollector) {
+    throw userFacingError(`derivedTags length exceeds ${Expression.EXPRESSION_LIMITS.maxDerivedTagsPerCollector}`);
+  }
+  if (config && config.stringOnly === true && raw.length > 0) {
+    throw userFacingError('derivedTags are not supported when stringOnly is true');
+  }
+
+  const sourceNames = sourceNodeNameMap(config, raw.length > 0);
+  const derivedNames = {};
+  for (let i = 0; i < raw.length; i++) {
+    const tag = raw[i];
+    if (!isPlainObject(tag)) {
+      throw userFacingError(`derivedTags[${i}] must be an object`);
+    }
+
+    const name = normalizeText(tag.name);
+    if (!name) {
+      throw userFacingError(`derivedTags[${i}].name is required`);
+    }
+    if (sourceNames[name]) {
+      throw userFacingError(`derived tag '${name}' conflicts with source tag name`);
+    }
+    if (derivedNames[name]) {
+      throw userFacingError(`duplicate derived tag name '${name}'`);
+    }
+    derivedNames[name] = true;
+
+    const expression = normalizeText(tag.expression);
+    if (!expression) {
+      throw userFacingError(`derived tag '${name}' expression is required`);
+    }
+    if (!isPlainObject(tag.variables)) {
+      throw userFacingError(`derived tag '${name}' variables must be an object`);
+    }
+
+    const variables = {};
+    const aliases = sortedKeys(tag.variables);
+    if (aliases.length === 0) {
+      throw userFacingError(`derived tag '${name}' variables are required`);
+    }
+    if (aliases.length > Expression.EXPRESSION_LIMITS.maxVariablesPerExpression) {
+      throw userFacingError(`derived tag '${name}' variables length exceeds ${Expression.EXPRESSION_LIMITS.maxVariablesPerExpression}`);
+    }
+    for (const alias of aliases) {
+      validateDerivedAlias(alias);
+      const targetName = normalizeText(tag.variables[alias]);
+      if (!targetName) {
+        throw userFacingError(`derived tag '${name}' variable '${alias}' target tag name is required`);
+      }
+      if (!sourceNames[targetName]) {
+        throw userFacingError(`derived tag '${name}' variable '${alias}' references unknown source tag '${targetName}'`);
+      }
+      variables[alias] = targetName;
+    }
+
+    const compiled = Expression.compile(expression, { variables: aliases });
+    const usedMap = objectFromList(compiled.usedVariables);
+    for (const alias of aliases) {
+      if (!usedMap[alias]) {
+        pushDerivedWarning(
+          warnings,
+          'unused-variable',
+          `derived tag '${name}' variable '${alias}' is not used in expression`,
+          name,
+          { alias, target: variables[alias] }
+        );
+      }
+    }
+
+    const onChanged = normalizeDerivedOnChanged(tag.onChanged);
+    const onError = normalizeDerivedOnError(tag);
+    let timeSource = normalizeText(tag.timeSource) || 'latest';
+    if (timePolicy === TIME_POLICY_REQUEST) {
+      if (normalizeText(tag.timeSource)) {
+        pushDerivedWarning(
+          warnings,
+          'ignored-time-source',
+          `derived tag '${name}' timeSource is ignored when timePolicy is '${TIME_POLICY_REQUEST}'`,
+          name
+        );
+      }
+    } else {
+      if (timeSource !== 'latest') {
+        validateDerivedAlias(timeSource);
+        if (!variables[timeSource]) {
+          throw userFacingError(`derived tag '${name}' timeSource must be 'latest' or one of its variables`);
+        }
+        if (!usedMap[timeSource]) {
+          pushDerivedWarning(
+            warnings,
+            'time-source-not-in-expression',
+            `derived tag '${name}' timeSource '${timeSource}' is not used in expression`,
+            name,
+            { alias: timeSource, target: variables[timeSource] }
+          );
+        }
+      } else {
+        for (const alias of aliases) {
+          if (!usedMap[alias]) {
+            pushDerivedWarning(
+              warnings,
+              'latest-uses-unused-variable-time',
+              `derived tag '${name}' timeSource 'latest' can use timestamp from unused variable '${alias}'`,
+              name,
+              { alias, target: variables[alias] }
+            );
+          }
+        }
+      }
+    }
+
+    const item = {
+      name,
+      expression,
+      variables,
+      usedVariables: compiled.usedVariables,
+      functions: compiled.functions,
+      constants: compiled.constants,
+      timeSource,
+      onChanged,
+      onError: onError.policy,
+    };
+    if (hasOwn(onError, 'errorValue')) {
+      item.errorValue = onError.errorValue;
+    }
+    summary.derivedTags.push(item);
+  }
+
+  return summary;
+}
+
+function applyNormalizedDerivedConfig(config, summary) {
+  config.timePolicy = summary.effectiveTimePolicy;
+  if (!hasOwn(config, 'derivedTags')) return;
+  config.derivedTags = summary.derivedTags.map((tag, index) => {
+    const normalized = Object.assign({}, config.derivedTags[index], {
+      name: tag.name,
+      expression: tag.expression,
+      variables: tag.variables,
+      timeSource: tag.timeSource,
+      onChanged: tag.onChanged,
+      onError: tag.onError,
+    });
+    if (hasOwn(tag, 'errorValue')) {
+      normalized.errorValue = tag.errorValue;
+    } else {
+      delete normalized.errorValue;
+    }
+    return normalized;
+  });
+}
+
+function hasDerivedNullPolicy(config) {
+  for (const tag of collectorDerivedTagList(config)) {
+    if ((normalizeText(tag && tag.onError) || 'skip') === 'null') {
+      return true;
+    }
+  }
+  return false;
+}
+
+function validateCollectorTableCompatibility(name, config) {
   if (!config || !config.db || !config.dbTable) {
-    return;
+    return {
+      storageMode: config && config.stringOnly === true ? 'string' : 'default',
+      nullableDerived: !hasDerivedNullPolicy(config),
+    };
   }
 
   const db = CGI.getServerConfig(config.db);
@@ -884,19 +1264,75 @@ function validateCollectorTagNameLength(name, config) {
       throw userFacingError(`table '${tableName}' not found`);
     }
     const columns = client.selectColumnsByTableId(tableMeta.ID);
-    const primaryColumn = (columns || []).find((col) => Number(col.FLAG || 0) & FLAG_PRIMARY)
-      || (columns || []).find((col) => String(col.NAME || '').toUpperCase() === 'NAME');
+    const primaryColumn = (columns || []).find((col) => columnFlag(col) & FLAG_PRIMARY)
+      || findColumnByName(columns, 'NAME');
     if (!primaryColumn) {
       throw userFacingError(`table '${tableName}' primary column not found`);
     }
-    const length = Number(primaryColumn.LENGTH || 0);
-    if (!length) {
-      return;
+
+    const length = columnLength(primaryColumn);
+    if (length) {
+      const maxLen = maxTagNameLengthForConfig(name, config, columns);
+      if (maxLen > length) {
+        throw userFacingError(`tag name length ${maxLen} exceeds ${columnName(primaryColumn)} VARCHAR(${length}) in table '${tableName}'`);
+      }
     }
-    const maxLen = maxTagNameLengthForConfig(name, config, columns);
-    if (maxLen > length) {
-      throw userFacingError(`tag name length ${maxLen} exceeds ${primaryColumn.NAME} VARCHAR(${length}) in table '${tableName}'`);
+
+    const selectedValueColumn = selectedCollectorValueColumn(config, columns);
+    const storageMode = config.stringOnly === true
+      ? 'string'
+      : (selectedValueColumn && columnType(selectedValueColumn) === ColumnType.JSON ? 'json' : 'default');
+    if (hasDerivedNullPolicy(config)) {
+      if (config.stringOnly === true) {
+        throw userFacingError('derivedTags are not supported when stringOnly is true');
+      }
+      if (!selectedValueColumn) {
+        const valueColumn = String(config.valueColumn || AUTO_TABLE_VALUE_COLUMN).toUpperCase();
+        throw userFacingError(`value column '${valueColumn}' not found for derivedTags onError null validation`);
+      }
+      if (columnFlag(selectedValueColumn) & FLAG_SUMMARIZED) {
+        throw userFacingError(`derivedTags onError 'null' is not allowed for SUMMARIZED column '${columnName(selectedValueColumn)}'`);
+      }
     }
+
+    return {
+      storageMode,
+      nullableDerived: !hasDerivedNullPolicy(config) || !(selectedValueColumn && (columnFlag(selectedValueColumn) & FLAG_SUMMARIZED)),
+    };
+  } finally {
+    client.close();
+  }
+}
+
+function validateAutoCreateDerivedCompatibility(config) {
+  if (hasDerivedNullPolicy(config)) {
+    throw userFacingError(`derivedTags onError 'null' is not allowed with autoCreateTable because VALUE is SUMMARIZED`);
+  }
+}
+
+function validateAutoCreateTableDryRun(config) {
+  const request = prepareAutoCreateTableRequest(config);
+  const db = CGI.getServerConfig(request.dbName);
+  if (!db) {
+    throw userFacingError(`server '${request.dbName}' not found`);
+  }
+
+  const client = new MachbaseClient(db);
+  try {
+    client.connect();
+    const userId = findUserId(client, db.user);
+    if (client.selectTableMeta(request.tableName, userId)) {
+      throw userFacingError(`table '${request.tableName}' already exists; select the existing table instead of auto-create`);
+    }
+    return {
+      storageMode: 'default',
+      autoCreateTable: {
+        table: request.tableName,
+        nameLength: request.nameLength,
+        valueColumn: AUTO_TABLE_VALUE_COLUMN,
+        stringValueColumn: AUTO_TABLE_STRING_COLUMN,
+      },
+    };
   } finally {
     client.close();
   }
@@ -949,6 +1385,9 @@ function dropAutoCreatedTable(db, tableName) {
  * @returns {string|null} error message or null
  */
 function validateConfig(config) {
+  if (!config || typeof config !== 'object') {
+    return 'config is required';
+  }
   if (!config.opcua) {
     return 'config.opcua is required';
   }
@@ -960,12 +1399,149 @@ function validateConfig(config) {
     return `config.opcua.interval must be >= ${MIN_INTERVAL_MS} (ms)`;
   }
   config.opcua.interval = interval;
+  if (Array.isArray(config.opcua.nodes)) {
+    for (const node of config.opcua.nodes) {
+      if (node && hasOwn(node, 'name')) {
+        node.name = normalizeText(node.name);
+      }
+    }
+  }
+  try {
+    config.badStatusPolicy = normalizeBadStatusPolicy(config);
+  } catch (err) {
+    return errorMessage(err);
+  }
   const hasServer = config.opcua.server !== undefined && config.opcua.server !== null && String(config.opcua.server).trim() !== '';
   const hasEndpoint = config.opcua.endpoint !== undefined && config.opcua.endpoint !== null && String(config.opcua.endpoint).trim() !== '';
   if (!hasServer && !hasEndpoint) {
     return 'config.opcua.server or config.opcua.endpoint is required';
   }
+  try {
+    const derived = validateDerivedConfig(config);
+    applyNormalizedDerivedConfig(config, derived);
+  } catch (err) {
+    return errorMessage(err);
+  }
   return null;
+}
+
+function validateCollectorOpcuaServerReference(config) {
+  const opcua = config && config.opcua;
+  if (!opcua) {
+    throw userFacingError('config.opcua is required');
+  }
+  const serverName = normalizeText(opcua.server);
+  if (serverName) {
+    getOpcuaServerConfigOrThrow(serverName);
+  } else if (!normalizeText(opcua.endpoint)) {
+    throw userFacingError('config.opcua.server or config.opcua.endpoint is required');
+  }
+}
+
+function validateCollectorConfigForDryRun(name, requestConfig, mode) {
+  const effectiveMode = normalizeText(mode) || 'create';
+  if (effectiveMode !== 'create' && effectiveMode !== 'update') {
+    throw userFacingError("mode must be 'create' or 'update'");
+  }
+  const currentConfig = CGI.getConfig(name);
+  if (effectiveMode === 'create' && currentConfig) {
+    throw userFacingError(`collector '${name}' already exists`);
+  }
+  if (effectiveMode === 'update' && !currentConfig) {
+    throw userFacingError(`collector '${name}' not found`);
+  }
+
+  const config = effectiveMode === 'update'
+    ? mergeCollectorUpdateConfig(currentConfig, requestConfig)
+    : mergeCollectorConfig(requestConfig);
+  const validErr = validateConfig(config);
+  if (validErr) {
+    throw userFacingError(validErr);
+  }
+
+  validateCollectorOpcuaServerReference(config);
+  const derived = validateDerivedConfig(config);
+  let storage = null;
+  if (config.autoCreateTable === true) {
+    validateAutoCreateDerivedCompatibility(config);
+    storage = validateAutoCreateTableDryRun(config);
+  } else {
+    storage = validateCollectorTableCompatibility(name, config);
+  }
+
+  return {
+    mode: effectiveMode,
+    effectiveTimePolicy: derived.effectiveTimePolicy,
+    effectiveBadStatusPolicy: derived.effectiveBadStatusPolicy,
+    derivedTags: derived.derivedTags,
+    warnings: derived.warnings,
+    storage,
+  };
+}
+
+function expressionValidate(body, reply) {
+  try {
+    const request = body && typeof body === 'object' ? body : {};
+    const variableMap = isPlainObject(request.variables) ? request.variables : {};
+    if (request.variables !== undefined && request.variables !== null && !isPlainObject(request.variables)) {
+      throw userFacingError('variables must be an object');
+    }
+    if (request.sampleValues !== undefined && request.sampleValues !== null && !isPlainObject(request.sampleValues)) {
+      throw userFacingError('sampleValues must be an object');
+    }
+
+    const aliases = objectFromList(sortedKeys(variableMap));
+    if (Object.keys(aliases).length === 0 && isPlainObject(request.sampleValues)) {
+      for (const alias of sortedKeys(request.sampleValues)) {
+        aliases[alias] = true;
+      }
+    }
+    for (const alias of sortedKeys(aliases)) {
+      validateDerivedAlias(alias);
+    }
+
+    const data = Expression.validate(request.expression, {
+      variables: sortedKeys(aliases),
+      sampleValues: request.sampleValues,
+    });
+    reply({
+      ok: true,
+      data: {
+        ...data,
+        supportedFunctions: sortedKeys(Expression.FUNCTIONS),
+        supportedConstants: ['<E>', '<PI>'],
+        limits: Expression.EXPRESSION_LIMITS,
+      },
+    });
+  } catch (err) {
+    reply({
+      ok: false,
+      reason: errorMessage(err),
+    });
+  }
+}
+
+function collectorValidate(body, reply) {
+  try {
+    const request = body && typeof body === 'object' ? body : {};
+    const name = normalizeText(request.name);
+    if (!name) {
+      throw userFacingError('name is required');
+    }
+    if (!request.config || typeof request.config !== 'object') {
+      throw userFacingError('config is required');
+    }
+    const data = validateCollectorConfigForDryRun(name, request.config, request.mode);
+    reply({
+      ok: true,
+      data,
+    });
+  } catch (err) {
+    reply({
+      ok: false,
+      reason: errorMessage(err),
+    });
+  }
 }
 
 /**
@@ -975,6 +1551,7 @@ function validateConfig(config) {
  * @param {function} reply
  */
 function collectorPost(name, config, reply) {
+  config = mergeCollectorConfig(config);
   const validErr = validateConfig(config);
   if (validErr) {
     reply({ ok: false, reason: validErr });
@@ -1006,6 +1583,7 @@ function collectorPost(name, config, reply) {
   let autoCreated = null;
   if (autoCreateTable) {
     try {
+      validateAutoCreateDerivedCompatibility(config);
       autoCreated = createAutoCollectorTable(config);
       applyAutoCreateConfig(config, autoCreated.tableName);
     } catch (err) {
@@ -1018,7 +1596,7 @@ function collectorPost(name, config, reply) {
     }
   } else {
     try {
-      validateCollectorTagNameLength(name, config);
+      validateCollectorTableCompatibility(name, config);
     } catch (err) {
       rollbackAutoCreatedOpcuaServer(autoCreatedOpcuaServer);
       reply({
@@ -1100,7 +1678,13 @@ function collectorPut(name, body, reply) {
     });
     return;
   }
-  const nextConfig = body;
+  let nextConfig;
+  try {
+    nextConfig = mergeCollectorUpdateConfig(currentConfig, body);
+  } catch (err) {
+    reply({ ok: false, reason: errorMessage(err) });
+    return;
+  }
   const validErr = validateConfig(nextConfig);
   if (validErr) {
     reply({ ok: false, reason: validErr });
@@ -1110,7 +1694,7 @@ function collectorPut(name, body, reply) {
   let autoCreatedOpcuaServer = null;
   try {
     autoCreatedOpcuaServer = prepareCollectorOpcuaServerConfig(name, nextConfig);
-    validateCollectorTagNameLength(name, nextConfig);
+    validateCollectorTableCompatibility(name, nextConfig);
   } catch (err) {
     rollbackAutoCreatedOpcuaServer(autoCreatedOpcuaServer);
     reply({
@@ -2801,6 +3385,8 @@ function nodeDescendants(body, reply) {
 }
 
 module.exports = {
+  expressionValidate,
+  collectorValidate,
   collectorPost,
   collectorGet,
   collectorPut,
