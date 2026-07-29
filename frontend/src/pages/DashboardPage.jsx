@@ -7,7 +7,9 @@ import ConfirmDialog from "../components/common/ConfirmDialog";
 import LogViewerModal from "../components/logs/LogViewerModal";
 import LiveLogs from "../components/logs/LiveLogs";
 import Icon from "../components/common/Icon";
-import { buildDataViewerPath } from "./dataViewerModel";
+import { ON_ERROR_LABELS } from "../components/collectors/derivedTag";
+import { POLICIES } from "../components/collectors/CollectionPolicyCard";
+import { buildDataViewerPath, getTagTreePath } from "./dataViewerModel";
 
 function timeAgo(ts) {
     if (!ts) return "-";
@@ -52,6 +54,50 @@ function recordedLevels(level) {
     return LEVEL_ORDER.slice(idx);
 }
 
+// Saved-config shape: variables is an { alias: nodeName } map, so read it in alias order.
+function variableEntries(dt) {
+    const map = dt?.variables;
+    if (!map || typeof map !== "object" || Array.isArray(map)) return [];
+    return Object.keys(map)
+        .filter((a) => /^[A-Z]$/.test(a))
+        .sort()
+        .map((alias) => ({ alias, node: map[alias] == null ? "" : String(map[alias]) }));
+}
+
+function formatVariables(dt) {
+    const entries = variableEntries(dt);
+    if (entries.length === 0) return null;
+    return entries.map((v) => `${v.alias} = ${v.node}`).join(", ");
+}
+
+// "latest" (newest sourceTime among the used nodes) or a specific variable's sourceTime,
+// shown as "A · Random8" so the alias and the node it resolves to are both readable.
+function formatBaseTime(dt) {
+    const timeSource = dt?.timeSource || "latest";
+    if (timeSource === "latest") return "latest";
+    const match = variableEntries(dt).find((v) => v.alias === timeSource);
+    return match && match.node ? `${match.alias} · ${match.node}` : timeSource;
+}
+
+// OPC UA tree path breadcrumb + depth badge, same shape as the edit form's NODE ID / PATH cell.
+// getTagTreePath reads nodeTree first and falls back to the legacy treePath field.
+function NodePath({ node }) {
+    const path = getTagTreePath(node);
+    if (!path) return null;
+    const last = path.length - 1;
+    return (
+        <span className="inline-flex flex-wrap items-center gap-4 min-w-0">
+            {path.map((seg, i) => (
+                <span key={i} className="inline-flex items-center gap-4">
+                    {i > 0 && <span className="text-on-surface-disabled">›</span>}
+                    <span className={i === last ? "font-semibold text-on-surface" : "text-on-surface-secondary"}>{seg}</span>
+                </span>
+            ))}
+            <span className="badge badge-primary badge-xs shrink-0">depth {path.length}</span>
+        </span>
+    );
+}
+
 function formatTransform(node) {
     const bias = node.bias != null ? Number(node.bias) : null;
     const mult = node.multiplier != null ? Number(node.multiplier) : null;
@@ -78,6 +124,8 @@ export default function DashboardPage({ collectors, detail, onDelete }) {
     const [nodeFilter, setNodeFilter] = useState("");
     const [sortKey, setSortKey] = useState("name");
     const [sortDir, setSortDir] = useState("asc");
+    const [derivedFilter, setDerivedFilter] = useState("");
+    const [derivedSortDir, setDerivedSortDir] = useState("asc");
     const intervalRef = useRef(null);
     const abnormalCheckedRef = useRef(false);
 
@@ -145,6 +193,8 @@ export default function DashboardPage({ collectors, detail, onDelete }) {
     const stringValueColumn = config?.stringValueColumn || "";
     const stringOnly = Boolean(config?.stringOnly);
     const nodes = opcua?.nodes || [];
+    const derivedTags = Array.isArray(config?.derivedTags) ? config.derivedTags : [];
+    const policyValues = { timePolicy: config?.timePolicy, badStatusPolicy: config?.badStatusPolicy };
     const logLevel = (config?.log?.level || "INFO").toUpperCase();
     const logLevels = recordedLevels(logLevel);
     const logMaxFiles = config?.log?.maxFiles;
@@ -162,6 +212,27 @@ export default function DashboardPage({ collectors, detail, onDelete }) {
         });
         return filtered;
     }, [nodes, nodeFilter, sortKey, sortDir]);
+
+    // Derived tags sort by name only — the config order carries no meaning, since a derived
+    // expression can only reference source nodes, never another derived tag.
+    const displayDerivedTags = useMemo(() => {
+        const q = derivedFilter.trim().toLowerCase();
+        const filtered = q
+            ? derivedTags.filter((dt) => {
+                  const haystack = [dt?.name, dt?.expression, formatVariables(dt)].filter(Boolean).join(" ").toLowerCase();
+                  return haystack.includes(q);
+              })
+            : derivedTags.slice();
+        const dir = derivedSortDir === "asc" ? 1 : -1;
+        filtered.sort((a, b) => {
+            const av = (a?.name || "").toString().toLowerCase();
+            const bv = (b?.name || "").toString().toLowerCase();
+            if (av < bv) return -1 * dir;
+            if (av > bv) return 1 * dir;
+            return 0;
+        });
+        return filtered;
+    }, [derivedTags, derivedFilter, derivedSortDir]);
 
     if (!collector) {
         return (
@@ -229,8 +300,8 @@ export default function DashboardPage({ collectors, detail, onDelete }) {
                 <div className="page-body-inner">
                     {config && (
                         <div className="space-y-16">
-                            {/* Row 1: Hero Summary — OPC UA / Nodes / Database */}
-                            <div className="grid grid-cols-1 md:grid-cols-3 gap-16">
+                            {/* Row 1: Hero Summary — OPC UA / counts / Database */}
+                            <div className="detail-grid">
                                 {/* OPC UA Server */}
                                 <div className="form-card flex flex-col">
                                     <div className="flex items-start justify-between mb-16">
@@ -275,17 +346,24 @@ export default function DashboardPage({ collectors, detail, onDelete }) {
                                     </div>
                                 </div>
 
-                                {/* Nodes Monitored */}
-                                <div className="form-card flex flex-col items-center justify-center text-center">
-                                    <div className="text-5xl font-bold text-primary-hover leading-none mb-12">{nodes.length}</div>
-                                    <div className="form-label">Nodes Monitored</div>
-                                    <div className="flex flex-col items-center gap-2 text-xs">
-                                        <div className="flex items-center gap-6">
-                                            <Icon name="timer" className="icon-sm text-on-surface-tertiary" />
-                                            <span className="text-on-surface-secondary">{timeAgo(lastCollectedAt)}</span>
+                                {/* Counts — nodes / derived tags, plus the one collect time we know */}
+                                <div className="form-card detail-count-card flex flex-col justify-center">
+                                    <div className="detail-count-row">
+                                        <div>
+                                            <div className="detail-count-num">{nodes.length}</div>
+                                            <div className="form-label !mb-0">Nodes</div>
                                         </div>
-                                        {lastCollectedAt && <span className="text-on-surface-tertiary opacity-50">{new Date(lastCollectedAt).toLocaleString()}</span>}
+                                        <div className="detail-count-rule" />
+                                        <div>
+                                            <div className="detail-count-num">{derivedTags.length}</div>
+                                            <div className="form-label !mb-0">Derived</div>
+                                        </div>
                                     </div>
+                                    <div className="detail-count-time">
+                                        <Icon name="timer" className="icon-sm text-on-surface-tertiary" />
+                                        <span>{timeAgo(lastCollectedAt)}</span>
+                                    </div>
+                                    {lastCollectedAt && <div className="detail-count-abs">{new Date(lastCollectedAt).toLocaleString()}</div>}
                                 </div>
 
                                 {/* Database */}
@@ -313,15 +391,12 @@ export default function DashboardPage({ collectors, detail, onDelete }) {
                                                 </div>
                                             </div>
                                         )}
+                                        {/* stringOnly configs have no numeric column, so the string column is the value column. */}
                                         {(stringOnly || stringValueColumn) && (
                                             <div className="min-w-0 flex-1">
                                                 <div className="form-label">
                                                     String Column
-                                                    {stringOnly && (
-                                                        <span className="badge badge-muted ml-4" style={{ fontSize: 10, padding: "2px 5px" }}>
-                                                            only
-                                                        </span>
-                                                    )}
+                                                    {stringOnly && <span className="detail-count-badge detail-count-badge-muted ml-4">only</span>}
                                                 </div>
                                                 <div className="text-base font-mono font-semibold truncate" title={stringValueColumn}>
                                                     {stringValueColumn || "-"}
@@ -332,24 +407,34 @@ export default function DashboardPage({ collectors, detail, onDelete }) {
                                 </div>
                             </div>
 
-                            {/* Row 2: Monitored Nodes — full width */}
+                            {/* Row 3: Monitored Nodes — full width */}
                             <div className="form-card">
-                                <div className="flex items-center justify-between mb-16">
-                                    <div className="form-card-header !mb-0">
-                                        <Icon name="account_tree" className="text-primary" />
+                                <div className="detail-section-head">
+                                    <div className="detail-section-title">
                                         Monitored Nodes
-                                        <span className="badge badge-primary ml-8">{nodes.length} Nodes</span>
+                                        <span className="detail-count-badge">{nodes.length} Nodes</span>
                                     </div>
                                     {nodes.length > 0 && (
-                                        <input type="text" value={nodeFilter} onChange={(e) => setNodeFilter(e.target.value)} className="w-[240px]" placeholder="Filter nodes..." />
+                                        <input
+                                            type="text"
+                                            value={nodeFilter}
+                                            onChange={(e) => setNodeFilter(e.target.value)}
+                                            className="detail-filter"
+                                            placeholder="Filter nodes..."
+                                        />
                                     )}
                                 </div>
                                 {nodes.length > 0 ? (
-                                    <div className="max-h-[420px] overflow-y-auto">
-                                        <table className="table-clean">
+                                    <div className="detail-table-scroll">
+                                        <table className="table-clean detail-table detail-table-nodes">
+                                            <colgroup>
+                                                <col className="col-tag" />
+                                                <col />
+                                                <col className="col-transform" />
+                                            </colgroup>
                                             <thead>
                                                 <tr>
-                                                    <th>
+                                                    <th className="col-head-tag">
                                                         <button type="button" className={`th-sort${sortKey === "name" ? " is-active" : ""}`} onClick={() => toggleSort("name")}>
                                                             Tag Name
                                                             <Icon name={sortIcon("name")} className="icon-sm" />
@@ -369,14 +454,20 @@ export default function DashboardPage({ collectors, detail, onDelete }) {
                                                     const transform = formatTransform(node);
                                                     return (
                                                         <tr key={`${node.nodeId}-${i}`}>
-                                                            <td className="font-semibold" title={node.name}>
+                                                            <td className="truncate" title={node.name}>
                                                                 {node.name}
                                                             </td>
-                                                            <td className="mono" title={node.nodeId}>
-                                                                {node.nodeId}
+                                                            <td title={node.nodeId}>
+                                                                <div className="flex flex-col gap-4 min-w-0">
+                                                                    <div className="flex items-center gap-6 min-w-0">
+                                                                        <span className="cell-secondary truncate">{node.nodeId}</span>
+                                                                        {node.dataType && <span className="badge badge-success badge-xs shrink-0">{node.dataType}</span>}
+                                                                    </div>
+                                                                    <NodePath node={node} />
+                                                                </div>
                                                             </td>
-                                                            <td className="mono" style={{ color: "var(--color-primary-hover)" }} title={transform || undefined}>
-                                                                {transform || "—"}
+                                                            <td className={`truncate ${transform ? "cell-expr" : "cell-muted"}`} title={transform || undefined}>
+                                                                {transform || "–"}
                                                             </td>
                                                         </tr>
                                                     );
@@ -390,7 +481,106 @@ export default function DashboardPage({ collectors, detail, onDelete }) {
                                 )}
                             </div>
 
-                            {/* Row 3: Logging Controls — summary bar */}
+                            {/* Row 4: Derived Tags — per-tag settings live here, not in the policy card */}
+                            {derivedTags.length > 0 && (
+                                <div className="form-card">
+                                    <div className="detail-section-head">
+                                        <div className="detail-section-title">
+                                            Derived Tags
+                                            <span className="detail-count-badge">{derivedTags.length} Tags</span>
+                                        </div>
+                                        <input
+                                            type="text"
+                                            value={derivedFilter}
+                                            onChange={(e) => setDerivedFilter(e.target.value)}
+                                            className="detail-filter"
+                                            placeholder="Filter tags..."
+                                        />
+                                    </div>
+                                    <div className="detail-table-scroll">
+                                        <table className="table-clean detail-table detail-table-derived">
+                                            <colgroup>
+                                                <col className="col-tag" />
+                                                <col className="col-expr" />
+                                                <col />
+                                                <col className="col-basetime" />
+                                                <col className="col-onerror" />
+                                            </colgroup>
+                                            <thead>
+                                                <tr>
+                                                    <th className="col-head-tag">
+                                                        <button
+                                                            type="button"
+                                                            className="th-sort is-active"
+                                                            onClick={() => setDerivedSortDir(derivedSortDir === "asc" ? "desc" : "asc")}
+                                                        >
+                                                            Tag Name
+                                                            <Icon name={derivedSortDir === "asc" ? "arrow_upward" : "arrow_downward"} className="icon-sm" />
+                                                        </button>
+                                                    </th>
+                                                    <th>Expression</th>
+                                                    <th>Variables</th>
+                                                    <th>Base Time</th>
+                                                    <th>On Error</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {displayDerivedTags.map((dt, i) => {
+                                                    const variables = formatVariables(dt);
+                                                    return (
+                                                        <tr key={`${dt?.name || "derived"}-${i}`}>
+                                                            <td className="truncate" title={dt?.name}>
+                                                                {dt?.name || "–"}
+                                                            </td>
+                                                            <td className="cell-expr truncate" title={dt?.expression}>
+                                                                {dt?.expression || "–"}
+                                                            </td>
+                                                            <td className={variables ? "cell-secondary truncate" : "cell-muted"} title={variables || undefined}>
+                                                                {variables || "–"}
+                                                            </td>
+                                                            <td className="truncate" title={formatBaseTime(dt)}>
+                                                                {formatBaseTime(dt)}
+                                                            </td>
+                                                            <td className="truncate" title={ON_ERROR_LABELS[dt?.onError] || "skip"}>
+                                                                {ON_ERROR_LABELS[dt?.onError] || "skip"}
+                                                            </td>
+                                                        </tr>
+                                                    );
+                                                })}
+                                            </tbody>
+                                        </table>
+                                        {derivedFilter && displayDerivedTags.length === 0 && <div className="empty-state">No tags matching "{derivedFilter}"</div>}
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Row 2: Collection Policy — collector-wide settings frame the tag
+                                lists below, same order as the editor form */}
+                            <div className="form-card">
+                                <div className="detail-section-head">
+                                    <div className="detail-section-title">Collection Policy</div>
+                                </div>
+                                <div className="detail-policy-grid">
+                                    {POLICIES.map((policy) => {
+                                        const value = policyValues[policy.key] || policy.fallback;
+                                        const selected = policy.options.find((opt) => opt.value === value);
+                                        return (
+                                            <div key={policy.key} className="detail-policy-box">
+                                                <Icon name={policy.icon} className="icon-sm detail-policy-icon" />
+                                                <div className="min-w-0">
+                                                    <div className="detail-policy-head">
+                                                        <span className="form-label !mb-0">{policy.shortLabel}</span>
+                                                        <span className="detail-policy-value">{value}</span>
+                                                    </div>
+                                                    <div className="detail-policy-help">{selected?.help || ""}</div>
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+
+                            {/* Row 5: Logging Controls — summary bar */}
                             <div className="form-card" style={{ paddingTop: 16, paddingBottom: 16 }}>
                                 <div className="flex items-center justify-between gap-24 flex-wrap">
                                     <div className="form-card-header !mb-0">

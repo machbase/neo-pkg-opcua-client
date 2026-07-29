@@ -177,6 +177,20 @@ export default function DbSection({
         }
     }, [selectedColumnKind, db.columnKind, update]);
 
+    // Whether the selected VALUE column is SUMMARIZED — derived tags with onError:"null"
+    // cannot target a SUMMARIZED column. Lifted so DerivedTagsEditor can disable that option.
+    const selectedColumnSummarized = useMemo(() => {
+        if (!db.column) return false;
+        const col = columns.find((c) => c.name === db.column);
+        return Boolean(col && col.summarized);
+    }, [db.column, columns]);
+
+    useEffect(() => {
+        if (Boolean(db.columnSummarized) !== selectedColumnSummarized) {
+            update("db.columnSummarized", selectedColumnSummarized);
+        }
+    }, [selectedColumnSummarized, db.columnSummarized, update]);
+
     useEffect(() => {
         if (!db.table || loadingColumns) return;
         if (!hasValueColCandidates && stringCols.length > 0 && !db.stringOnly) {

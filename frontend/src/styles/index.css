@@ -777,6 +777,12 @@ pre {
     color: var(--color-on-surface-secondary);
 }
 
+/* Inline marker badge sitting beside 12-13px text — smaller than the standalone .badge. */
+.badge-xs {
+    padding: var(--spacing-2) var(--spacing-6);
+    font-size: var(--font-size-xs);
+}
+
 .badge-success {
     border-color: rgba(113, 224, 113, 0.3);
     background-color: var(--color-success-muted);
@@ -1921,6 +1927,14 @@ details.card[open] > summary {
     font-family: var(--font-family-mono);
     font-size: var(--font-size-sm);
 }
+/* First step + its closing paren travel as one unit — unlike the row wrapper it must not
+   stretch, or it would push the remaining step to the far edge of the cell. */
+.node-calc-group {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-4);
+    flex: 0 0 auto;
+}
 .node-calc-seg {
     display: flex;
     align-items: center;
@@ -1984,27 +1998,104 @@ details.card[open] > summary {
     border-color: var(--color-border-focus);
 }
 
+/* Computed-tag expression: single contentEditable field with inline node chips */
+.ct-expr {
+    min-height: var(--size-control-height);
+    padding: var(--spacing-4) var(--spacing-8);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-base);
+    background-color: var(--color-surface-input);
+    font-family: var(--font-family-mono);
+    font-size: var(--font-size-sm);
+    color: var(--color-on-surface);
+    line-height: 2;
+    outline: none;
+    white-space: pre-wrap;
+    word-break: break-word;
+    cursor: text;
+}
+.ct-expr:focus {
+    border-color: var(--color-border-focus);
+}
+.ct-expr:empty::before {
+    content: attr(data-placeholder);
+    color: var(--color-on-surface-hint);
+}
+.ct-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--spacing-4);
+    vertical-align: middle;
+    height: 22px;
+    padding: 0 var(--spacing-4) 0 var(--spacing-6);
+    margin: 0 2px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-base);
+    background-color: var(--color-surface-elevated);
+    user-select: none;
+    font-family: var(--font-family-base);
+}
+.ct-chip-name {
+    font-weight: 500;
+    font-size: var(--font-size-sm);
+}
+.ct-seg {
+    font-size: var(--font-size-xs);
+    line-height: 1;
+    padding: 2px 4px;
+    border-radius: var(--radius-sm);
+    border: 1px solid transparent;
+    color: var(--color-on-surface-disabled);
+    background: transparent;
+    cursor: pointer;
+}
+.ct-seg--active {
+    color: var(--color-on-surface);
+    background-color: rgba(0, 108, 210, 0.2);
+    border-color: rgba(0, 108, 210, 0.4);
+}
+.ct-chip-x {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    border-radius: var(--radius-sm);
+    color: var(--color-on-surface-tertiary);
+    cursor: pointer;
+}
+.ct-chip-x:hover {
+    background-color: var(--color-surface-hover);
+    color: var(--color-on-surface);
+}
+
 .table th .th-sort {
     display: inline-flex;
     align-items: center;
     gap: var(--spacing-4);
     color: inherit;
     font: inherit;
+    text-transform: inherit;
+    letter-spacing: inherit;
     background: none;
     border: none;
     padding: 0;
     cursor: pointer;
-    text-transform: uppercase;
-    font-size: var(--font-size-xs);
-    letter-spacing: 0.08em;
-    font-weight: 600;
 }
 .table th .th-sort:hover {
     color: var(--color-on-surface);
 }
+/* One accent for a highlighted header — the same blue the expression/transform cells use,
+   so a sorted column never introduces a second shade of blue. */
+.table th .th-sort.is-active,
+.table-clean th .th-sort.is-active,
+.table th.col-head-tag,
+.detail-table th.col-head-tag {
+    color: var(--color-primary-hover);
+}
+
 .table th .th-sort.is-active,
 .table-clean th .th-sort.is-active {
-    color: #5aa9ff;
     font-weight: 700;
 }
 
@@ -2789,11 +2880,16 @@ label.switch input:checked + .switch-slider::before {
     z-index: 1;
 }
 
+/* Header typography lives on th (not on .th-sort) so a plain header and a sortable one
+   read identically — same rule as .table-clean. */
 .table th {
     padding: var(--spacing-8) var(--spacing-12);
     text-align: left;
+    font-size: var(--font-size-xs);
     font-weight: 600;
     color: var(--color-on-surface-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
     white-space: nowrap;
     background-color: var(--color-surface);
     border-bottom: 1px solid var(--color-border);
@@ -2803,6 +2899,11 @@ label.switch input:checked + .switch-slider::before {
     padding: var(--spacing-8) var(--spacing-12);
     color: var(--color-on-surface);
     border-bottom: 1px solid var(--color-border);
+}
+
+/* Row-action button cluster: fixed so the buttons never shift between rows. */
+.table th.col-actions {
+    width: 88px;
 }
 
 .table td.mono {
@@ -4756,4 +4857,548 @@ label.switch input:checked + .switch-slider::before {
     display: inline-flex;
     align-items: center;
     color: var(--color-on-surface-disabled);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   Collection policy — accordion rows, one per policy
+   ══════════════════════════════════════════════════════════════════════════════ */
+
+/* The card frame is the shared .form-card — only the choice row is policy-specific:
+   the label keeps its own line, and both choices split a single row below it. */
+.policy-options {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--spacing-8);
+}
+.policy-option {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--spacing-10);
+    padding: 9px var(--spacing-12);
+    background: none;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-base);
+    text-align: left;
+    color: inherit;
+    transition: border-color var(--transition-duration-fast),
+        background-color var(--transition-duration-fast);
+}
+.policy-option:hover {
+    border-color: var(--color-border-medium);
+}
+.policy-option.is-selected {
+    border-color: var(--color-primary);
+    background-color: color-mix(in srgb, var(--color-primary) 10%, transparent);
+}
+.policy-option-radio {
+    flex-shrink: 0;
+    width: 12px;
+    height: 12px;
+    margin-top: 2px;
+    border: 1px solid var(--color-border-medium);
+    border-radius: 50%;
+}
+.policy-option.is-selected .policy-option-radio {
+    border: 3.5px solid var(--color-primary);
+    background-color: var(--color-surface);
+}
+.policy-option-name {
+    font-family: var(--font-family-mono);
+    font-size: 12.5px;
+    font-weight: 600;
+    line-height: 1.3;
+    color: var(--color-on-surface-secondary);
+}
+.policy-option.is-selected .policy-option-name {
+    color: var(--color-on-surface);
+}
+.policy-option-help {
+    margin-top: 3px;
+    font-size: 11px;
+    line-height: var(--line-height-normal);
+    color: var(--color-on-surface-muted);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   Derived tag form — numbered steps, variable rows, expression editor
+   ══════════════════════════════════════════════════════════════════════════════ */
+
+.dt-form {
+    /* Same accent as a highlighted table header, kept as a local alias for readability. */
+    --dt-accent: var(--color-primary-hover);
+}
+
+.dt-modal .modal-header {
+    border-bottom: 1px solid var(--color-border-light);
+}
+.dt-modal .modal-body {
+    padding: var(--spacing-20);
+    color: var(--color-on-surface);
+}
+.dt-modal .modal-footer {
+    border-top: 1px solid var(--color-border-light);
+}
+.dt-modal-title {
+    font-size: var(--font-size-sm);
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--color-on-surface);
+}
+
+/* Step = 22px number column + content column */
+.dt-step {
+    display: grid;
+    grid-template-columns: 22px 1fr;
+    gap: var(--spacing-12);
+    align-items: start;
+}
+.dt-step-num {
+    font-family: var(--font-family-mono);
+    font-size: var(--font-size-sm);
+    font-weight: 600;
+    line-height: 20px;
+    color: var(--dt-accent);
+    text-align: center;
+}
+.dt-step-title {
+    font-size: var(--font-size-base);
+    font-weight: 500;
+    line-height: 20px;
+    color: var(--color-on-surface);
+}
+.dt-step-divider {
+    border: none;
+    border-top: 1px solid var(--color-border-light);
+    margin: var(--spacing-20) 0 var(--spacing-20) 34px;
+}
+.dt-helper {
+    font-size: var(--font-size-sm);
+    color: var(--color-on-surface-muted);
+}
+
+/* Variable rows — [badge 40px][node id][data type 84px][remove 26px] */
+.dt-var-table {
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-base);
+    overflow: hidden;
+}
+.dt-var-row {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-8);
+    padding: 7px var(--spacing-12);
+    border-bottom: 1px solid var(--color-border-light);
+}
+.dt-var-row:last-child {
+    border-bottom: none;
+}
+.dt-var-alias {
+    flex: 0 0 40px;
+}
+.dt-var-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    border-radius: var(--radius-base);
+    background-color: var(--color-primary);
+    color: var(--color-on-primary);
+    font-family: var(--font-family-mono);
+    font-size: var(--font-size-sm);
+    font-weight: 600;
+    line-height: 1;
+}
+/* Chrome-less select: the row itself is the control */
+/* A normal select: height, background, border, caret, hover and focus all come from the
+   global `input, select, textarea` rules. Only sizing and the mono face are local, because
+   the options are node identifiers. */
+.dt-var-node {
+    flex: 1 1 auto;
+    min-width: 0;
+    font-family: var(--font-family-mono);
+    text-overflow: ellipsis;
+}
+.dt-var-node.is-empty {
+    color: var(--color-on-surface-muted);
+}
+/* Bound to a node that no longer exists. The border is set with `!border-error` on the
+   element, matching how the other fields in this modal mark an invalid value. */
+.dt-var-node.is-missing {
+    color: var(--color-error);
+}
+.dt-var-type {
+    flex: 0 0 84px;
+    text-align: right;
+    font-family: var(--font-family-mono);
+    font-size: var(--font-size-sm);
+    color: var(--color-on-surface-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.dt-var-type.is-missing {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: var(--spacing-4);
+    color: var(--color-error);
+    font-weight: var(--font-weight-semibold);
+}
+.dt-var-remove {
+    flex: 0 0 26px;
+    width: 26px;
+    height: 26px;
+    color: var(--color-on-surface-muted);
+}
+.dt-var-remove:hover {
+    color: var(--color-error);
+}
+
+/* Expression editor — same surface as an input, syntax-coloured content */
+.expr-editor {
+    display: block;
+    width: 100%;
+    min-height: var(--size-control-height);
+    padding: 7px var(--spacing-12);
+    background-color: var(--color-surface-input);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-base);
+    color: var(--color-on-surface);
+    font-family: var(--font-family-mono);
+    font-size: var(--font-size-base);
+    line-height: 18px;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    outline: none;
+    cursor: text;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+.expr-editor:hover {
+    border-color: var(--color-on-surface-disabled);
+}
+.expr-editor:focus {
+    border-color: var(--color-border-focus);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-border-focus) 25%, transparent);
+}
+.expr-editor.is-error {
+    border-color: var(--color-error);
+}
+.expr-editor:empty::before {
+    content: attr(data-placeholder);
+    color: var(--color-on-surface-muted);
+}
+.expr-tok-var {
+    color: var(--dt-accent);
+}
+.expr-tok-num {
+    color: var(--color-success);
+}
+
+/* Variable / function / constant palette — one row per group, hairline between groups. */
+.expr-palette {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-8);
+    padding: var(--spacing-8);
+    background-color: var(--color-surface-alt);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-base);
+}
+.expr-palette-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--spacing-4);
+}
+.expr-palette-divider {
+    height: 1px;
+    background-color: var(--color-border);
+}
+/* Bound-node chip: alias in the same accent the editor paints variables with, node name muted. */
+.expr-chip-var {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--spacing-6);
+    color: var(--dt-accent);
+}
+.expr-chip-var-node {
+    color: var(--color-on-surface-muted);
+    font-size: var(--font-size-xs);
+    max-width: 140px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.expr-chip-var-missing {
+    color: var(--color-error);
+    font-size: var(--font-size-xs);
+}
+.expr-chip {
+    height: var(--size-control-height-sm);
+    padding: 0 var(--spacing-8);
+    background-color: var(--color-surface-input);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-base);
+    font-family: var(--font-family-mono);
+    font-size: var(--font-size-sm);
+    color: var(--color-on-surface-secondary);
+    line-height: 1;
+    transition: background-color 0.2s ease, color 0.2s ease;
+}
+.expr-chip:hover {
+    background-color: var(--color-surface-hover-light);
+    color: var(--color-on-surface);
+}
+
+/* Validation banner */
+.expr-banner {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-6);
+    padding: var(--spacing-8) var(--spacing-12);
+    border-radius: var(--radius-base);
+    font-size: var(--font-size-base);
+    line-height: var(--line-height-normal);
+}
+.expr-banner-ok {
+    background-color: color-mix(in srgb, var(--color-success) 9%, transparent);
+    color: var(--color-success);
+}
+.expr-banner-error {
+    background-color: var(--color-error-muted);
+    color: var(--color-error);
+}
+.expr-banner-muted {
+    background-color: var(--color-surface-alt);
+    color: var(--color-on-surface-tertiary);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   Collector Detail — read-only summary screen
+   Card shells come from .form-card; these are the inner content patterns.
+   ══════════════════════════════════════════════════════════════════════════════ */
+
+.detail-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: var(--spacing-16);
+}
+
+@media (min-width: 768px) {
+    .detail-grid {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+}
+
+/* Count card: NODES | DERIVED split by a vertical rule, collect time underneath */
+.detail-count-card {
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+}
+
+.detail-count-row {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--spacing-24);
+}
+
+.detail-count-num {
+    font-family: var(--font-family-mono);
+    /* Well above --font-size-xl (30px): these two numbers are the card's headline, and the
+       card has nothing else competing for the space. */
+    font-size: 56px;
+    font-weight: var(--font-weight-bold);
+    line-height: 1;
+    color: var(--color-primary-light);
+    margin-bottom: var(--spacing-8);
+}
+
+.detail-count-rule {
+    width: 1px;
+    height: 64px;
+    background-color: var(--color-border);
+}
+
+.detail-count-time {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--spacing-6);
+    margin-top: var(--spacing-12);
+    padding-top: var(--spacing-4);
+    font-size: var(--font-size-sm);
+    color: var(--color-on-surface-secondary);
+}
+
+.detail-count-abs {
+    font-family: var(--font-family-mono);
+    font-size: var(--font-size-xs);
+    color: var(--color-on-surface-muted);
+}
+
+/* Section head: title + count badge on the left, filter input on the right */
+.detail-section-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--spacing-16);
+    margin-bottom: var(--spacing-16);
+}
+
+.detail-section-title {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-8);
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-bold);
+    color: var(--color-on-surface-active);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    line-height: 1;
+}
+
+.detail-count-badge {
+    padding: var(--spacing-2) var(--spacing-6);
+    border-radius: var(--radius-sm);
+    background-color: var(--color-primary);
+    color: var(--color-white);
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-semibold);
+    line-height: 1.4;
+    letter-spacing: 0.04em;
+}
+
+/* Same chip, low emphasis — for qualifiers like the stringOnly "only" marker. */
+.detail-count-badge-muted {
+    background-color: var(--color-surface-elevated);
+    color: var(--color-on-surface-disabled);
+}
+
+.detail-filter {
+    width: 220px;
+    flex-shrink: 0;
+}
+
+/* Detail tables read as data: mono, and tighter than .table-clean's 16px rows — cells here
+   stack two lines (id + path), so the default padding makes the rows very tall. */
+.detail-table td {
+    padding: var(--spacing-8) var(--spacing-16);
+    font-family: var(--font-family-mono);
+}
+
+.detail-table .cell-secondary {
+    color: var(--color-on-surface-secondary);
+}
+
+.detail-table .cell-muted {
+    color: var(--color-on-surface-muted);
+}
+
+.detail-table .cell-expr {
+    color: var(--color-primary-hover);
+}
+
+.detail-table-scroll {
+    max-height: 420px;
+    overflow-y: auto;
+}
+
+/* Column widths — remaining space goes to the 1fr-ish column via table-layout. */
+.detail-table-nodes {
+    table-layout: fixed;
+}
+.detail-table-nodes .col-tag {
+    width: 190px;
+}
+/* Transform reads as one formula — "(value + 10) × 2" — so it must not wrap. */
+.detail-table-nodes .col-transform {
+    width: 200px;
+}
+
+.detail-table-derived {
+    table-layout: fixed;
+}
+.detail-table-derived .col-tag {
+    width: 170px;
+}
+.detail-table-derived .col-expr {
+    width: 180px;
+}
+/* Widths follow the longest value each column can hold: "A · Random8",
+   ON_ERROR_LABELS' "use fallback value", and on/off. */
+.detail-table-derived .col-basetime {
+    width: 130px;
+}
+.detail-table-derived .col-onerror {
+    width: 170px;
+}
+
+/* Collection policy — one bordered box per policy, each stating the selected value and
+   what it does. Read-only: no controls, unlike .policy-option in the editor. */
+.detail-policy-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: var(--spacing-16);
+}
+
+@media (min-width: 768px) {
+    .detail-policy-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+.detail-policy-box {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--spacing-10);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-base);
+    padding: var(--spacing-12) var(--spacing-16);
+}
+
+.detail-policy-icon {
+    color: var(--color-on-surface-tertiary);
+    flex-shrink: 0;
+}
+
+.detail-policy-head {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-8);
+    margin-bottom: var(--spacing-4);
+}
+
+.detail-policy-value {
+    font-family: var(--font-family-mono);
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-semibold);
+    color: var(--color-primary-hover);
+}
+
+.detail-policy-help {
+    font-size: var(--font-size-sm);
+    color: var(--color-on-surface-tertiary);
+    line-height: var(--line-height-normal);
+}
+
+/* Bulk rename modal — strategy config panel. The 2px accent left border is the
+   selection convention: this panel belongs to the chip highlighted above it. */
+.rename-panel {
+    background-color: var(--color-surface-panel);
+    border: 1px solid var(--color-border);
+    border-left: 2px solid var(--color-border-active);
+    border-radius: var(--radius-base);
+    padding: var(--spacing-12);
+    margin-bottom: var(--spacing-8);
+}
+
+/* Footer status sits opposite the buttons in .modal-footer's flex row. */
+.rename-status {
+    margin-right: auto;
+    align-self: center;
+    font-size: var(--font-size-sm);
+    color: var(--color-on-surface-tertiary);
 }
