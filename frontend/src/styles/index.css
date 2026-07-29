@@ -451,6 +451,11 @@ pre {
 ::-webkit-scrollbar-thumb:hover {
     background: var(--color-scrollbar-thumb-hover);
 }
+/* Where a horizontal and a vertical scrollbar meet. Left unstyled it renders as a pale
+   default square, which stands out badly on a dark surface. */
+::-webkit-scrollbar-corner {
+    background: var(--color-scrollbar-track);
+}
 
 @keyframes slide-in {
     from {
@@ -3503,13 +3508,37 @@ label.switch input:checked + .switch-slider::before {
     color: var(--color-on-surface-secondary);
 }
 
+/* Depth indent adds to the row's own left padding instead of replacing it. Setting
+   `padding-left` inline zeroed it at depth 0, which put the checkbox on top of the
+   selected row's accent bar. */
+.data-viewer-tag-list .data-viewer-tag-row,
+.data-viewer-tag-list .node-tree-row {
+    padding-left: calc(var(--spacing-8) + var(--tree-indent, 0px));
+}
+
 .data-viewer-tag-row:hover {
     background-color: var(--color-surface-hover);
 }
 
+/* Selection is already stated by the checkbox, so the row only needs to read as picked —
+   a filled blue bar per selected tag turns the list into stripes once several are on. */
 .data-viewer-tag-row.is-active {
-    background-color: var(--color-surface-active);
-    color: var(--color-on-primary);
+    background-color: var(--color-surface-hover-block);
+    color: var(--color-on-surface);
+    box-shadow: inset 2px 0 0 var(--color-primary-hover);
+}
+
+.data-viewer-tag-row.is-active:hover {
+    background-color: var(--color-surface-hover-light);
+}
+
+/* Type and derived markers sit beside 13px mono labels: small, uppercase, quiet. */
+.data-viewer-tag-row .badge {
+    padding: var(--spacing-2) var(--spacing-6);
+    font-size: var(--font-size-xs);
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
 }
 
 .data-viewer-toolbar {
@@ -3598,15 +3627,19 @@ label.switch input:checked + .switch-slider::before {
     background-color: var(--color-surface-hover);
 }
 
+/* The selected segment is the one piece of state in the toolbar, so it carries the primary
+   fill rather than a tinted label on the same dark surface. */
 .data-viewer-segmented-item.is-active {
-    background-color: var(--color-surface);
-    border-color: var(--color-border);
-    color: #e0c09d;
+    background-color: var(--color-primary);
+    border-color: var(--color-primary);
+    color: var(--color-on-primary);
     box-shadow: var(--shadow-sm);
 }
 
 .data-viewer-segmented-item.is-active:hover {
-    background-color: var(--color-surface);
+    background-color: var(--color-primary-hover);
+    border-color: var(--color-primary-hover);
+    color: var(--color-on-primary);
 }
 
 .data-viewer-format-button {
@@ -3631,12 +3664,18 @@ label.switch input:checked + .switch-slider::before {
     overflow: auto;
 }
 
+/* Fixed layout is required by the virtualised body: auto layout sizes columns from the rows
+   that happen to be mounted, so widths would shift on every scroll. Widths follow what auto
+   layout produced — a full timestamp, a tag name, and the widest value seen. */
 .data-viewer-raw-table {
     border-collapse: separate;
     border-spacing: 0;
-    table-layout: auto;
+    table-layout: fixed;
     font-size: 14px;
 }
+
+/* Widths and the table's min-width come from buildRawColumnWidths, which measures the whole
+   result set — see the comment there for why fixed layout cannot size itself here. */
 
 .data-viewer-raw-table th,
 .data-viewer-raw-table td {
@@ -3660,6 +3699,27 @@ label.switch input:checked + .switch-slider::before {
 .data-viewer-raw-table td {
     font-size: 14px;
     font-weight: 300;
+    vertical-align: middle;
+}
+
+/* Numbers read as a column only when their digits line up on the right. */
+.data-viewer-raw-table th.is-numeric,
+.data-viewer-raw-table td.is-numeric {
+    text-align: end;
+}
+
+/* Name cell carries the tag's chart series colour, so a row is traceable to its line after
+   switching Raw -> Chart. Drawn as ::before rather than nested spans: the raw table renders
+   every row of every selected tag with no virtualisation, so three extra elements per row
+   costs thousands of nodes. --raw-dot is set per cell. */
+.data-viewer-raw-table td.raw-name::before {
+    content: "";
+    display: inline-block;
+    width: 7px;
+    height: 7px;
+    margin-right: var(--spacing-8);
+    border-radius: 50%;
+    background-color: var(--raw-dot, transparent);
     vertical-align: middle;
 }
 
@@ -4339,8 +4399,9 @@ label.switch input:checked + .switch-slider::before {
     margin-top: var(--spacing-12);
 }
 
+/* The accent identifies which tag was split out, so it carries that tag's series colour. */
 .data-viewer-chart-card.is-split {
-    border-left: 3px solid var(--color-primary);
+    border-left: 3px solid var(--split-accent, var(--color-primary));
 }
 
 .data-viewer-chart-card.is-split .data-viewer-chart-panel-header {
@@ -4764,8 +4825,25 @@ label.switch input:checked + .switch-slider::before {
     cursor: pointer;
 }
 
+/* Folder rows are one button spanning the row, so they need the plain-button reset and a
+   hover that covers the label as well as the chevron. Margin and radius are dropped so the
+   hover fills the row edge to edge like the tag rows do, and both align on the same left edge. */
 .data-viewer-tag-list .node-tree-row-folder {
-    cursor: default;
+    width: 100%;
+    margin: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    text-align: start;
+    cursor: pointer;
+}
+
+.data-viewer-tag-list .node-tree-row-folder:hover {
+    background-color: var(--color-surface-hover);
+}
+
+.data-viewer-tag-list .node-tree-row-folder:hover .node-tree-toggle {
+    color: var(--color-on-surface);
 }
 
 .data-viewer-tag-list .node-tree-row-folder .node-tree-toggle:hover {
@@ -5322,18 +5400,46 @@ label.switch input:checked + .switch-slider::before {
     table-layout: fixed;
 }
 .detail-table-derived .col-tag {
-    width: 170px;
+    width: 160px;
 }
+/* Expression is the column worth reading, so it gets the widest fixed slot; anything past
+   it falls back to the .cell-tooltip hover. */
 .detail-table-derived .col-expr {
-    width: 180px;
+    width: 260px;
 }
 /* Widths follow the longest value each column can hold: "A · Random8",
    ON_ERROR_LABELS' "use fallback value", and on/off. */
 .detail-table-derived .col-basetime {
-    width: 130px;
+    width: 120px;
 }
 .detail-table-derived .col-onerror {
-    width: 170px;
+    width: 150px;
+}
+
+/* Truncated cell + its hover tooltip. `.tooltip` (::after, nowrap, absolute) cannot be used
+   inside .detail-table-scroll: it would be clipped by the scroll box and kept on one line.
+   TruncatedText portals a fixed-position box instead, so this wraps and escapes the scroller. */
+.cell-truncate {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.cell-tooltip {
+    position: fixed;
+    z-index: var(--z-index-tooltip);
+    max-width: 420px;
+    padding: var(--spacing-8) var(--spacing-12);
+    background-color: var(--color-surface-elevated);
+    color: var(--color-on-surface);
+    font-family: var(--font-family-mono);
+    font-size: var(--font-size-xs);
+    line-height: 1.5;
+    border-radius: var(--radius-base);
+    box-shadow: var(--shadow-dropdown);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    pointer-events: none;
 }
 
 /* Collection policy — one bordered box per policy, each stating the selected value and

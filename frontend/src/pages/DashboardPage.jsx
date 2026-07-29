@@ -7,6 +7,7 @@ import ConfirmDialog from "../components/common/ConfirmDialog";
 import LogViewerModal from "../components/logs/LogViewerModal";
 import LiveLogs from "../components/logs/LiveLogs";
 import Icon from "../components/common/Icon";
+import TruncatedText from "../components/common/TruncatedText";
 import { ON_ERROR_LABELS } from "../components/collectors/derivedTag";
 import { POLICIES } from "../components/collectors/CollectionPolicyCard";
 import { buildDataViewerPath, getTagTreePath } from "./dataViewerModel";
@@ -532,11 +533,13 @@ export default function DashboardPage({ collectors, detail, onDelete }) {
                                                             <td className="truncate" title={dt?.name}>
                                                                 {dt?.name || "–"}
                                                             </td>
-                                                            <td className="cell-expr truncate" title={dt?.expression}>
-                                                                {dt?.expression || "–"}
+                                                            {/* Expression and variables are the two cells that outgrow their column,
+                                                                so they carry the hover tooltip rather than a native title. */}
+                                                            <td>
+                                                                <TruncatedText text={dt?.expression} className="cell-expr" />
                                                             </td>
-                                                            <td className={variables ? "cell-secondary truncate" : "cell-muted"} title={variables || undefined}>
-                                                                {variables || "–"}
+                                                            <td>
+                                                                <TruncatedText text={variables} className={variables ? "cell-secondary" : "cell-muted"} />
                                                             </td>
                                                             <td className="truncate" title={formatBaseTime(dt)}>
                                                                 {formatBaseTime(dt)}

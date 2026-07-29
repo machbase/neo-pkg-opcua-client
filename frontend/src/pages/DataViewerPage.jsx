@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import * as echarts from "echarts";
 import Icon from "../components/common/Icon";
 import { useApp } from "../context/AppContext";
@@ -33,8 +34,12 @@ import {
     buildDataViewerTagSelectionUpdate,
     buildDataViewerWheelZoomRange,
     buildDataViewerZoomControlRange,
+    buildDerivedTagRows,
     buildNeoWebTagAnalyzerMessage,
+    buildRawColumnWidths,
     buildRawResultColumns,
+    buildRawRowNameColors,
+    buildSeriesColorMap,
     buildTagRows,
     extractDataViewerDataZoomRange,
     formatDataViewerNavigatorRangeLabels,
@@ -58,6 +63,12 @@ import {
     sendNeoWebTagAnalyzerMessage,
     showsDataViewerTimeControls,
 } from "./dataViewerModel";
+
+// Must match `.data-viewer-raw-table th, td { height: 25px }` — the virtualizer trusts it
+// instead of measuring, which is what keeps scrolling allocation-free.
+const RAW_ROW_HEIGHT = 25;
+// The name cell's colour dot plus its margin, which the column has to fit alongside the text.
+const RAW_NAME_DOT_SPACE = 15;
 
 const WEEKDAY_LABELS = ["S", "M", "T", "W", "T", "F", "S"];
 const MONTH_LABELS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -482,7 +493,7 @@ function FormatTimezoneModal({ timeFormat, timeZone, onApply, onClose }) {
     );
 }
 
-function TagEChart({ series, timeFormat, timeZone, timeRange, displayRange, onDisplayRangeChange, onShiftMainRange }) {
+function TagEChart({ series, timeFormat, timeZone, timeRange, displayRange, seriesColors, onDisplayRangeChange, onShiftMainRange }) {
     const containerRef = useRef(null);
     const chartRef = useRef(null);
     const rangeRef = useRef({ currentRange: {}, navigatorRange: {}, onDisplayRangeChange });
@@ -491,8 +502,8 @@ function TagEChart({ series, timeFormat, timeZone, timeRange, displayRange, onDi
     const allPoints = useMemo(() => series.flatMap((item) => item.data), [series]);
     const hasChartData = allPoints.length > 0;
     const options = useMemo(
-        () => buildDataViewerEChartOption({ series, timeFormat, timeZone, timeRange, displayRange }),
-        [displayRange, series, timeFormat, timeRange, timeZone]
+        () => buildDataViewerEChartOption({ series, timeFormat, timeZone, timeRange, displayRange, seriesColors }),
+        [displayRange, series, seriesColors, timeFormat, timeRange, timeZone]
     );
     const currentRange = useMemo(
         () => getDataViewerChartRangeMs(allPoints, displayRange || timeRange),
@@ -857,6 +868,10 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
     const [tagError, setTagError] = useState("");
     const nodes = useMemo(() => resolveTagNodes(configuredNodes, tableTags), [configuredNodes, tableTags]);
     const tagRows = useMemo(() => buildTagRows(nodes), [nodes]);
+    const derivedTagRows = useMemo(
+        () => buildDerivedTagRows(config?.derivedTags, nodes.map((node) => node?.name)),
+        [config, nodes]
+    );
     const showAssetTab = hasAssetHierarchy(assetHierarchy);
     const assetHierarchyPending = Boolean(dbServer && dbTable && !assetHierarchyChecked && tagsLoading);
     const assetRows = useMemo(() => buildAssetRows(assetHierarchy, tableTags), [assetHierarchy, tableTags]);
@@ -890,6 +905,7 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
     const [result, setResult] = useState({ rows: [], total: 0, page: 1, pageSize: getDataViewerRawPageSize([]) });
     const [rawPageBounds, setRawPageBounds] = useState(null);
     const [rawPageRequest, setRawPageRequest] = useState({ page: 1 });
+    const rawScrollRef = useRef(null);
     const rowsRequestRef = useRef(0);
     const chartRequestRef = useRef(0);
     const endPageRequestRef = useRef(0);
@@ -937,10 +953,15 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
     }, [dbServer, dbTable, notify]);
 
     const selectableRows = useMemo(
-        () => [...tagRows, ...assetRows].filter((row) => row.type === "tag" && row.tag?.name),
-        [assetRows, tagRows]
+        () => [...tagRows, ...derivedTagRows, ...assetRows].filter((row) => row.type === "tag" && row.tag?.name),
+        [assetRows, derivedTagRows, tagRows]
     );
-    const activeTagRows = activeTagTab === "asset" && showAssetTab ? assetRows : tagRows;
+    // The asset tab is built from the server's tag list, so derived tags already appear there
+    // under whatever folder their asset metadata puts them in — only the Tags tab appends them.
+    const activeTagRows = useMemo(
+        () => (activeTagTab === "asset" && showAssetTab ? assetRows : [...tagRows, ...derivedTagRows]),
+        [activeTagTab, assetRows, derivedTagRows, showAssetTab, tagRows]
+    );
 
     useEffect(() => {
         if (activeTagTab === "asset" && !showAssetTab) {
@@ -1349,6 +1370,77 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
         return splitChartRanges[rangeEditor.groupId] || activeRange;
     }, [activeRange, rangeEditor, splitChartRanges]);
 
+    const assetColumnKey = assetHierarchy?.column || "asset";
+    const rawColumns = useMemo(
+        () => buildRawResultColumns(result.rows, { hiddenKeys: showAssetTab ? [assetColumnKey] : [] }),
+        [assetColumnKey, result.rows, showAssetTab]
+    );
+    const rawColumnWidths = useMemo(() => buildRawColumnWidths(result.rows, rawColumns, {
+        timeSample: result.rows.length ? formatDataViewerTime(result.rows[0].time, timeFormat, timeZone) : "",
+        extra: { name: RAW_NAME_DOT_SPACE },
+    }), [rawColumns, result.rows, timeFormat, timeZone]);
+    const rawTableMinWidth = useMemo(
+        () => Object.values(rawColumnWidths).reduce((total, width) => total + width, 0),
+        [rawColumnWidths]
+    );
+    const rawNameColors = useMemo(() => buildRawRowNameColors(result.rows), [result.rows]);
+    // One colour per tag for every panel. Taken from the "default" group — it always holds all
+    // selected tags — so splitting a tag into its own chart keeps the colour it had in the main
+    // one instead of restarting the palette. Falls back to the raw row order before any chart
+    // result exists, which is the same ordering.
+    const seriesColors = useMemo(() => {
+        const mainSeries = chartResults.default?.series;
+        if (!Array.isArray(mainSeries) || mainSeries.length === 0) return rawNameColors;
+        return buildSeriesColorMap(mainSeries.map((item) => item?.name));
+    }, [chartResults, rawNameColors]);
+    // Only the rows in view are mounted: selecting N tags fetches N * rowsPerTag rows, so a plain
+    // render grows with every tag added. Rows are a fixed 25px (.data-viewer-raw-table td), so the
+    // size never has to be measured. Spacer rows above and below stand in for the rest.
+    const rowVirtualizer = useVirtualizer({
+        count: result.rows.length,
+        getScrollElement: () => rawScrollRef.current,
+        estimateSize: () => RAW_ROW_HEIGHT,
+        overscan: 16,
+    });
+    const virtualRows = rowVirtualizer.getVirtualItems();
+    const rawTableBody = useMemo(() => {
+        const first = virtualRows[0];
+        const last = virtualRows[virtualRows.length - 1];
+        const padTop = first ? first.start : 0;
+        const padBottom = last ? rowVirtualizer.getTotalSize() - last.end : 0;
+        return (
+            <tbody>
+                {padTop > 0 && <tr aria-hidden="true" style={{ height: padTop }} />}
+                {virtualRows.map((virtualRow) => {
+                    const row = result.rows[virtualRow.index];
+                    if (!row) return null;
+                    return (
+                        <tr key={virtualRow.key}>
+                            {rawColumns.map((column) => {
+                                const value = column.key === "time"
+                                    ? formatDataViewerTime(row[column.key], timeFormat, timeZone)
+                                    : String(row[column.key] ?? "");
+                                if (column.key === "name") {
+                                    return (
+                                        <td key={column.key} className="mono raw-name" style={{ "--raw-dot": rawNameColors[value] }}>
+                                            {value}
+                                        </td>
+                                    );
+                                }
+                                return (
+                                    <td key={column.key} className={`mono${column.key === "value" ? " is-numeric" : ""}`}>
+                                        {value}
+                                    </td>
+                                );
+                            })}
+                        </tr>
+                    );
+                })}
+                {padBottom > 0 && <tr aria-hidden="true" style={{ height: padBottom }} />}
+            </tbody>
+        );
+    }, [rawColumns, rawNameColors, result.rows, rowVirtualizer, timeFormat, timeZone, virtualRows]);
+
     if (!collector) {
         return (
             <div className="empty-state flex flex-col items-center justify-center h-full">
@@ -1362,9 +1454,6 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
     const timeFormatButtonText = `${getTimeFormatLabel(timeFormat)} / ${getTimeZoneLabel(timeZone)}`;
     const headerLabels = buildDataViewerHeaderLabels(collector.id, dbTable);
     const resultHeading = getResultHeading(mode);
-    const rawColumns = buildRawResultColumns(result.rows, {
-        hiddenKeys: showAssetTab ? [assetHierarchy?.column || "asset"] : [],
-    });
     const handleScanDirectionChange = (nextBackwardScan) => {
         rowsRequestRef.current += 1;
         endPageRequestRef.current += 1;
@@ -1750,17 +1839,22 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
                                     if (row.type === "folder") {
                                         const collapsed = collapsedTagFolders.has(row.key);
                                         return (
-                                            <div key={row.key} className="node-tree-row node-tree-row-folder" style={{ paddingLeft: row.depth * 16 }}>
-                                                <button
-                                                    type="button"
-                                                    className="node-tree-toggle"
-                                                    onClick={() => toggleTagFolder(row.key)}
-                                                    aria-label={`${row.label} ${collapsed ? "expand" : "collapse"}`}
-                                                >
+                                            // The whole row toggles, not just the chevron — the label is
+                                            // the bigger target and reads as part of the same control.
+                                            <button
+                                                key={row.key}
+                                                type="button"
+                                                className="node-tree-row node-tree-row-folder"
+                                                style={{ "--tree-indent": `${row.depth * 16}px` }}
+                                                onClick={() => toggleTagFolder(row.key)}
+                                                aria-expanded={!collapsed}
+                                                aria-label={`${row.label} ${collapsed ? "expand" : "collapse"}`}
+                                            >
+                                                <span className="node-tree-toggle">
                                                     <Icon name={collapsed ? "chevron_right" : "expand_more"} className="icon-sm" />
-                                                </button>
+                                                </span>
                                                 <span className="node-tree-label truncate">{row.label}</span>
-                                            </div>
+                                            </button>
                                         );
                                     }
                                     const checked = selectedTagNames.includes(row.tag.name);
@@ -1768,7 +1862,7 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
                                         <label
                                             key={row.key}
                                             className={`data-viewer-tag-row ${checked ? "is-active" : ""}`}
-                                            style={{ paddingLeft: row.depth * 16 }}
+                                            style={{ "--tree-indent": `${row.depth * 16}px` }}
                                             title={row.tag.nodeId || row.tag.name}
                                         >
                                             <span className="node-tree-toggle">
@@ -1780,6 +1874,7 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
                                                 />
                                             </span>
                                             <span className="node-tree-label truncate">{row.label}</span>
+                                            {row.derived && <span className="badge badge-primary badge-xs shrink-0">derived</span>}
                                             {row.tag.dataType && <span className="badge badge-success">{row.tag.dataType}</span>}
                                         </label>
                                     );
@@ -1852,28 +1947,23 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
                             {!canQuery && <div className="empty-state">Database table and tag are required</div>}
                             {canQuery && mode === "raw" && (
                                 <div className="table-card data-viewer-raw-card">
-                                    <div className="table-card-body">
-                                        <table className="table-clean data-viewer-raw-table">
+                                    <div className="table-card-body" ref={rawScrollRef}>
+                                        <table className="table-clean data-viewer-raw-table" style={{ minWidth: rawTableMinWidth }}>
+                                            <colgroup>
+                                                {rawColumns.map((column) => (
+                                                    <col key={column.key} style={{ width: rawColumnWidths[column.key] }} />
+                                                ))}
+                                            </colgroup>
                                             <thead>
                                                 <tr>
                                                     {rawColumns.map((column) => (
-                                                        <th key={column.key}>{column.label}</th>
+                                                        <th key={column.key} className={column.key === "value" ? "is-numeric" : undefined}>
+                                                            {column.label}
+                                                        </th>
                                                     ))}
                                                 </tr>
                                             </thead>
-                                            <tbody>
-                                                {result.rows.map((row, i) => (
-                                                    <tr key={`${row.name}-${row.time}-${i}`}>
-                                                        {rawColumns.map((column) => (
-                                                            <td key={column.key} className="mono">
-                                                                {column.key === "time"
-                                                                    ? formatDataViewerTime(row[column.key], timeFormat, timeZone)
-                                                                    : String(row[column.key] ?? "")}
-                                                            </td>
-                                                        ))}
-                                                    </tr>
-                                                ))}
-                                            </tbody>
+                                            {rawTableBody}
                                         </table>
                                         {loading && <div className="empty-state">Loading...</div>}
                                         {!loading && result.rows.length === 0 && <div className="empty-state">No data</div>}
@@ -1896,7 +1986,11 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
                                         });
                                         const chartMenuOpen = openChartMenuId === group.id;
                                         return (
-                                            <div key={group.id} className={`table-card data-viewer-chart-card ${group.split ? "is-split" : "is-main"}`}>
+                                            <div
+                                                key={group.id}
+                                                className={`table-card data-viewer-chart-card ${group.split ? "is-split" : "is-main"}`}
+                                                style={group.split ? { "--split-accent": seriesColors[group.tagNames[0]] } : undefined}
+                                            >
                                                 <div className="data-viewer-chart-panel-header">
                                                     <div className="data-viewer-chart-panel-title">
                                                         <Icon name={group.split ? "call_split" : "query_stats"} className="icon-sm text-primary" />
@@ -2006,6 +2100,7 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
                                                 <div className="table-card-body">
                                                     <TagEChart
                                                         series={chartData.series}
+                                                        seriesColors={seriesColors}
                                                         timeFormat={timeFormat}
                                                         timeZone={timeZone}
                                                         timeRange={chartData.range}

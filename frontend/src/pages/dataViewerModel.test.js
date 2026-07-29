@@ -18,6 +18,7 @@ import {
     buildDataViewerShiftMainRangeUpdate,
     buildDataViewerDragRangeUpdate,
     buildDataViewerTagSelectionUpdate,
+    buildDerivedTagRows,
     buildDataViewerWheelZoomRange,
     buildDataViewerZoomControlRange,
     buildNeoWebTagAnalyzerMessage,
@@ -26,7 +27,10 @@ import {
     buildTagChartSeries,
     buildDataViewerPath,
     buildDataViewerHeaderLabels,
+    buildRawColumnWidths,
     buildRawResultColumns,
+    buildSeriesColorMap,
+    buildRawRowNameColors,
     defaultSelectedTag,
     extractDataViewerDataZoomRange,
     formatDataViewerAxisTime,
@@ -178,6 +182,118 @@ test("buildTagRows keeps ordinary tags as a flat list", () => {
         ["tag", 0, "sensor_a"],
         ["tag", 0, "sensor_b"],
     ]);
+});
+
+test("buildRawRowNameColors assigns colors in first-appearance order, matching the chart", () => {
+    const rows = [
+        { name: "norm", time: 3, value: 1 },
+        { name: "pwr", time: 3, value: 2 },
+        { name: "norm", time: 2, value: 3 },
+        { name: "pick", time: 2, value: 4 },
+    ];
+    const colors = buildRawRowNameColors(rows);
+
+    assert.deepEqual(Object.keys(colors), ["norm", "pwr", "pick"]);
+    assert.notEqual(colors.norm, colors.pwr);
+    // The dot only matches the chart line if both walk the palette in the same order.
+    assert.deepEqual(Object.keys(colors), buildTagChartSeries(rows).map((series) => series.name));
+});
+
+test("buildTagRows keeps branches intact when the node list moves between them and back", () => {
+    // Config order does this: several Functions nodes, one _System node, then more Functions.
+    const node = (leaf, folder) => ({
+        name: leaf,
+        nodeId: `ns=1;s=${leaf}`,
+        treePath: ["Simulation Examples", folder, leaf],
+    });
+    const rows = buildTagRows([
+        node("Ramp1", "Functions"),
+        node("_EnableDiagnostics", "_System"),
+        node("Sine1", "Functions"),
+        node("Sine2", "Functions"),
+    ]);
+
+    assert.deepEqual(rows.map((row) => [row.type, row.depth, row.label]), [
+        ["folder", 0, "Simulation Examples"],
+        ["folder", 1, "Functions"],
+        ["tag", 2, "Ramp1"],
+        ["tag", 2, "Sine1"],
+        ["tag", 2, "Sine2"],
+        ["folder", 1, "_System"],
+        ["tag", 2, "_EnableDiagnostics"],
+    ]);
+    // Every leaf still collapses with its own folder.
+    const sine1 = rows.find((row) => row.label === "Sine1");
+    assert.deepEqual(sine1.ancestorKeys, [
+        "folder:Simulation Examples",
+        "folder:Simulation Examples/Functions",
+    ]);
+});
+
+test("buildRawColumnWidths sizes columns from every row, not the visible ones", () => {
+    const rows = [
+        { time: "t", name: "short", value: "1" },
+        { time: "t", name: "a_very_long_tag_name_far_below_the_fold", value: "1" },
+    ];
+    const columns = [{ key: "time", label: "Time" }, { key: "name", label: "Name" }, { key: "value", label: "Value" }];
+    const widths = buildRawColumnWidths(rows, columns, { timeSample: "2026-07-29 16:00:16.165" });
+
+    // Row 2 is what the name column has to fit, even though row 1 is the one on screen.
+    assert.ok(widths.name > buildRawColumnWidths([rows[0]], columns, {}).name);
+    // A timestamp that fits exactly must not land a fraction of a pixel short and get ellipsized.
+    const stamp = "2026-07-29 16:00:16.165";
+    assert.ok(widths.time > stamp.length * 8.401 + 32);
+    // Short columns never collapse below the floor, long ones never blow past the cap.
+    assert.ok(widths.value >= 90);
+    assert.ok(buildRawColumnWidths([{ name: "x".repeat(500) }], [{ key: "name", label: "Name" }], {}).name <= 640);
+    // A full OPC UA path is ordinary content, so it must fit rather than hit the cap.
+    const longPath = "Simulation_Examples_Functions__System__Description";
+    const pathWidth = buildRawColumnWidths([{ name: longPath }], [{ key: "name", label: "Name" }], { extra: { name: 15 } }).name;
+    assert.ok(pathWidth > longPath.length * 8.401);
+});
+
+test("buildSeriesColorMap keeps a tag's colour when it is split into its own panel", () => {
+    const mainPanel = ["Ramp1", "Ramp2", "norm", "pwr"];
+    const colors = buildSeriesColorMap(mainPanel);
+
+    // A split panel renders one series; without the shared map it would take the first colour.
+    const splitColors = buildSeriesColorMap(["pwr"]);
+    assert.notEqual(colors.pwr, splitColors.pwr);
+    assert.equal(colors.pwr, buildSeriesColorMap(mainPanel).pwr);
+    assert.equal(new Set(Object.values(colors)).size, mainPanel.length);
+});
+
+test("buildRawRowNameColors ignores blank names and non-array input", () => {
+    assert.deepEqual(buildRawRowNameColors(null), {});
+    assert.deepEqual(Object.keys(buildRawRowNameColors([{ name: "" }, { value: 1 }, { name: "a" }])), ["a"]);
+});
+
+test("buildDerivedTagRows marks derived tags as flat depth-0 rows", () => {
+    const rows = buildDerivedTagRows([
+        { name: "power", expression: "A * B" },
+        { name: "norm", expression: "sqrt(A)" },
+    ]);
+
+    assert.deepEqual(rows.map((row) => [row.type, row.depth, row.label, row.derived]), [
+        ["tag", 0, "power", true],
+        ["tag", 0, "norm", true],
+    ]);
+    assert.deepEqual(rows.map((row) => row.tag.name), ["power", "norm"]);
+});
+
+test("buildDerivedTagRows skips names already listed as source tags", () => {
+    const rows = buildDerivedTagRows([{ name: "power" }, { name: "norm" }], ["power"]);
+
+    assert.deepEqual(rows.map((row) => row.label), ["norm"]);
+});
+
+test("buildDerivedTagRows ignores blank, duplicate, and non-array input", () => {
+    assert.deepEqual(buildDerivedTagRows(null), []);
+    assert.deepEqual(buildDerivedTagRows(undefined), []);
+    assert.deepEqual(
+        buildDerivedTagRows([{ name: "  " }, { name: "power" }, { name: "power" }, {}]).map((row) => row.label),
+        ["power"]
+    );
 });
 
 test("buildTagRows uses nodeTree when browse selection stores tree structure", () => {
