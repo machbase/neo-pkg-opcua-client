@@ -4309,10 +4309,25 @@ label.switch input:checked + .switch-slider::before {
     align-items: center;
     flex: 0 1 auto;
     min-width: 0;
+    /* Its contents are nowrap, so without this they spill over the chips beside them once the
+       tag row squeezes the title toward zero width instead of simply clipping. */
+    overflow: hidden;
     gap: var(--spacing-8);
     color: var(--color-on-surface);
     font-size: var(--font-size-sm);
     font-weight: var(--font-weight-semibold);
+}
+
+/* The count is the point of the title — it must not be the part that gets squeezed. */
+.data-viewer-chart-panel-title .badge {
+    flex-shrink: 0;
+}
+
+/* The main panel's title is a fixed short string and sits next to the scrollable tag row, so
+   it keeps its width and the chips absorb the overflow. Split panels have no chips and a
+   variable-length tag name, so there the title still shrinks and truncates. */
+.data-viewer-chart-card.is-main .data-viewer-chart-panel-title {
+    flex-shrink: 0;
 }
 
 .data-viewer-chart-panel-actions {
@@ -4404,8 +4419,11 @@ label.switch input:checked + .switch-slider::before {
     border-left: 3px solid var(--split-accent, var(--color-primary));
 }
 
+/* Tinted from the same accent as the border. It used to be a hardcoded blue, from when the
+   accent was always --color-primary; once the border took the tag's series colour the header
+   was the only part left blue. */
 .data-viewer-chart-card.is-split .data-viewer-chart-panel-header {
-    background-color: rgba(0, 95, 184, 0.14);
+    background-color: color-mix(in srgb, var(--split-accent, var(--color-primary)) 14%, transparent);
 }
 
 .data-viewer-chart-card .table-card-body {

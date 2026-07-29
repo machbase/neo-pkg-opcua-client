@@ -1067,9 +1067,7 @@ const PANEL_NAVIGATOR_GRID_SIDE = 58;
 const PANEL_SLIDER_HEIGHT = 26;
 const PANEL_MAIN_TOP_WITH_LEGEND = 40;
 const PANEL_MAIN_HEIGHT = 178;
-const PANEL_LEGEND_ITEMS_PER_ROW = 4;
 const PANEL_LEGEND_ROW_HEIGHT = 18;
-const PANEL_MAIN_MIN_HEIGHT = 96;
 const PANEL_MAIN_SERIES_ID_PREFIX = "main-series-";
 const PANEL_COLORS = ["#5470c6", "#91cc75", "#fac858", "#ee6666", "#73c0de", "#3ba272", "#fc8452", "#9a60b4", "#ea7ccc"];
 const PANEL_MOUSE_WHEEL_ZOOM_IN_FACTOR = 0.82;
@@ -1409,15 +1407,16 @@ function buildNeoLikeTooltipFormatter(params, timeFormat, timeZone) {
     </div>`;
 }
 
-function getPanelLegendLayout(series = []) {
-    const rowCount = Math.max(1, Math.ceil(Math.max(0, series.length) / PANEL_LEGEND_ITEMS_PER_ROW));
-    const extraLegendHeight = Math.max(0, rowCount - 1) * PANEL_LEGEND_ROW_HEIGHT;
-    const mainTop = PANEL_MAIN_TOP_WITH_LEGEND + extraLegendHeight;
+// The legend is `type: "scroll"`, so it renders on one line and paginates however many series
+// there are. Reserving a row per four series therefore bought empty space: at 39 tags it pushed
+// the plot down 188px and clamped it to a 96px floor, which is the chart looking
+// squashed. The plot now keeps its full height regardless of how many tags are selected.
+function getPanelLegendLayout() {
     return {
-        rowCount,
-        mainTop,
-        mainHeight: Math.max(PANEL_MAIN_MIN_HEIGHT, PANEL_MAIN_HEIGHT - extraLegendHeight),
-        legendHeight: Math.max(PANEL_LEGEND_ROW_HEIGHT, mainTop - PANEL_LEGEND_TOP - 8),
+        rowCount: 1,
+        mainTop: PANEL_MAIN_TOP_WITH_LEGEND,
+        mainHeight: PANEL_MAIN_HEIGHT,
+        legendHeight: Math.max(PANEL_LEGEND_ROW_HEIGHT, PANEL_MAIN_TOP_WITH_LEGEND - PANEL_LEGEND_TOP - 8),
     };
 }
 
@@ -1436,7 +1435,7 @@ export function buildDataViewerEChartOption({
     const panelRange = getPanelRange(allPoints, displayRange || timeRange);
     const navigatorRange = getPanelRange(allPoints, timeRange);
     const yAxisRange = getYAxisRange(series, panelRange);
-    const legendLayout = getPanelLegendLayout(series);
+    const legendLayout = getPanelLegendLayout();
 
     return {
         backgroundColor: "#252525",

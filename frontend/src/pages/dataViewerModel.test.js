@@ -1276,20 +1276,27 @@ test("buildDataViewerEChartOption creates line chart options with data zoom", ()
     assert.equal(option.toolbox.show, false);
 });
 
-test("buildDataViewerEChartOption moves main chart below multi-row legend", () => {
-    const series = Array.from({ length: 9 }, (_, index) => ({
-        name: `sensor.${index}`,
-        data: [[Date.parse("2026-06-01T00:00:00Z"), index]],
-    }));
-    const option = buildDataViewerEChartOption({
-        series,
+test("buildDataViewerEChartOption keeps the plot size independent of the tag count", () => {
+    // The legend is type "scroll": it stays on one line and paginates however many tags are
+    // selected, so reserving vertical space per legend row only squashed the plot.
+    const build = (count) => buildDataViewerEChartOption({
+        series: Array.from({ length: count }, (_, index) => ({
+            name: `sensor.${index}`,
+            data: [[Date.parse("2026-06-01T00:00:00Z"), index]],
+        })),
         timeRange: { from: "2026-06-01T00:00:00.000Z", to: "2026-06-01T00:10:00.000Z" },
         timeZone: "UTC",
     });
 
-    assert.ok(option.grid[0].top > 40);
-    assert.ok(option.grid[0].height < 178);
-    assert.equal(option.legend.type, "scroll");
+    const few = build(2);
+    const many = build(39);
+
+    assert.equal(many.grid[0].top, few.grid[0].top);
+    assert.equal(many.grid[0].height, few.grid[0].height);
+    assert.equal(many.legend.type, "scroll");
+    // The legend still gets a row to draw in, and never grows into the plot.
+    assert.ok(many.legend.height > 0);
+    assert.ok(many.legend.top + many.legend.height <= many.grid[0].top);
 });
 
 test("buildDataViewerEChartOption lays out large multi-tag data by time range", () => {
