@@ -1,6 +1,9 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useNavigate } from "react-router";
 import { useApp } from "../context/AppContext";
+import useJsonValueColumn from "../hooks/useJsonValueColumn";
+import { JSON_VALUE_COLUMN_BLOCK_REASON } from "./dataViewerModel";
+import { JSON_REQUIRES_REQUEST_TIME } from "../components/collectors/CollectionPolicyCard";
 import * as api from "../api/collectors";
 import StatusBadge from "../components/common/StatusBadge";
 import ConfirmDialog from "../components/common/ConfirmDialog";
@@ -193,6 +196,8 @@ export default function DashboardPage({ collectors, detail, onDelete }) {
     const valueColumn = config?.valueColumn || "";
     const stringValueColumn = config?.stringValueColumn || "";
     const stringOnly = Boolean(config?.stringOnly);
+    const activeValueColumn = stringOnly ? (stringValueColumn || valueColumn) : valueColumn;
+    const { isJson: jsonValueColumn } = useJsonValueColumn({ server: dbServer, table: dbTable, valueColumn: activeValueColumn });
     const nodes = opcua?.nodes || [];
     const derivedTags = Array.isArray(config?.derivedTags) ? config.derivedTags : [];
     const policyValues = { timePolicy: config?.timePolicy, badStatusPolicy: config?.badStatusPolicy };
@@ -278,10 +283,20 @@ export default function DashboardPage({ collectors, detail, onDelete }) {
                             <Icon name="terminal" className="icon-sm" />
                             <span>Live Logs</span>
                         </button>
-                        <button type="button" onClick={() => navigate(buildDataViewerPath(collector.id))} className="btn btn-primary-outline">
-                            <Icon name="query_stats" className="icon-sm" />
-                            <span>Data Viewer</span>
-                        </button>
+                        <span
+                            className={jsonValueColumn ? "btn-blocked-hint" : undefined}
+                            title={jsonValueColumn ? JSON_VALUE_COLUMN_BLOCK_REASON : undefined}
+                        >
+                            <button
+                                type="button"
+                                disabled={jsonValueColumn}
+                                onClick={() => navigate(buildDataViewerPath(collector.id))}
+                                className="btn btn-primary-outline"
+                            >
+                                <Icon name="query_stats" className="icon-sm" />
+                                <span>Data Viewer</span>
+                            </button>
+                        </span>
                         <button
                             disabled={collector.status === "running"}
                             onClick={() => navigate(`/collectors/${encodeURIComponent(collector.id)}/edit`)}
@@ -567,15 +582,27 @@ export default function DashboardPage({ collectors, detail, onDelete }) {
                                     {POLICIES.map((policy) => {
                                         const value = policyValues[policy.key] || policy.fallback;
                                         const selected = policy.options.find((opt) => opt.value === value);
+                                        // A config saved before the JSON rule, or written straight through the
+                                        // API, can still hold sourceTime. Say so here rather than showing it
+                                        // as if it were a working setting.
+                                        const conflicts =
+                                            policy.key === "timePolicy" && jsonValueColumn && value !== "requestTime";
                                         return (
-                                            <div key={policy.key} className="detail-policy-box">
-                                                <Icon name={policy.icon} className="icon-sm detail-policy-icon" />
+                                            <div key={policy.key} className={`detail-policy-box${conflicts ? " is-conflict" : ""}`}>
+                                                <Icon
+                                                    name={conflicts ? "warning" : policy.icon}
+                                                    className="icon-sm detail-policy-icon"
+                                                />
                                                 <div className="min-w-0">
                                                     <div className="detail-policy-head">
                                                         <span className="form-label !mb-0">{policy.shortLabel}</span>
                                                         <span className="detail-policy-value">{value}</span>
                                                     </div>
-                                                    <div className="detail-policy-help">{selected?.help || ""}</div>
+                                                    <div className="detail-policy-help">
+                                                        {conflicts
+                                                            ? `${JSON_REQUIRES_REQUEST_TIME} Open Edit and save to correct it.`
+                                                            : selected?.help || ""}
+                                                    </div>
                                                 </div>
                                             </div>
                                         );

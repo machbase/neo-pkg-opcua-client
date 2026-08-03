@@ -32,6 +32,7 @@ import {
     buildSeriesColorMap,
     buildRawRowNameColors,
     defaultSelectedTag,
+    DEFAULT_DATA_VIEWER_TIME_RANGE,
     extractDataViewerDataZoomRange,
     formatDataViewerAxisTime,
     formatDataViewerNavigatorRangeLabels,
@@ -40,6 +41,8 @@ import {
     formatTimeRangeLabel,
     getDataViewerChartRangeMs,
     getDataViewerRawPageSize,
+    isJsonValueColumn,
+    usesLastDataAnchor,
     normalizeDataViewerRowsPerTag,
     getResultHeading,
     getScanDirectionLabel,
@@ -1661,4 +1664,58 @@ test("formatTimeRangeLabel shortens concrete date ranges", () => {
         formatTimeRangeLabel("2026-06-01 12:34:56.789", "2026-06-01 12:35:01.789"),
         "2026-06-01 12:34:56 ~ 2026-06-01 12:35:01"
     );
+});
+
+test("formatTimeRangeLabel renders the pinned range in the selected time zone", () => {
+    assert.equal(
+        formatTimeRangeLabel("2026-06-01T00:34:56.789Z", "2026-06-01T00:35:01.789Z", "Asia/Seoul"),
+        "2026-06-01 09:34:56 ~ 2026-06-01 09:35:01"
+    );
+});
+
+test("DEFAULT_DATA_VIEWER_TIME_RANGE is a bounded last-1-hour window", () => {
+    // Starting from an empty range leaves no bounded query window, so pagination has nothing to page against.
+    assert.deepEqual(DEFAULT_DATA_VIEWER_TIME_RANGE, { from: "now-1h", to: "now" });
+    assert.ok(DEFAULT_DATA_VIEWER_TIME_RANGE.from);
+    assert.ok(DEFAULT_DATA_VIEWER_TIME_RANGE.to);
+});
+
+test("DEFAULT_DATA_VIEWER_TIME_RANGE resolves to a one hour window ending now", () => {
+    const base = new Date("2026-06-01T12:00:00.000Z");
+    assert.equal(resolveTimeRangeInput(DEFAULT_DATA_VIEWER_TIME_RANGE.from, base, "from"), "2026-06-01T11:00:00.000Z");
+    assert.equal(resolveTimeRangeInput(DEFAULT_DATA_VIEWER_TIME_RANGE.to, base, "to"), "2026-06-01T12:00:00.001Z");
+});
+
+test("usesLastDataAnchor separates data-anchored ranges from wall-clock ranges", () => {
+    assert.equal(usesLastDataAnchor({ from: "last-5m", to: "last" }), true);
+    assert.equal(usesLastDataAnchor({ from: "last-1h", to: "now" }), true);
+    assert.equal(usesLastDataAnchor({ from: "now-1h", to: "now" }), false);
+    assert.equal(usesLastDataAnchor(DEFAULT_DATA_VIEWER_TIME_RANGE), false);
+    assert.equal(usesLastDataAnchor({ from: "2026-06-01 00:00:00", to: "2026-06-02 00:00:00" }), false);
+    assert.equal(usesLastDataAnchor({}), false);
+});
+
+test("isJsonValueColumn detects a JSON value column by the configured column name", () => {
+    const columns = [
+        { name: "JN", type: "VARCHAR(100)", primaryKey: true },
+        { name: "JT", type: "DATETIME", basetime: true },
+        { name: "JV", type: "JSON" },
+    ];
+    assert.equal(isJsonValueColumn(columns, "JV"), true);
+    assert.equal(isJsonValueColumn(columns, "jv"), true, "column names are case-insensitive");
+    assert.equal(isJsonValueColumn(columns, " JV "), true);
+    assert.equal(isJsonValueColumn(columns, "JT"), false);
+});
+
+test("isJsonValueColumn is false for ordinary value columns and unknown input", () => {
+    const columns = [
+        { name: "NAME", type: "VARCHAR(100)" },
+        { name: "TIME", type: "DATETIME" },
+        { name: "VALUE", type: "DOUBLE" },
+    ];
+    assert.equal(isJsonValueColumn(columns, "VALUE"), false);
+    assert.equal(isJsonValueColumn(columns, "MISSING"), false);
+    assert.equal(isJsonValueColumn(columns, ""), false);
+    assert.equal(isJsonValueColumn(undefined, "VALUE"), false);
+    assert.equal(isJsonValueColumn([{ name: "VALUE" }], "VALUE"), false, "a column with no type is not JSON");
 });

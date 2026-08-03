@@ -638,6 +638,43 @@ export function buildDataViewerGlobalTimeUpdate({
     };
 }
 
+// Default query window. Leaving the range empty means there is no bounded window to query, so pagination has no fixed basis either.
+export const DEFAULT_DATA_VIEWER_TIME_RANGE = { from: "now-1h", to: "now" };
+
+// The Data Viewer renders a JSON value column as a raw payload string: the chart cannot plot it,
+// the grid cannot size it, and none of the numeric paths apply. Until that is handled properly
+// the viewer is blocked for these collectors rather than showing something misleading.
+export const JSON_VALUE_COLUMN_BLOCK_REASON =
+    "This collector stores values in a JSON column, which the Data Viewer cannot display yet.";
+
+/**
+ * Whether the collector's value column is a JSON column.
+ *
+ * @param {Array<{ name?: string, type?: string }>} columns - the columns API payload
+ * @param {string} valueColumn - the collector's configured value column
+ * @returns {boolean}
+ */
+export function isJsonValueColumn(columns, valueColumn) {
+    const target = String(valueColumn ?? "").trim().toUpperCase();
+    if (!target) return false;
+    const column = (columns || []).find(
+        (col) => String(col?.name ?? "").trim().toUpperCase() === target
+    );
+    return String(column?.type ?? "").trim().toUpperCase() === "JSON";
+}
+
+/**
+ * Whether a range is anchored on the selected tags' latest data time (last, last-5m, ...)
+ * rather than on the wall clock (now, now-1h, ...).
+ *
+ * @param {{ from?: string, to?: string }} range
+ * @returns {boolean}
+ */
+export function usesLastDataAnchor(range = {}) {
+    const startsWithLast = (value) => String(value ?? "").trim().startsWith("last");
+    return startsWithLast(range.from) || startsWithLast(range.to);
+}
+
 export const QUICK_TIME_RANGE_GROUPS = [
     [
         { key: "now-5s", name: "Last 5 seconds", value: ["now-5s", "now"] },
@@ -1947,12 +1984,12 @@ export function formatDataViewerNavigatorRangeLabels(range = {}, timeFormat = DE
     };
 }
 
-export function formatTimeRangeLabel(from, to) {
+export function formatTimeRangeLabel(from, to, timeZone = DEFAULT_TIME_ZONE) {
     const formatPart = (value, fallback) => {
         const text = String(value || "").trim();
         if (!text) return fallback;
         if (text.includes("now") || text.includes("last")) return text;
-        return formatDataViewerTime(text, "YYYY-MM-DD HH24:MI:SS");
+        return formatDataViewerTime(text, "YYYY-MM-DD HH24:MI:SS", timeZone);
     };
 
     if (!from && !to) return "Time range not set";

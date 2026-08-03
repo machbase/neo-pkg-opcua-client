@@ -624,6 +624,14 @@ pre {
     pointer-events: none;
 }
 
+/* .btn:disabled sets pointer-events:none, so a disabled button never fires hover — its native
+   title tooltip never appears and the cursor never changes. Wrapping it keeps both on the
+   wrapper while the button itself stays genuinely disabled. */
+.btn-blocked-hint {
+    display: inline-flex;
+    cursor: not-allowed;
+}
+
 .btn-primary {
     background-color: var(--color-primary);
     color: var(--color-on-primary);
@@ -3557,6 +3565,8 @@ label.switch input:checked + .switch-slider::before {
 
 .data-viewer-title-row {
     gap: var(--spacing-8);
+    /* Room for .data-viewer-pinned-range, which hangs out of flow below this row. */
+    padding-bottom: var(--spacing-16);
 }
 
 .data-viewer-title-row .form-card-header {
@@ -3580,6 +3590,28 @@ label.switch input:checked + .switch-slider::before {
 
 .data-viewer-query-controls {
     min-width: 0;
+}
+
+/* Refresh sits at the far left of the toolbar row, with the window it re-pins written
+   underneath it — away from the right-aligned controls. */
+.data-viewer-pinned-block {
+    position: relative;
+    display: flex;
+    align-items: center;
+    flex-shrink: 0;
+}
+
+/* Taken out of flow so the block stays button-height and the refresh icon keeps the same
+   centre line as the other toolbar controls; the pinned window just hangs below the row.
+   .data-viewer-title-row reserves the space it hangs into. */
+.data-viewer-pinned-range {
+    position: absolute;
+    top: calc(100% + var(--spacing-2));
+    left: 0;
+    color: var(--color-on-surface-tertiary);
+    font-size: var(--font-size-sm);
+    line-height: 1.2;
+    white-space: nowrap;
 }
 
 .data-viewer-scan-control {
@@ -4488,6 +4520,10 @@ label.switch input:checked + .switch-slider::before {
 }
 
 @media (max-width: 960px) {
+    .policy-groups {
+        grid-template-columns: 1fr;
+    }
+
     .data-viewer-layout {
         grid-template-columns: 1fr;
     }
@@ -4961,9 +4997,22 @@ label.switch input:checked + .switch-slider::before {
 
 /* The card frame is the shared .form-card — only the choice row is policy-specific:
    the label keeps its own line, and both choices split a single row below it. */
-.policy-options {
+/* Policies sit beside each other, their options stack underneath: Time Policy | Bad Status. */
+.policy-groups {
     display: grid;
     grid-template-columns: 1fr 1fr;
+    /* Separate axes: the columns need real separation, but once they stack on a narrow
+       screen the same distance between rows would read as a gap between sections. */
+    column-gap: var(--spacing-32);
+    row-gap: var(--spacing-16);
+    align-items: start;
+}
+
+/* One option per row. Each option carries a full sentence of help text, which wrapped to
+   two or three lines when the two sat side by side inside a single column. */
+.policy-options {
+    display: grid;
+    grid-template-columns: 1fr;
     gap: var(--spacing-8);
 }
 .policy-option {
@@ -4979,8 +5028,28 @@ label.switch input:checked + .switch-slider::before {
     transition: border-color var(--transition-duration-fast),
         background-color var(--transition-duration-fast);
 }
-.policy-option:hover {
+.policy-option:hover:not(.is-disabled) {
     border-color: var(--color-border-medium);
+}
+
+/* aria-disabled, not [disabled] — the element has to keep receiving hover so its title
+   tooltip can explain why the option is unavailable. */
+.policy-option.is-disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+/* Shown under the options when the saved/selected policy conflicts with the storage mode.
+   Colour comes from here, not a Tailwind utility — utilities sit in a layer and lose to the
+   unlayered .policy-* rules. */
+.policy-conflict {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--spacing-6);
+    margin-top: var(--spacing-8);
+    color: var(--color-warning);
+    font-size: var(--font-size-sm);
+    line-height: 1.4;
 }
 .policy-option.is-selected {
     border-color: var(--color-primary);
@@ -5474,13 +5543,21 @@ label.switch input:checked + .switch-slider::before {
     }
 }
 
+/* Borders match .policy-option in the editor: primary for a setting that is in effect,
+   warning for one that conflicts with the collector's storage mode. */
 .detail-policy-box {
     display: flex;
     align-items: flex-start;
     gap: var(--spacing-10);
-    border: 1px solid var(--color-border);
+    border: 1px solid var(--color-primary);
     border-radius: var(--radius-base);
     padding: var(--spacing-12) var(--spacing-16);
+    background-color: color-mix(in srgb, var(--color-primary) 6%, transparent);
+}
+
+.detail-policy-box.is-conflict {
+    border-color: var(--color-warning);
+    background-color: color-mix(in srgb, var(--color-warning) 8%, transparent);
 }
 
 .detail-policy-icon {
@@ -5506,6 +5583,14 @@ label.switch input:checked + .switch-slider::before {
     font-size: var(--font-size-sm);
     color: var(--color-on-surface-tertiary);
     line-height: var(--line-height-normal);
+}
+
+/* Tailwind utilities live in a layer, so `text-warning` on the children loses to the
+   unlayered .detail-policy-* rules above. Colour the conflict state from here instead. */
+.detail-policy-box.is-conflict .detail-policy-icon,
+.detail-policy-box.is-conflict .detail-policy-value,
+.detail-policy-box.is-conflict .detail-policy-help {
+    color: var(--color-warning);
 }
 
 /* Bulk rename modal — strategy config panel. The 2px accent left border is the

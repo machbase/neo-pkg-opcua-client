@@ -8,7 +8,7 @@ import DbSection from "../components/collectors/DbSection";
 import LogSection from "../components/collectors/LogSection";
 import NodeListEditor from "../components/collectors/NodeListEditor";
 import DerivedTagsEditor from "../components/collectors/DerivedTagsEditor";
-import CollectionPolicyCard from "../components/collectors/CollectionPolicyCard";
+import CollectionPolicyCard, { JSON_REQUIRES_REQUEST_TIME } from "../components/collectors/CollectionPolicyCard";
 import { normalizeCollectorNodes } from "../components/collectors/nodeTree";
 import { normalizeDerivedTags, serializeDerivedTags } from "../components/collectors/derivedTag.js";
 import { isStringDataType } from "../components/collectors/nodeRangeSelection";
@@ -121,6 +121,13 @@ export default function CollectorFormPage({
         });
     };
 
+    // A JSON value column stores one merged payload row per cycle, so the row cannot carry a
+    // per-node sourceTimestamp — requestTime is the only coherent stamp. The policy is NOT
+    // rewritten behind the user's back: the conflict is shown in the form and blocks saving,
+    // so an existing collector's stored value stays visible until it is fixed deliberately.
+    const jsonValueColumn = form.db.columnKind === "json";
+    const timePolicyConflict = jsonValueColumn && form.timePolicy !== "requestTime";
+
     const nodeSelectionMode = form.db.autoCreateTable || form.db.stringOnly || form.db.columnKind === "json" || !!form.db.stringColumn ? "all" : "numeric-only";
     const opcuaConnectionTarget = useMemo(() => (form.opcua.server ? { server: form.opcua.server } : { endpoint: form.opcua.endpoint }), [form.opcua.server, form.opcua.endpoint]);
 
@@ -132,6 +139,16 @@ export default function CollectorFormPage({
 
         if (form.db.tableStatus === "missing") {
             notify("Table not found. Select an existing table before saving.", "error");
+            return;
+        }
+
+        if (timePolicyConflict) {
+            notify(`Time Policy must be requestTime. ${JSON_REQUIRES_REQUEST_TIME}`, "error");
+            return;
+        }
+
+        if (form.db.tableStatus === "unsupportedBase") {
+            notify("This table uses a distance base axis. Select a time-based TAG table before saving.", "error");
             return;
         }
 
@@ -341,7 +358,12 @@ export default function CollectorFormPage({
 
                             {/* Collection Policy — precedes the tag lists: timePolicy / badStatusPolicy
                   govern how both source nodes and derived tags are stamped and stored. */}
-                            <CollectionPolicyCard form={form} update={update} />
+                            <CollectionPolicyCard
+                                form={form}
+                                update={update}
+                                disabledOptions={jsonValueColumn ? { timePolicy: { sourceTime: JSON_REQUIRES_REQUEST_TIME } } : {}}
+                                conflicts={timePolicyConflict ? { timePolicy: `${JSON_REQUIRES_REQUEST_TIME} Switch to requestTime to save.` } : {}}
+                            />
 
                             {/* Logging — very bottom */}
                             <LogSection form={form} update={update} />

@@ -41,6 +41,7 @@ import {
     buildRawRowNameColors,
     buildSeriesColorMap,
     buildTagRows,
+    DEFAULT_DATA_VIEWER_TIME_RANGE,
     extractDataViewerDataZoomRange,
     formatDataViewerNavigatorRangeLabels,
     formatDataViewerTime,
@@ -48,6 +49,7 @@ import {
     formatTimeRangeLabel,
     getDataViewerChartRangeMs,
     getDataViewerRawPageSize,
+    usesLastDataAnchor,
     getResultHeading,
     getScanDirectionLabel,
     getTimeFormatLabel,
@@ -62,7 +64,10 @@ import {
     resolveTagNodes,
     sendNeoWebTagAnalyzerMessage,
     showsDataViewerTimeControls,
+    JSON_VALUE_COLUMN_BLOCK_REASON,
 } from "./dataViewerModel";
+import useJsonValueColumn from "../hooks/useJsonValueColumn";
+import useModalDismiss from "../hooks/useModalDismiss";
 
 // Must match `.data-viewer-raw-table th, td { height: 25px }` — the virtualizer trusts it
 // instead of measuring, which is what keeps scrolling allocation-free.
@@ -214,6 +219,17 @@ function TimeRangeModal({ range, onApply, onClose }) {
     const [error, setError] = useState("");
     const [picker, setPicker] = useState(null);
 
+    // While the date picker popover is open it owns the first dismissal, so Escape (and a click
+    // on the overlay) closes the picker rather than throwing away the whole range edit.
+    const dismiss = useCallback(() => {
+        if (picker) {
+            setPicker(null);
+            return;
+        }
+        onClose();
+    }, [onClose, picker]);
+    const overlayProps = useModalDismiss(dismiss);
+
     const handleQuickRange = (option) => {
         setFrom(option.value[0]);
         setTo(option.value[1]);
@@ -288,7 +304,12 @@ function TimeRangeModal({ range, onApply, onClose }) {
             setError("Please check the entered time.");
             return;
         }
-        if (nextFrom && nextTo && new Date(nextFrom).getTime() > new Date(nextTo).getTime()) {
+        // A one-sided range can't pin the bounded window that pagination is measured against, so reject it.
+        if (!nextFrom || !nextTo) {
+            setError("Both From and To are required.");
+            return;
+        }
+        if (new Date(nextFrom).getTime() > new Date(nextTo).getTime()) {
             setError("From should be earlier than To.");
             return;
         }
@@ -297,7 +318,7 @@ function TimeRangeModal({ range, onApply, onClose }) {
     };
 
     return (
-        <div className="modal-overlay data-viewer-time-overlay">
+        <div className="modal-overlay data-viewer-time-overlay" {...overlayProps}>
             <div className="modal modal-md data-viewer-time-modal animate-fade-in">
                 <div className="modal-header">
                     <div className="modal-header-title">
@@ -426,7 +447,7 @@ function TimeRangeModal({ range, onApply, onClose }) {
                 </div>
 
                 <div className="modal-footer">
-                    <button type="button" className="btn btn-primary" onClick={handleApply}>
+                    <button type="button" className="btn btn-primary" onClick={handleApply} disabled={!from.trim() || !to.trim()}>
                         Apply
                     </button>
                     <button type="button" className="btn btn-secondary" onClick={onClose}>
@@ -441,9 +462,10 @@ function TimeRangeModal({ range, onApply, onClose }) {
 function FormatTimezoneModal({ timeFormat, timeZone, onApply, onClose }) {
     const [nextFormat, setNextFormat] = useState(timeFormat || DEFAULT_TIME_FORMAT);
     const [nextZone, setNextZone] = useState(timeZone || DEFAULT_TIME_ZONE);
+    const overlayProps = useModalDismiss(onClose);
 
     return (
-        <div className="modal-overlay data-viewer-time-overlay">
+        <div className="modal-overlay data-viewer-time-overlay" {...overlayProps}>
             <div className="modal modal-md data-viewer-time-modal data-viewer-format-modal animate-fade-in">
                 <div className="modal-header">
                     <div className="modal-header-title">
@@ -859,6 +881,7 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
     const dbServer = typeof config.db === "string" ? config.db : "";
     const dbTable = config.dbTable || "";
     const valueColumn = selectedValueColumn(config);
+    const { isJson: jsonValueColumn } = useJsonValueColumn({ server: dbServer, table: dbTable, valueColumn });
     const stringValueColumn = config.stringOnly ? "" : (config.stringValueColumn || "");
 
     const [tableTags, setTableTags] = useState([]);
@@ -881,8 +904,12 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
     const [selectedTagNames, setSelectedTagNames] = useState([]);
     const [mode, setMode] = useState("raw");
     const [resultPage, setResultPage] = useState(1);
-    const [range, setRange] = useState({ from: "", to: "" });
-    const [resolvedRange, setResolvedRange] = useState({ from: "", to: "" });
+    const [range, setRange] = useState(DEFAULT_DATA_VIEWER_TIME_RANGE);
+    // range is the expression the user typed (now-1h, last-5m, ...); pinnedRange is that expression
+    // resolved once into absolute timestamps. Recomputing now on every fetch would drift the window
+    // and break pagination, so every query reads pinnedRange and re-pinning happens only on Apply / Refresh.
+    const [pinnedRange, setPinnedRange] = useState(null);
+    const [rangeRefreshToken, setRangeRefreshToken] = useState(0);
     const [rangeEditor, setRangeEditor] = useState(null);
     const [splitChartGroups, setSplitChartGroups] = useState([]);
     const [splitChartRanges, setSplitChartRanges] = useState({});
@@ -1068,10 +1095,10 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
         () => buildDataViewerChartGroups({
             selectedTagNames,
             splitGroups: splitChartGroups,
-            globalRange: resolvedRange,
+            globalRange: pinnedRange || { from: "", to: "" },
             splitRanges: resolvedSplitChartRanges,
         }),
-        [resolvedRange, resolvedSplitChartRanges, selectedTagNames, splitChartGroups]
+        [pinnedRange, resolvedSplitChartRanges, selectedTagNames, splitChartGroups]
     );
     const splitAssignedNames = useMemo(() => new Set(splitChartGroups.flatMap((group) => group.tagNames || [])), [splitChartGroups]);
 
@@ -1260,9 +1287,70 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
         return { from, to };
     }, [dbServer, dbTable, stringValueColumn, valueColumn]);
 
-    const resolveEffectiveRange = useCallback(async () => {
-        return resolveRangeForTagNames(range, selectedTagNames);
-    }, [range, resolveRangeForTagNames, selectedTagNames]);
+    const selectedTagNamesRef = useRef(selectedTagNames);
+    useEffect(() => {
+        selectedTagNamesRef.current = selectedTagNames;
+    }, [selectedTagNames]);
+
+    // now-* is measured off the wall clock, so it stays pinned across selection changes and
+    // pagination is left alone. last-* is measured off the selected tags' latest data time, so
+    // the window has to follow the selection: a window still anchored to another tag's era
+    // queries an empty range and the table shows no data even though the tag has plenty of it
+    // (two tags whose latest rows are years apart reproduce this every time).
+    const lastAnchorTagKey = usesLastDataAnchor(range) ? selectedTagNames.join("\u0000") : "";
+
+    // Identifies the inputs a pinned window was resolved from. fetchRows compares it with
+    // pinnedRange.key so it never queries using a window that belongs to an earlier selection,
+    // and so the stat lookup is awaited instead of racing a row request against it.
+    const pinKey = useMemo(
+        () => [range.from ?? "", range.to ?? "", rangeRefreshToken, lastAnchorTagKey].join("\u0000"),
+        [lastAnchorTagKey, range.from, range.to, rangeRefreshToken]
+    );
+
+    useEffect(() => {
+        let cancelled = false;
+        (async () => {
+            const tagNames = selectedTagNamesRef.current;
+            try {
+                const next = await resolveRangeForTagNames(range, tagNames);
+                if (cancelled) return;
+                if (next.from === null || next.to === null) {
+                    // Still stamped with pinKey, so fetchRows stops waiting and reports the problem.
+                    setPinnedRange({ from: "", to: "", key: pinKey });
+                    if (tagNames.length > 0) {
+                        setError("Please check the entered time.");
+                    }
+                    return;
+                }
+                setPinnedRange({ from: next.from || "", to: next.to || "", key: pinKey });
+            } catch (e) {
+                if (cancelled) return;
+                setPinnedRange({ from: "", to: "", key: pinKey });
+                // With nothing selected there is no window to resolve, which is not an error.
+                if (tagNames.length > 0) {
+                    setError(e.reason || e.message || "Failed to resolve the time range");
+                }
+            }
+        })();
+        return () => {
+            cancelled = true;
+        };
+    }, [pinKey, range, resolveRangeForTagNames]);
+
+    // A newly pinned window invalidates any carried-over page request. Toggling a tag builds one
+    // with reason "tags", which carries the previous page's row bounds as from/to, and fetchRows
+    // prefers those over the pinned window — so the caption would show the new window while the
+    // rows came from the old one. Dropping it here keeps the two in step.
+    const appliedPinKeyRef = useRef(pinKey);
+    useEffect(() => {
+        if (appliedPinKeyRef.current === pinKey) return;
+        appliedPinKeyRef.current = pinKey;
+        rowsRequestRef.current += 1;
+        endPageRequestRef.current += 1;
+        setRawPageBounds(null);
+        setRawPageRequest({ page: 1 });
+        setResultPage(1);
+    }, [pinKey]);
 
     const fetchRows = useCallback(async () => {
         const requestId = rowsRequestRef.current + 1;
@@ -1273,11 +1361,18 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
             setLoading(false);
             return;
         }
+        // The window for this range/selection has not been pinned yet — the stat lookup is still
+        // in flight. Querying now would use the previous window and then immediately re-query,
+        // so wait; the pin effect re-runs this with a matching key.
+        if (pinnedRange?.key !== pinKey) {
+            setLoading(true);
+            return;
+        }
         setLoading(true);
         setError("");
         try {
-            const { from: queryFrom, to: queryTo } = await resolveEffectiveRange();
-            if (queryFrom === null || queryTo === null) {
+            const { from: queryFrom, to: queryTo } = pinnedRange;
+            if (!queryFrom || !queryTo) {
                 if (rowsRequestRef.current !== requestId) return;
                 setError("Please check the entered time.");
                 setResult({ rows: [], total: 0, page: resultPage, pageSize: rawPageSize });
@@ -1305,7 +1400,6 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
             if (rowsRequestRef.current !== requestId) return;
             const nextRows = data?.rows || [];
             const nextBounds = buildDataViewerRawPageBounds(nextRows);
-            setResolvedRange({ from: queryFrom ?? "", to: queryTo ?? "" });
             setResult(data || { rows: [], total: 0, page: resultPage, pageSize: rawPageSize });
             setRawPageBounds(nextBounds);
         } catch (e) {
@@ -1320,7 +1414,7 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
                 setLoading(false);
             }
         }
-    }, [backwardScan, canQuery, dbServer, dbTable, notify, rawPageRequest, rawPageSize, resolveEffectiveRange, resultPage, selectedTagNames, stringValueColumn, valueColumn]);
+    }, [backwardScan, canQuery, dbServer, dbTable, notify, pinKey, pinnedRange, rawPageRequest, rawPageSize, resultPage, selectedTagNames, stringValueColumn, valueColumn]);
 
     useEffect(() => {
         fetchRows();
@@ -1450,7 +1544,22 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
         );
     }
 
-    const timeRangeButtonText = formatTimeRangeLabel(activeRange.from, activeRange.to);
+    // The dashboard disables the entry button, but the route can still be reached by URL.
+    if (jsonValueColumn) {
+        return (
+            <div className="empty-state flex flex-col items-center justify-center h-full">
+                <Icon name="data_object" className="icon-lg opacity-30 mb-12" />
+                <p className="text-md font-medium text-on-surface-tertiary">{JSON_VALUE_COLUMN_BLOCK_REASON}</p>
+                <p className="text-sm text-on-surface-tertiary mt-8">{`${dbTable} · ${valueColumn}`}</p>
+            </div>
+        );
+    }
+
+    // The button keeps showing what the user chose (now-1h, last-5m, ...); the absolute window
+    // those expressions were pinned to is shown underneath, since that is what queries and
+    // pagination actually run against.
+    const timeRangeButtonText = formatTimeRangeLabel(activeRange.from, activeRange.to, timeZone);
+    const pinnedRangeText = pinnedRange ? formatTimeRangeLabel(pinnedRange.from, pinnedRange.to, timeZone) : "";
     const timeFormatButtonText = `${getTimeFormatLabel(timeFormat)} / ${getTimeZoneLabel(timeZone)}`;
     const headerLabels = buildDataViewerHeaderLabels(collector.id, dbTable);
     const resultHeading = getResultHeading(mode);
@@ -1554,15 +1663,69 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
         }
         setRangeEditor(null);
     };
+    // Re-pin the query window against the current time (now) / the latest data time (last).
+    // A window given as absolute times resolves to the same values, so this effectively just re-queries.
+    const handleRefreshRange = async () => {
+        chartRequestRef.current += 1;
+        rowsRequestRef.current += 1;
+        endPageRequestRef.current += 1;
+        setChartViewRanges({});
+        setChartNavigatorRanges({});
+        setRawPageBounds(null);
+        setRawPageRequest({ page: 1 });
+        setResultPage(1);
+        setRangeRefreshToken((token) => token + 1);
+
+        if (!canQuery) return;
+        const splitRequestId = splitRangeRequestRef.current + 1;
+        splitRangeRequestRef.current = splitRequestId;
+        // Split charts hold their own pinned windows, so re-pin them against the same instant.
+        for (const group of splitChartGroups) {
+            const groupRange = splitChartRanges[group.id];
+            if (!groupRange) continue;
+            try {
+                const { from: queryFrom, to: queryTo } = await resolveRangeForTagNames(groupRange, group.tagNames);
+                if (splitRangeRequestRef.current !== splitRequestId) return;
+                if (!queryFrom || !queryTo) continue;
+                const data = await queryTagData({
+                    server: dbServer,
+                    table: dbTable,
+                    names: group.tagNames,
+                    valueColumn,
+                    stringValueColumn,
+                    direction: backwardScan ? "latest" : "oldest",
+                    from: queryFrom,
+                    to: queryTo,
+                    pageSize: getDataViewerRawPageSize(group.tagNames, rawRowsPerTag),
+                    boundedRange: true,
+                });
+                if (splitRangeRequestRef.current !== splitRequestId) return;
+                setResolvedSplitChartRanges((current) => ({
+                    ...current,
+                    [group.id]: { from: queryFrom, to: queryTo },
+                }));
+                setSplitChartRows((current) => ({
+                    ...current,
+                    [group.id]: data?.rows || [],
+                }));
+            } catch (e) {
+                if (splitRangeRequestRef.current !== splitRequestId) return;
+                const message = e.reason || e.message || "Failed to refresh chart range";
+                setChartError(message);
+                notify(message, "error");
+                return;
+            }
+        }
+    };
     const handleEndPage = async () => {
-        if (!canQuery || endLoading) return;
+        if (!canQuery || endLoading || pinnedRange?.key !== pinKey) return;
         const requestId = endPageRequestRef.current + 1;
         endPageRequestRef.current = requestId;
         setEndLoading(true);
         setError("");
         try {
-            const { from: queryFrom, to: queryTo } = await resolveEffectiveRange();
-            if (queryFrom === null || queryTo === null) {
+            const { from: queryFrom, to: queryTo } = pinnedRange;
+            if (!queryFrom || !queryTo) {
                 if (endPageRequestRef.current !== requestId) return;
                 setError("Please check the entered time.");
                 return;
@@ -1891,6 +2054,25 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
                                         <div className="form-card-header !mb-0">
                                             <span className="section-dot" />
                                             {resultHeading}
+                                        </div>
+                                    )}
+                                    {showsDataViewerTimeControls(mode) && (
+                                        <div className="data-viewer-pinned-block">
+                                            <button
+                                                type="button"
+                                                aria-label="Refresh time range"
+                                                title="Re-pin the time range and reload"
+                                                className="btn btn-ghost btn-icon"
+                                                disabled={loading || endLoading}
+                                                onClick={handleRefreshRange}
+                                            >
+                                                <Icon name="refresh" className="icon-sm" />
+                                            </button>
+                                            {pinnedRangeText && (
+                                                <div className="data-viewer-pinned-range" title={pinnedRangeText}>
+                                                    {pinnedRangeText}
+                                                </div>
+                                            )}
                                         </div>
                                     )}
                                     <div className="data-viewer-title-actions">
