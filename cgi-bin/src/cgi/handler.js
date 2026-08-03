@@ -6,7 +6,17 @@ const process = require('process');
 const { CGI } = require('./cgi_util.js');
 const Service = require('./service.js');
 const { MachbaseClient } = require('../db/client.js');
-const { Column, TableSchema, ColumnType, FLAG_PRIMARY, FLAG_BASETIME, FLAG_SUMMARIZED, FLAG_METADATA } = require('../db/types.js');
+const {
+  Column,
+  TableSchema,
+  ColumnType,
+  FLAG_PRIMARY,
+  FLAG_BASETIME,
+  FLAG_SUMMARIZED,
+  FLAG_METADATA,
+  findTagKeyColumnName,
+  resolveTagKeyColumnNames,
+} = require('../db/types.js');
 const OpcuaClient = require('../opcua/opcua-client.js');
 const Expression = require('../expression/evaluator.js');
 const { mergeCollectorConfig } = require('../config/collector-config.js');
@@ -2669,14 +2679,19 @@ function findAssetHierarchy(row) {
   return null;
 }
 
-function mapTagMetaResponse(rows, assetColumn, assetHierarchy = null) {
+function mapTagMetaResponse(rows, assetColumn, assetHierarchy = null, primaryColumn = 'NAME') {
   const tags = [];
   const assetColumnNames = assetColumn
     ? [assetColumn, assetColumn.toUpperCase(), assetColumn.toLowerCase()]
     : [];
+  const primaryColumnNames = [
+    primaryColumn,
+    String(primaryColumn || '').toUpperCase(),
+    String(primaryColumn || '').toLowerCase(),
+  ].filter(Boolean);
 
   for (const row of rows || []) {
-    const name = pickRowValue(row, ['NAME', 'name']);
+    const name = pickRowValue(row, primaryColumnNames);
     if (name === undefined || name === null || name === '') continue;
     const tagName = String(name);
     if (tagName === HIERARCHY_TAG_NAME) {
@@ -2891,8 +2906,12 @@ function parseTagDataRequest(params) {
     ...table,
     name: names[0] || '',
     names,
-    primaryColumn: normalizeIdentifier((params && params.primaryColumn) || 'NAME', 'primaryColumn'),
-    timeColumn: normalizeIdentifier((params && params.timeColumn) || 'TIME', 'timeColumn'),
+    primaryColumn: params && params.primaryColumn
+      ? normalizeIdentifier(params.primaryColumn, 'primaryColumn')
+      : null,
+    timeColumn: params && params.timeColumn
+      ? normalizeIdentifier(params.timeColumn, 'timeColumn')
+      : null,
     valueColumn: normalizeIdentifier((params && params.valueColumn) || 'VALUE', 'valueColumn'),
     stringValueColumn: params && params.stringValueColumn
       ? normalizeIdentifier(params.stringValueColumn, 'stringValueColumn')
@@ -2924,6 +2943,21 @@ function validateTagDataTable(client, req, db) {
   if (meta.TYPE !== 6) {
     throw new Error(`table '${req.tableRef}' is not a TAG table`);
   }
+  const columns = client.selectColumnsByTableId(meta.ID);
+  const resolved = resolveTagKeyColumnNames(columns);
+  if (req.primaryColumn && req.primaryColumn.toUpperCase() !== resolved.primaryColumn.toUpperCase()) {
+    throw new Error(
+      `primaryColumn '${req.primaryColumn}' does not match TAG PRIMARY KEY column '${resolved.primaryColumn}'`
+    );
+  }
+  if (req.timeColumn && req.timeColumn.toUpperCase() !== resolved.timeColumn.toUpperCase()) {
+    throw new Error(
+      `timeColumn '${req.timeColumn}' does not match TAG BASETIME column '${resolved.timeColumn}'`
+    );
+  }
+  req.primaryColumn = resolved.primaryColumn;
+  req.timeColumn = resolved.timeColumn;
+  return { meta, columns, ...resolved };
 }
 
 /**
@@ -2958,13 +2992,20 @@ function dbTableTags(db, params, reply) {
 
     const tagMetaTable = buildTagMetaTableRef(req);
     const columns = client.selectColumnsByTableId(meta.ID);
-    const hierarchyRows = client.query(`SELECT * FROM ${tagMetaTable} WHERE NAME = ?`, [HIERARCHY_TAG_NAME]);
+    const primaryColumn = findTagKeyColumnName(columns, FLAG_PRIMARY, 'NAME');
+    if (!primaryColumn) {
+      throw new Error('PRIMARY KEY column not found in TAG table metadata');
+    }
+    const hierarchyRows = client.query(
+      `SELECT * FROM ${tagMetaTable} WHERE ${primaryColumn} = ?`,
+      [HIERARCHY_TAG_NAME]
+    );
     const assetHierarchy = findAssetHierarchy(hierarchyRows && hierarchyRows[0]);
     const assetColumn = assetHierarchy ? normalizeText(assetHierarchy.column) : '';
     const rows = client.query(assetHierarchy
-      ? `SELECT * FROM ${tagMetaTable} ORDER BY NAME`
-      : `SELECT _ID, NAME${assetColumn ? `, ${assetColumn}` : ''} FROM ${tagMetaTable} ORDER BY NAME`);
-    const tagMeta = mapTagMetaResponse(rows, assetColumn, assetHierarchy);
+      ? `SELECT * FROM ${tagMetaTable} ORDER BY ${primaryColumn}`
+      : `SELECT _ID, ${primaryColumn}${assetColumn ? `, ${assetColumn}` : ''} FROM ${tagMetaTable} ORDER BY ${primaryColumn}`);
+    const tagMeta = mapTagMetaResponse(rows, assetColumn, assetHierarchy, primaryColumn);
     reply({
       ok: true,
       data: {

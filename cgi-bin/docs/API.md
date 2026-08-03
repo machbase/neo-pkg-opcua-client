@@ -950,6 +950,27 @@ Mounted backup database의 테이블은 쓰기 대상이 아니므로 목록에�
 
 ---
 
+### GET /db/table/tags?server=&table=
+
+Data Viewer에서 TAG 목록과 asset hierarchy metadata를 조회합니다.
+TAG 이름 컬럼은 `M$SYS_COLUMNS.FLAG`의 `PRIMARY KEY` 플래그로 감지하며, 플래그가 없는 환경에서만 `NAME`으로 fallback합니다.
+응답의 TAG 식별자 필드는 실제 컬럼명과 관계없이 기존 호환 형식인 `name`으로 반환합니다.
+
+### GET /db/table/data?server=&table=&name=
+
+Data Viewer의 raw row와 total을 조회합니다. `includeTotal=true`이면 total 응답을 반환합니다.
+조회 조건과 정렬에 사용하는 TAG primary/basetime 컬럼은 각각 `PRIMARY KEY`/`BASETIME` 플래그로 감지하며, 플래그가 없을 때만 `NAME`/`TIME`으로 fallback합니다.
+응답 row에서는 실제 key/time/value 컬럼을 기존 호환 필드인 `name`/`time`/`value`로 정규화합니다.
+
+`primaryColumn` 또는 `timeColumn`을 전달하는 기존 호출도 허용하지만, 실제 테이블 metadata와 일치해야 합니다. 불일치하면 잘못된 컬럼으로 조회하지 않고 오류를 반환합니다.
+
+### GET /db/table/chart?server=&table=&names=
+
+Data Viewer chart에서 실행할 query 문자열을 반환합니다. query의 TAG 조건, 시간 범위, 정렬 컬럼은 `/db/table/data`와 동일하게 시스템 metadata에서 결정합니다.
+`V$<table>_STAT`의 `NAME`은 사용자 TAG 테이블의 primary 컬럼이 아니라 시스템 뷰의 고정 컬럼이므로 변경하지 않습니다.
+
+---
+
 ## 로그
 
 ### GET /log/all

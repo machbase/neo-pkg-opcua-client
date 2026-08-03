@@ -8,7 +8,37 @@
  */
 
 const { Client } = require('machcli');
-const { ColumnType, Column, TableSchema, FLAG_BASETIME, FLAG_SUMMARIZED, FLAG_METADATA, FLAG_PRIMARY } = require('./types.js');
+const {
+  ColumnType,
+  Column,
+  TableSchema,
+  FLAG_BASETIME,
+  FLAG_SUMMARIZED,
+  FLAG_METADATA,
+  FLAG_PRIMARY,
+  findTagKeyColumnName,
+} = require('./types.js');
+
+function _rowColumnValue(row, columnName) {
+  if (!row) return undefined;
+  const names = [
+    columnName,
+    String(columnName || '').toUpperCase(),
+    String(columnName || '').toLowerCase(),
+  ];
+  for (const name of names) {
+    if (name && Object.prototype.hasOwnProperty.call(row, name)) return row[name];
+  }
+  return undefined;
+}
+
+function _normalizeTagNameRows(rows, primaryColumnName) {
+  for (const row of (rows || [])) {
+    const value = _rowColumnValue(row, primaryColumnName);
+    if (value !== undefined) row.name = value;
+  }
+  return rows;
+}
 
 
 /**
@@ -215,6 +245,21 @@ class MachbaseClient {
   }
 
   /**
+   * TAG primary 컬럼명을 M$SYS_COLUMNS flag 기준으로 조회한다.
+   * 구버전 호환을 위해 flag가 없을 때 NAME 컬럼을 fallback으로 사용한다.
+   * @param {string} logicalTable
+   * @returns {string}
+   */
+  selectTagPrimaryColumnName(logicalTable) {
+    const columns = this.selectColumnsByTableName(logicalTable);
+    const primaryColumn = findTagKeyColumnName(columns, FLAG_PRIMARY, 'NAME');
+    if (!primaryColumn) {
+      throw new Error(`PRIMARY KEY column not found in TAG table metadata for '${logicalTable}'`);
+    }
+    return primaryColumn;
+  }
+
+  /**
    * 테이블의 최대 RID 조회
    * @param {string} tableName
    * @returns {bigint} 빈 테이블이면 0n
@@ -228,21 +273,27 @@ class MachbaseClient {
   /**
    * TAG META 테이블 전체 조회
    * @param {string} logicalTable - 논리 테이블명
+   * @param {string|null} [primaryColumnName] - 생략 시 system catalog에서 조회
    * @returns {Array<{ _ID: bigint, name: string }>}
    */
-  selectTagNames(logicalTable) {
-    return this.query(`SELECT _ID, name FROM _${logicalTable}_META`);
+  selectTagNames(logicalTable, primaryColumnName = null) {
+    const primaryColumn = primaryColumnName || this.selectTagPrimaryColumnName(logicalTable);
+    const rows = this.query(`SELECT _ID, ${primaryColumn} FROM _${logicalTable}_META`);
+    return _normalizeTagNameRows(rows, primaryColumn);
   }
 
   /**
    * TAG META 테이블 조회 (_ID, name + metadata columns)
    * @param {string} logicalTable - 논리 테이블명
    * @param {string[]} metaColNames - metadata column 이름 목록
+   * @param {string|null} [primaryColumnName] - 생략 시 system catalog에서 조회
    * @returns {Array<{ _ID: bigint, name: string, [col]: any }>}
    */
-  selectTagMeta(logicalTable, metaColNames = []) {
+  selectTagMeta(logicalTable, metaColNames = [], primaryColumnName = null) {
+    const primaryColumn = primaryColumnName || this.selectTagPrimaryColumnName(logicalTable);
     const extraCols = metaColNames.length > 0 ? ', ' + metaColNames.join(', ') : '';
-    return this.query(`SELECT _ID, name${extraCols} FROM _${logicalTable}_META`);
+    const rows = this.query(`SELECT _ID, ${primaryColumn}${extraCols} FROM _${logicalTable}_META`);
+    return _normalizeTagNameRows(rows, primaryColumn);
   }
 
   /**
@@ -250,14 +301,16 @@ class MachbaseClient {
    * @param {string} logicalTable
    * @param {string} oldName
    * @param {Array<{ name: string, value: any }>} sets
+   * @param {string|null} [primaryColumnName] - 생략 시 system catalog에서 조회
    */
-  updateTagMeta(logicalTable, oldName, sets) {
+  updateTagMeta(logicalTable, oldName, sets, primaryColumnName = null) {
+    const primaryColumn = primaryColumnName || this.selectTagPrimaryColumnName(logicalTable);
     const esc = v => v == null ? 'NULL'
       : typeof v === 'string' ? `'${v.replace(/'/g, "''")}'`
       : String(v);
     const setClauses = sets.map(({ name, value }) => `${name} = ${esc(value)}`).join(', ');
     this.execute(
-      `UPDATE ${logicalTable} METADATA SET ${setClauses} WHERE NAME = ${esc(oldName)}`
+      `UPDATE ${logicalTable} METADATA SET ${setClauses} WHERE ${primaryColumn} = ${esc(oldName)}`
     );
   }
 
@@ -266,14 +319,17 @@ class MachbaseClient {
    * @param {string} logicalTable
    * @param {number|bigint} tagId
    * @param {string[]} metaColNames
+   * @param {string|null} [primaryColumnName] - 생략 시 system catalog에서 조회
    * @returns {{ _ID: bigint, name: string, [col]: any }|null}
    */
-  selectTagMetaById(logicalTable, tagId, metaColNames = []) {
+  selectTagMetaById(logicalTable, tagId, metaColNames = [], primaryColumnName = null) {
+    const primaryColumn = primaryColumnName || this.selectTagPrimaryColumnName(logicalTable);
     const extraCols = metaColNames.length > 0 ? ', ' + metaColNames.join(', ') : '';
     const rows = this.query(
-      `SELECT _ID, name${extraCols} FROM _${logicalTable}_META WHERE _ID = ?`,
+      `SELECT _ID, ${primaryColumn}${extraCols} FROM _${logicalTable}_META WHERE _ID = ?`,
       [tagId]
     );
+    _normalizeTagNameRows(rows, primaryColumn);
     return rows?.[0] ?? null;
   }
 

@@ -139,6 +139,14 @@ class MockService {
     }
 }
 
+function defaultTagColumns() {
+    return [
+        { NAME: 'NAME', TYPE: 5, ID: 0, FLAG: 0x8000000, LENGTH: 100 },
+        { NAME: 'TIME', TYPE: 6, ID: 1, FLAG: 0x1000000, LENGTH: 0 },
+        { NAME: 'VALUE', TYPE: 20, ID: 2, FLAG: 0x2000000, LENGTH: 0 },
+    ];
+}
+
 class MockMachbaseClient {
     constructor() {
         this.connected = false;
@@ -146,7 +154,7 @@ class MockMachbaseClient {
         this.connectError = null;
         this.tableType = 'UNSUPPORTED';
         this.tableMeta = null;
-        this.columns = [];
+        this.columns = defaultTagColumns();
         this.tables = [];
         this.users = [{ USER_ID: 1, NAME: 'SYS' }];
         this.createError = null;
@@ -1819,7 +1827,7 @@ runner.run('Handler: dbTableTags', {
         const H = makeHandler();
         mockMachbaseClient.users = [{ USER_ID: 1, NAME: 'SYS' }];
         mockMachbaseClient.tableMeta = { ID: 10, TYPE: 6, NAME: 'TAG' };
-        mockMachbaseClient.columns = [
+        mockMachbaseClient.columns = [...defaultTagColumns(),
             { NAME: 'ASSET_PATH', TYPE: 0, ID: 3, FLAG: 0x4000000, LENGTH: 0 },
         ];
         mockMachbaseClient.queryResults = [
@@ -1875,7 +1883,7 @@ runner.run('Handler: dbTableTags', {
         const H = makeHandler();
         mockMachbaseClient.users = [{ USER_ID: 1, NAME: 'SYS' }];
         mockMachbaseClient.tableMeta = { ID: 10, TYPE: 6, NAME: 'TAG' };
-        mockMachbaseClient.columns = [
+        mockMachbaseClient.columns = [...defaultTagColumns(),
             { NAME: 'ASSET', TYPE: 0, ID: 3, FLAG: 0x4000000, LENGTH: 0 },
         ];
         mockMachbaseClient.queryResults = [
@@ -1927,7 +1935,7 @@ runner.run('Handler: dbTableTags', {
         const H = makeHandler();
         mockMachbaseClient.users = [{ USER_ID: 1, NAME: 'SYS' }];
         mockMachbaseClient.tableMeta = { ID: 10, TYPE: 6, NAME: 'TAG' };
-        mockMachbaseClient.columns = [
+        mockMachbaseClient.columns = [...defaultTagColumns(),
             { NAME: 'ASSET', TYPE: 0, ID: 3, FLAG: 0x4000000, LENGTH: 0 },
         ];
         mockMachbaseClient.queryResults = [
@@ -1978,7 +1986,7 @@ runner.run('Handler: dbTableTags', {
         const H = makeHandler();
         mockMachbaseClient.users = [{ USER_ID: 1, NAME: 'SYS' }];
         mockMachbaseClient.tableMeta = { ID: 10, TYPE: 6, NAME: 'TAG' };
-        mockMachbaseClient.columns = [
+        mockMachbaseClient.columns = [...defaultTagColumns(),
             { NAME: 'SPEC', TYPE: 0, ID: 3, FLAG: 0x4000000, LENGTH: 0 },
             { NAME: 'ASSET', TYPE: 0, ID: 4, FLAG: 0x4000000, LENGTH: 0 },
         ];
@@ -2028,7 +2036,7 @@ runner.run('Handler: dbTableTags', {
         const H = makeHandler();
         mockMachbaseClient.users = [{ USER_ID: 1, NAME: 'SYS' }];
         mockMachbaseClient.tableMeta = { ID: 10, TYPE: 6, NAME: 'TAG' };
-        mockMachbaseClient.columns = [
+        mockMachbaseClient.columns = [...defaultTagColumns(),
             { NAME: 'ASSET', TYPE: 0, ID: 3, FLAG: 0x4000000, LENGTH: 0 },
             { NAME: 'ASSET_PATH', TYPE: 0, ID: 4, FLAG: 0x4000000, LENGTH: 0 },
         ];
@@ -2097,7 +2105,7 @@ runner.run('Handler: dbTableTags', {
         const H = makeHandler();
         mockMachbaseClient.users = [{ USER_ID: 1, NAME: 'SYS' }];
         mockMachbaseClient.tableMeta = { ID: 10, TYPE: 6, NAME: 'TAG' };
-        mockMachbaseClient.columns = [
+        mockMachbaseClient.columns = [...defaultTagColumns(),
             { NAME: 'ASSET', TYPE: 0, ID: 3, FLAG: 0x4000000, LENGTH: 0 },
         ];
         mockMachbaseClient.queryResults = [
@@ -2150,7 +2158,7 @@ runner.run('Handler: dbTableTags', {
         const H = makeHandler();
         mockMachbaseClient.users = [{ USER_ID: 1, NAME: 'SYS' }];
         mockMachbaseClient.tableMeta = { ID: 10, TYPE: 6, NAME: 'TAG' };
-        mockMachbaseClient.columns = [
+        mockMachbaseClient.columns = [...defaultTagColumns(),
             { NAME: 'ASSET', TYPE: 0, ID: 3, FLAG: 0x4000000, LENGTH: 0 },
         ];
         mockMachbaseClient.queryResults = [
@@ -2195,7 +2203,7 @@ runner.run('Handler: dbTableTags', {
         const H = makeHandler();
         mockMachbaseClient.users = [{ USER_ID: 1, NAME: 'SYS' }];
         mockMachbaseClient.tableMeta = { ID: 10, TYPE: 6, NAME: 'TAG' };
-        mockMachbaseClient.columns = [
+        mockMachbaseClient.columns = [...defaultTagColumns(),
             { NAME: 'ASSET', TYPE: 0, ID: 3, FLAG: 0x4000000, LENGTH: 0 },
         ];
         mockMachbaseClient.queryResults = [
@@ -2236,7 +2244,7 @@ runner.run('Handler: dbTableTags', {
         const H = makeHandler();
         mockMachbaseClient.users = [{ USER_ID: 1, NAME: 'SYS' }];
         mockMachbaseClient.tableMeta = { ID: 10, TYPE: 6, NAME: 'TAG' };
-        mockMachbaseClient.columns = [
+        mockMachbaseClient.columns = [...defaultTagColumns(),
             { NAME: 'ASSET', TYPE: 0, ID: 3, FLAG: 0x4000000, LENGTH: 0 },
         ];
         mockMachbaseClient.queryResults = [
@@ -2262,6 +2270,43 @@ runner.run('Handler: dbTableTags', {
         t.assert(result.ok, 'should be ok');
         t.assertEqual(result.data.assetHierarchy, null);
         t.assertEqual(result.data.tags.length, 1);
+    },
+
+    'uses custom primary column for hierarchy lookup, ordering, and response mapping': (t) => {
+        const H = makeHandler();
+        mockMachbaseClient.users = [{ USER_ID: 1, NAME: 'SYS' }];
+        mockMachbaseClient.tableMeta = { ID: 10, TYPE: 6, NAME: 'TAG' };
+        mockMachbaseClient.columns = [
+            { NAME: 'TAG_ID', TYPE: 5, ID: 0, FLAG: 0x8000000, LENGTH: 100 },
+            { NAME: 'TS', TYPE: 6, ID: 1, FLAG: 0x1000000, LENGTH: 0 },
+            { NAME: 'READING', TYPE: 20, ID: 2, FLAG: 0x2000000, LENGTH: 0 },
+            { NAME: 'ASSET', TYPE: 61, ID: 3, FLAG: 0x4000000, LENGTH: 0 },
+        ];
+        mockMachbaseClient.queryResults = [
+            [{
+                _ID: 1,
+                TAG_ID: '__machbase_hierarchy__',
+                ASSET: JSON.stringify({ schema: ['site'], tree: [] }),
+            }],
+            [
+                { _ID: 1, TAG_ID: '__machbase_hierarchy__', ASSET: '{}' },
+                { _ID: 2, TAG_ID: 'sensor.a', ASSET: '{"site":"A"}' },
+            ],
+        ];
+
+        let result;
+        H.dbTableTags({
+            host: 'h', port: 5656, user: 'SYS', password: 'p',
+        }, {
+            table: 'TAG',
+        }, (r) => { result = r; });
+
+        t.assert(result.ok, 'should be ok');
+        t.assertEqual(result.data.tags.length, 1);
+        t.assertEqual(result.data.tags[0].name, 'sensor.a');
+        t.assertEqual(result.data.tags[0].asset.site, 'A');
+        t.assert(mockMachbaseClient.queries[0].sql.includes('WHERE TAG_ID = ?'), 'hierarchy lookup should use custom primary');
+        t.assert(mockMachbaseClient.queries[1].sql.includes('ORDER BY TAG_ID'), 'tag ordering should use custom primary');
     },
 });
 
@@ -2775,6 +2820,112 @@ runner.run('Handler: dbTableData', {
         t.assert(mockMachbaseClient.queries[0].sql.includes('TIME <= ?'), 'to time should be applied');
     },
 
+    'discovers custom primary and basetime columns for raw data': (t) => {
+        const H = makeHandler();
+        mockMachbaseClient.users = [{ USER_ID: 1, NAME: 'SYS' }];
+        mockMachbaseClient.tableMeta = { ID: 10, TYPE: 6, NAME: 'TAG' };
+        mockMachbaseClient.columns = [
+            { NAME: 'TAG_ID', TYPE: 5, ID: 0, FLAG: 0x8000000, LENGTH: 100 },
+            { NAME: 'TS', TYPE: 6, ID: 1, FLAG: 0x1000000, LENGTH: 0 },
+            { NAME: 'READING', TYPE: 20, ID: 2, FLAG: 0x2000000, LENGTH: 0 },
+            { NAME: 'QUALITY', TYPE: 8, ID: 3, FLAG: 0, LENGTH: 0 },
+        ];
+        mockMachbaseClient.queryResults = [[{
+            TAG_ID: 'sensor.a',
+            TS: new Date('2026-06-01T00:00:00Z'),
+            READING: 12.5,
+            QUALITY: 192,
+        }]];
+
+        let result;
+        H.dbTableData({
+            host: 'h', port: 5656, user: 'SYS', password: 'p',
+        }, {
+            table: 'TAG',
+            name: 'sensor.a',
+            valueColumn: 'READING',
+            pageSize: 10,
+        }, (r) => { result = r; });
+
+        t.assert(result.ok, 'should be ok');
+        const query = mockMachbaseClient.queries[0];
+        t.assert(query.sql.includes('WHERE TAG_ID IN (?)'), 'filter should use custom primary');
+        t.assert(query.sql.includes('ORDER BY TS DESC, TAG_ID ASC'), 'ordering should use custom key columns');
+        t.assertEqual(result.data.rows[0].name, 'sensor.a');
+        t.assertEqual(result.data.rows[0].time.toISOString(), '2026-06-01T00:00:00.000Z');
+        t.assertEqual(result.data.rows[0].value, 12.5);
+        t.assertEqual(result.data.rows[0].quality, 192, 'unrelated data columns should remain');
+    },
+
+    'rejects request key columns that disagree with table metadata': (t) => {
+        const H = makeHandler();
+        mockMachbaseClient.users = [{ USER_ID: 1, NAME: 'SYS' }];
+        mockMachbaseClient.tableMeta = { ID: 10, TYPE: 6, NAME: 'TAG' };
+        mockMachbaseClient.columns = [
+            { NAME: 'TAG_ID', TYPE: 5, ID: 0, FLAG: 0x8000000, LENGTH: 100 },
+            { NAME: 'TS', TYPE: 6, ID: 1, FLAG: 0x1000000, LENGTH: 0 },
+            { NAME: 'READING', TYPE: 20, ID: 2, FLAG: 0x2000000, LENGTH: 0 },
+        ];
+
+        let primaryResult;
+        H.dbTableData({
+            host: 'h', port: 5656, user: 'SYS', password: 'p',
+        }, {
+            table: 'TAG', name: 'sensor.a', primaryColumn: 'NAME', valueColumn: 'READING',
+        }, (r) => { primaryResult = r; });
+        t.assert(!primaryResult.ok, 'mismatched primary should fail');
+        t.assert(primaryResult.reason.includes("does not match TAG PRIMARY KEY column 'TAG_ID'"), 'primary mismatch should be explicit');
+
+        let timeResult;
+        H.dbTableData({
+            host: 'h', port: 5656, user: 'SYS', password: 'p',
+        }, {
+            table: 'TAG', name: 'sensor.a', timeColumn: 'TIME', valueColumn: 'READING',
+        }, (r) => { timeResult = r; });
+        t.assert(!timeResult.ok, 'mismatched basetime should fail');
+        t.assert(timeResult.reason.includes("does not match TAG BASETIME column 'TS'"), 'basetime mismatch should be explicit');
+        t.assertEqual(mockMachbaseClient.queries.length, 0, 'data SQL should not run after metadata mismatch');
+    },
+
+    'uses custom key columns for filtered total but keeps stat view NAME contract': (t) => {
+        const H = makeHandler();
+        mockMachbaseClient.users = [{ USER_ID: 1, NAME: 'SYS' }];
+        mockMachbaseClient.tableMeta = { ID: 10, TYPE: 6, NAME: 'TAG' };
+        mockMachbaseClient.columns = [
+            { NAME: 'TAG_ID', TYPE: 5, ID: 0, FLAG: 0x8000000, LENGTH: 100 },
+            { NAME: 'TS', TYPE: 6, ID: 1, FLAG: 0x1000000, LENGTH: 0 },
+            { NAME: 'READING', TYPE: 20, ID: 2, FLAG: 0x2000000, LENGTH: 0 },
+        ];
+        mockMachbaseClient.queryResults = [
+            [{ ROW_COUNT: 7 }],
+            [{ ROW_COUNT: 4 }],
+        ];
+
+        let statResult;
+        H.dbTableDataTotal({
+            host: 'h', port: 5656, user: 'SYS', password: 'p',
+        }, {
+            table: 'TAG', name: 'sensor.a', valueColumn: 'READING', pageSize: 10,
+        }, (r) => { statResult = r; });
+        t.assert(statResult.ok, 'stat total should be ok');
+        t.assert(mockMachbaseClient.queries[0].sql.includes('V$TAG_STAT'), 'stat view should still be used');
+        t.assert(mockMachbaseClient.queries[0].sql.includes('WHERE NAME = ?'), 'stat view NAME is a fixed system column');
+
+        let filteredResult;
+        H.dbTableDataTotal({
+            host: 'h', port: 5656, user: 'SYS', password: 'p',
+        }, {
+            table: 'TAG',
+            names: ['sensor.a', 'sensor.b'],
+            valueColumn: 'READING',
+            from: '2026-06-01T00:00:00.000Z',
+            pageSize: 10,
+        }, (r) => { filteredResult = r; });
+        t.assert(filteredResult.ok, 'filtered total should be ok');
+        t.assert(mockMachbaseClient.queries[1].sql.includes('WHERE TAG_ID IN (?, ?)'), 'count should use custom primary');
+        t.assert(mockMachbaseClient.queries[1].sql.includes('TS >= ?'), 'count should use custom basetime');
+    },
+
     'returns required-name style error when name and names are empty': (t) => {
         const H = makeHandler();
         let result;
@@ -2827,6 +2978,33 @@ runner.run('Handler: dbTableData', {
         t.assert(!result.data.query.includes('?'), 'query payload should be executable without bind placeholders');
         t.assert(!Object.prototype.hasOwnProperty.call(result.data, 'tql'), 'chart endpoint should not expose tql payload');
         t.assert(!Object.prototype.hasOwnProperty.call(result.data, 'series'), 'series should come from web api query execution');
+    },
+
+    'builds chart query from custom primary and basetime metadata': (t) => {
+        const H = makeHandler();
+        mockMachbaseClient.users = [{ USER_ID: 1, NAME: 'SYS' }];
+        mockMachbaseClient.tableMeta = { ID: 10, TYPE: 6, NAME: 'TAG' };
+        mockMachbaseClient.columns = [
+            { NAME: 'TAG_ID', TYPE: 5, ID: 0, FLAG: 0x8000000, LENGTH: 100 },
+            { NAME: 'TS', TYPE: 6, ID: 1, FLAG: 0x1000000, LENGTH: 0 },
+            { NAME: 'READING', TYPE: 20, ID: 2, FLAG: 0x2000000, LENGTH: 0 },
+        ];
+
+        let result;
+        H.dbTableChart({
+            host: 'h', port: 5656, user: 'SYS', password: 'p',
+        }, {
+            table: 'TAG',
+            names: ['sensor.a', 'sensor.b'],
+            primaryColumn: 'tag_id',
+            timeColumn: 'ts',
+            valueColumn: 'READING',
+        }, (r) => { result = r; });
+
+        t.assert(result.ok, 'should be ok');
+        t.assert(result.data.query.includes('SELECT TS AS TIME, TAG_ID AS NAME, READING AS VALUE'), 'chart projection should use catalog columns');
+        t.assert(result.data.query.includes("WHERE TAG_ID IN ('sensor.a', 'sensor.b')"), 'chart filter should use custom primary');
+        t.assert(result.data.query.includes('ORDER BY TS ASC, TAG_ID ASC'), 'chart ordering should use custom key columns');
     },
 });
 

@@ -50,6 +50,55 @@ const FLAG_SUMMARIZED = 0x2000000;  // 33554432  — SUMMARIZED 컬럼
 const FLAG_METADATA   = 0x4000000;  // 67108864  — TAG META 추가 속성 컬럼
 const FLAG_PRIMARY    = 0x8000000;  // 134217728 — PRIMARY KEY 컬럼
 
+function _catalogColumnName(column) {
+  if (!column) return '';
+  const value = column.NAME !== undefined ? column.NAME : column.name;
+  return String(value || '').trim();
+}
+
+function _catalogColumnFlag(column) {
+  if (!column) return 0;
+  const value = column.FLAG !== undefined ? column.FLAG : column.flag;
+  return Number(value || 0);
+}
+
+/**
+ * TAG 컬럼 목록에서 flag로 컬럼명을 찾고, 구버전 호환을 위해 지정된 이름으로 fallback 한다.
+ * M$SYS_COLUMNS row와 Column 인스턴스를 모두 받을 수 있다.
+ *
+ * @param {Array<object>} columns
+ * @param {number} flag
+ * @param {string} fallbackName
+ * @returns {string|null}
+ */
+function findTagKeyColumnName(columns, flag, fallbackName) {
+  const rows = Array.isArray(columns) ? columns : [];
+  const flagged = rows.find(column => (_catalogColumnFlag(column) & flag) !== 0);
+  if (flagged) return _catalogColumnName(flagged) || null;
+
+  const fallback = String(fallbackName || '').toUpperCase();
+  const legacy = rows.find(column => _catalogColumnName(column).toUpperCase() === fallback);
+  return legacy ? (_catalogColumnName(legacy) || null) : null;
+}
+
+/**
+ * TAG primary/basetime 컬럼명을 catalog flag 기준으로 반환한다.
+ *
+ * @param {Array<object>} columns
+ * @returns {{ primaryColumn: string, timeColumn: string }}
+ */
+function resolveTagKeyColumnNames(columns) {
+  const primaryColumn = findTagKeyColumnName(columns, FLAG_PRIMARY, 'NAME');
+  const timeColumn = findTagKeyColumnName(columns, FLAG_BASETIME, 'TIME');
+  if (!primaryColumn) {
+    throw new Error('PRIMARY KEY column not found in TAG table metadata');
+  }
+  if (!timeColumn) {
+    throw new Error('BASETIME column not found in TAG table metadata');
+  }
+  return { primaryColumn, timeColumn };
+}
+
 // ─── Column ───────────────────────────────────────────────────────────────────
 
 /**
@@ -111,4 +160,14 @@ const _columnTypeByCode = new Map([
   [36,  ColumnType.IPV6],    [61,  ColumnType.JSON],
 ]);
 
-module.exports = { ColumnType, Column, TableSchema, FLAG_BASETIME, FLAG_SUMMARIZED, FLAG_METADATA, FLAG_PRIMARY };
+module.exports = {
+  ColumnType,
+  Column,
+  TableSchema,
+  FLAG_BASETIME,
+  FLAG_SUMMARIZED,
+  FLAG_METADATA,
+  FLAG_PRIMARY,
+  findTagKeyColumnName,
+  resolveTagKeyColumnNames,
+};

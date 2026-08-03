@@ -9,6 +9,8 @@ const {
     FLAG_SUMMARIZED,
     FLAG_METADATA,
     FLAG_PRIMARY,
+    findTagKeyColumnName,
+    resolveTagKeyColumnNames,
 } = require('../src/db/types.js');
 
 const runner = new TestRunner();
@@ -199,6 +201,59 @@ runner.run('TableSchema', {
         const schema = new TableSchema('TAG', 'TAGDATA');
         t.assertNotNull(schema.columns);
         t.assertEqual(schema.columns.length, 0);
+    },
+});
+
+runner.run('TAG key column resolution', {
+    'resolves custom primary and basetime columns by flag': (t) => {
+        const columns = [
+            { NAME: 'TAG_ID', FLAG: FLAG_PRIMARY },
+            { NAME: 'TS', FLAG: FLAG_BASETIME },
+            { NAME: 'READING', FLAG: FLAG_SUMMARIZED },
+        ];
+        t.assertDeepEqual(resolveTagKeyColumnNames(columns), {
+            primaryColumn: 'TAG_ID',
+            timeColumn: 'TS',
+        });
+    },
+    'prefers flags over legacy NAME and TIME columns': (t) => {
+        const columns = [
+            { NAME: 'NAME', FLAG: 0 },
+            { NAME: 'TIME', FLAG: 0 },
+            { NAME: 'TAG_ID', FLAG: FLAG_PRIMARY },
+            { NAME: 'TS', FLAG: FLAG_BASETIME },
+        ];
+        t.assertDeepEqual(resolveTagKeyColumnNames(columns), {
+            primaryColumn: 'TAG_ID',
+            timeColumn: 'TS',
+        });
+    },
+    'falls back to legacy NAME and TIME when flags are absent': (t) => {
+        const columns = [
+            { NAME: 'NAME', FLAG: 0 },
+            { NAME: 'TIME', FLAG: 0 },
+        ];
+        t.assertDeepEqual(resolveTagKeyColumnNames(columns), {
+            primaryColumn: 'NAME',
+            timeColumn: 'TIME',
+        });
+    },
+    'supports Column instances with lowercase fields': (t) => {
+        const columns = [
+            new Column('TAG_ID', ColumnType.VARCHAR, 0, FLAG_PRIMARY, 100),
+            new Column('TS', ColumnType.DATETIME, 1, FLAG_BASETIME),
+        ];
+        t.assertEqual(findTagKeyColumnName(columns, FLAG_PRIMARY, 'NAME'), 'TAG_ID');
+    },
+    'fails when primary or basetime cannot be resolved': (t) => {
+        t.assertThrows(
+            () => resolveTagKeyColumnNames([{ NAME: 'TIME', FLAG: 0 }]),
+            'PRIMARY KEY column not found'
+        );
+        t.assertThrows(
+            () => resolveTagKeyColumnNames([{ NAME: 'NAME', FLAG: 0 }]),
+            'BASETIME column not found'
+        );
     },
 });
 
