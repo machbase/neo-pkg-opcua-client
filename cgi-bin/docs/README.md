@@ -101,7 +101,10 @@ neo-tools/
     │   │   └── table/
     │   │       ├── create.js   # POST   /cgi-bin/api/db/table/create
     │   │       ├── list.js     # GET    /cgi-bin/api/db/table/list?server=xxx
-    │   │       └── columns.js  # GET    /cgi-bin/api/db/table/columns?server=xxx&table=xxx
+    │   │       ├── columns.js  # GET    /cgi-bin/api/db/table/columns?server=xxx&table=xxx
+    │   │       ├── tags.js     # GET    /cgi-bin/api/db/table/tags?server=xxx&table=xxx
+    │   │       ├── data.js     # GET    /cgi-bin/api/db/table/data?server=xxx&table=xxx&name=xxx
+    │   │       └── chart.js    # GET    /cgi-bin/api/db/table/chart?server=xxx&table=xxx&names=xxx
     │   ├── log/
     │   │   ├── all.js          # GET    /cgi-bin/api/log/all
     │   │   ├── list.js         # GET    /cgi-bin/api/log/list?name=xxx

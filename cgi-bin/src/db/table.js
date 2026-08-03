@@ -1,6 +1,14 @@
 'use strict';
 
-const { ColumnType, Column, TableSchema, FLAG_BASETIME, FLAG_METADATA, FLAG_PRIMARY } = require('./types.js');
+const {
+  ColumnType,
+  Column,
+  TableSchema,
+  FLAG_BASETIME,
+  FLAG_METADATA,
+  FLAG_PRIMARY,
+  findTagKeyColumnName,
+} = require('./types.js');
 const { MachbaseClient } = require('./client.js');
 const { MachbaseStream } = require('./stream.js');
 const { getInstance: getLogger } = require('../lib/logger.js');
@@ -484,30 +492,38 @@ class TagTable {
    * @returns {TagMetaCache}
    */
   loadTagMetaCache(nameFilter = null) {
+    if (!this.schema) this.schema = this.getSchema();
     const metaColNames = this.schema
       ? this.schema.columns.filter(c => c.flag & FLAG_METADATA).map(c => c.name)
       : [];
+    const primaryColumnName = findTagKeyColumnName(this.schema.columns, FLAG_PRIMARY, 'NAME');
+    if (!primaryColumnName) {
+      throw new Error(`PRIMARY KEY column not found in TAG table metadata for '${this.logicalTable}'`);
+    }
     const extraCols = metaColNames.length > 0 ? ', ' + metaColNames.join(', ') : '';
 
     let whereClauses = [];
     let params = [];
     if (nameFilter?.in && nameFilter.in.length > 0) {
-      whereClauses.push(`name IN (${nameFilter.in.map(() => '?').join(', ')})`);
+      whereClauses.push(`${primaryColumnName} IN (${nameFilter.in.map(() => '?').join(', ')})`);
       params.push(...nameFilter.in);
     }
     if (nameFilter?.like) {
-      whereClauses.push(`name LIKE ?`);
+      whereClauses.push(`${primaryColumnName} LIKE ?`);
       params.push(nameFilter.like);
     }
     const where = whereClauses.length > 0 ? ` WHERE ${whereClauses.join(' AND ')}` : '';
-    const sql = `SELECT _ID, name${extraCols} FROM _${this.logicalTable}_META${where}`;
+    const sql = `SELECT _ID, ${primaryColumnName}${extraCols} FROM _${this.logicalTable}_META${where}`;
 
     const rows = this.client.query(sql, params.length > 0 ? params : undefined);
     const cache = new TagMetaCache();
     for (const row of (rows || [])) {
       const meta = {};
       for (const col of metaColNames) meta[col] = row[col];
-      cache.set(row._ID, row.name, meta);
+      const name = row[primaryColumnName] !== undefined
+        ? row[primaryColumnName]
+        : row[String(primaryColumnName).toLowerCase()];
+      cache.set(row._ID, name, meta);
     }
     return cache;
   }
@@ -578,7 +594,10 @@ class TagDataTable {
       const metaColNames = this.schema
         ? this.schema.columns.filter(c => c.flag & FLAG_METADATA).map(c => c.name)
         : [];
-      const rows = this.client.selectTagMeta(this.logicalTable, metaColNames);
+      const primaryColumn = this.schema
+        ? findTagKeyColumnName(this.schema.columns, FLAG_PRIMARY, 'NAME')
+        : null;
+      const rows = this.client.selectTagMeta(this.logicalTable, metaColNames, primaryColumn);
       this.aliasCache = new TagMetaCache();
       for (const row of (rows || [])) {
         const meta = {};
@@ -601,7 +620,10 @@ class TagDataTable {
     const metaColNames = this.schema
       ? this.schema.columns.filter(c => c.flag & FLAG_METADATA).map(c => c.name)
       : [];
-    const row = this.client.selectTagMetaById(this.logicalTable, tagId, metaColNames);
+    const primaryColumn = this.schema
+      ? findTagKeyColumnName(this.schema.columns, FLAG_PRIMARY, 'NAME')
+      : null;
+    const row = this.client.selectTagMetaById(this.logicalTable, tagId, metaColNames, primaryColumn);
     if (row == null) return false;
     const meta = {};
     for (const col of metaColNames) meta[col] = row[col];
