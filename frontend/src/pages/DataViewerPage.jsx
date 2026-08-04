@@ -560,25 +560,63 @@ function TagEChart({ series, timeFormat, timeZone, timeRange, displayRange, seri
                 ...(eventState || {}),
             };
         };
-        const convertMouseEventToTimestamp = (event) => {
+        // The axis extent the chart is drawing right now. Its two ends are the plot's left and
+        // right edges expressed in axis units, so value clamping needs no pixel math.
+        const getAxisExtent = () => {
+            const axis = chart.getOption?.()?.xAxis?.[0] || {};
+            const axisMin = Number(axis.min);
+            const axisMax = Number(axis.max);
+            if (Number.isFinite(axisMin) && Number.isFinite(axisMax) && axisMax > axisMin) {
+                return { min: axisMin, max: axisMax };
+            }
+            const { currentRange: activeRange } = rangeRef.current;
+            const start = Number(activeRange?.startTime);
+            const end = Number(activeRange?.endTime);
+            return Number.isFinite(start) && Number.isFinite(end) && end > start ? { min: start, max: end } : undefined;
+        };
+        // Container-relative pixel edges of the plot. `option.grid.left`/`right` cannot be used:
+        // with `containLabel: true` the plot is pushed further inward by the axis label width,
+        // so converting the axis ends back to pixels is the only honest source.
+        const getPlotPixelBounds = () => {
+            const extent = getAxisExtent();
+            if (!extent) return undefined;
+            const left = Number(chart.convertToPixel?.({ xAxisIndex: 0 }, extent.min));
+            const right = Number(chart.convertToPixel?.({ xAxisIndex: 0 }, extent.max));
+            return Number.isFinite(left) && Number.isFinite(right) && right > left ? { left, right } : undefined;
+        };
+        // `reject` keeps a gesture from starting on the legend / navigator / margins.
+        // `clamp` lets an in-flight drag survive the pointer leaving the plot: the pointer keeps
+        // reporting, and the value is pinned to the axis end it walked past.
+        const convertMouseEventToTimestamp = (event, { outside = "reject" } = {}) => {
             const rect = container.getBoundingClientRect?.();
             if (!rect) return undefined;
 
             const pixel = [event.clientX - rect.left, event.clientY - rect.top];
-            if (!chart.containPixel?.({ gridIndex: 0 }, pixel)) return undefined;
+            if (outside === "reject" && !chart.containPixel?.({ gridIndex: 0 }, pixel)) return undefined;
+
+            const extent = getAxisExtent();
+            const toAxisTime = (time) => {
+                if (!Number.isFinite(time)) return undefined;
+                if (outside !== "clamp" || !extent) return time;
+                return Math.min(Math.max(time, extent.min), extent.max);
+            };
 
             const fromAxis = chart.convertFromPixel?.({ xAxisIndex: 0 }, pixel);
-            const fromGrid = chart.convertFromPixel?.({ gridIndex: 0 }, pixel);
             const axisTime = Array.isArray(fromAxis) ? Number(fromAxis[0]) : Number(fromAxis);
-            if (Number.isFinite(axisTime)) return axisTime;
+            if (Number.isFinite(axisTime)) return toAxisTime(axisTime);
 
+            const fromGrid = chart.convertFromPixel?.({ gridIndex: 0 }, pixel);
             const gridTime = Array.isArray(fromGrid) ? Number(fromGrid[0]) : Number(fromGrid);
-            if (Number.isFinite(gridTime)) return gridTime;
+            if (Number.isFinite(gridTime)) return toAxisTime(gridTime);
 
-            const { currentRange: activeRange } = rangeRef.current;
-            const start = Number(activeRange?.startTime);
-            const end = Number(activeRange?.endTime);
-            return Number.isFinite(start) && Number.isFinite(end) ? start + (end - start) / 2 : undefined;
+            // Both conversions refused (unresolvable axis finder). Interpolate over the measured
+            // plot bounds before falling back to the middle of the window.
+            const bounds = getPlotPixelBounds();
+            if (bounds && extent) {
+                const ratio = (pixel[0] - bounds.left) / (bounds.right - bounds.left);
+                return toAxisTime(extent.min + ratio * (extent.max - extent.min));
+            }
+            return extent ? (extent.min + extent.max) / 2 : undefined;
         };
         const handleMouseWheelZoom = (event) => {
             if (event.deltaY === 0) return;
@@ -612,6 +650,13 @@ function TagEChart({ series, timeFormat, timeZone, timeRange, displayRange, seri
                 height: Number.isFinite(height) ? height : 178,
             };
         };
+        // clientX -> container-relative pixel, pinned to the plot edges captured at mousedown.
+        const clampToPlotPixel = (dragState, clientX) => {
+            const containerX = clientX - dragState.containerLeft;
+            const bounds = dragState.plotBounds;
+            if (!bounds) return containerX;
+            return Math.min(Math.max(containerX, bounds.left), bounds.right);
+        };
         const emitDragRange = (dragState, endTime) => {
             const nextRange = buildDataViewerDragRangeUpdate({
                 mode: dragState.mode,
@@ -636,7 +681,7 @@ function TagEChart({ series, timeFormat, timeZone, timeRange, displayRange, seri
             setDragPreview(null);
             if (!dragState) return;
 
-            const endTime = convertMouseEventToTimestamp(event);
+            const endTime = convertMouseEventToTimestamp(event, { outside: "clamp" });
             if (!Number.isFinite(endTime) || Math.abs(event.clientX - dragState.startX) < 8) return;
 
             emitDragRange(dragState, endTime);
@@ -647,16 +692,23 @@ function TagEChart({ series, timeFormat, timeZone, timeRange, displayRange, seri
             event.preventDefault();
             event.stopPropagation();
 
-            const endTime = convertMouseEventToTimestamp(event);
+            const endTime = convertMouseEventToTimestamp(event, { outside: "clamp" });
             if (dragState.mode === "pan") {
                 if (Number.isFinite(endTime) && Math.abs(event.clientX - dragState.startX) >= 1) {
                     emitDragRange(dragState, endTime);
                 }
                 return;
             }
-            const left = Math.min(dragState.startX, event.clientX) - dragState.containerLeft;
-            const width = Math.abs(event.clientX - dragState.startX);
-            setDragPreview({ mode: dragState.mode, left, width, ...dragState.gridBounds });
+            // Both ends go through the same clamp so the guide stops exactly where the applied
+            // range stops.
+            const startLeft = clampToPlotPixel(dragState, dragState.startX);
+            const currentLeft = clampToPlotPixel(dragState, event.clientX);
+            setDragPreview({
+                mode: dragState.mode,
+                left: Math.min(startLeft, currentLeft),
+                width: Math.abs(currentLeft - startLeft),
+                ...dragState.gridBounds,
+            });
         };
         const handleDragEnd = (event) => {
             if (!dragStateRef.current) return;
@@ -687,8 +739,14 @@ function TagEChart({ series, timeFormat, timeZone, timeRange, displayRange, seri
                 navigatorRange: activeNavigatorRange,
                 onDisplayRangeChange: activeRangeChange,
                 gridBounds: getMainGridBounds(),
+                plotBounds: getPlotPixelBounds(),
             };
-            setDragPreview(mode === "pan" ? null : { mode, left: event.clientX - rect.left, width: 0, ...dragStateRef.current.gridBounds });
+            setDragPreview(mode === "pan" ? null : {
+                mode,
+                left: clampToPlotPixel(dragStateRef.current, event.clientX),
+                width: 0,
+                ...dragStateRef.current.gridBounds,
+            });
             window.addEventListener("mousemove", handleDragMove, true);
             window.addEventListener("mouseup", handleDragEnd, true);
         };
