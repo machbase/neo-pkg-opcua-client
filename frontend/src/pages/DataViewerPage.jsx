@@ -58,15 +58,17 @@ import {
     hasDataViewerRawNextPage,
     hasExplicitDataViewerDataZoomEventRange,
     hasAssetHierarchy,
+    isJsonValueColumn,
     isSameDataViewerChartRange,
     normalizeSelectedTagNames,
+    resolveTagAnalyzerKeyColumns,
     resolveTimeRangeInput,
     resolveTagNodes,
     sendNeoWebTagAnalyzerMessage,
     showsDataViewerTimeControls,
     JSON_VALUE_COLUMN_BLOCK_REASON,
 } from "./dataViewerModel";
-import useJsonValueColumn from "../hooks/useJsonValueColumn";
+import useTableColumns from "../hooks/useTableColumns";
 import useModalDismiss from "../hooks/useModalDismiss";
 
 // Must match `.data-viewer-raw-table th, td { height: 25px }` — the virtualizer trusts it
@@ -939,7 +941,11 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
     const dbServer = typeof config.db === "string" ? config.db : "";
     const dbTable = config.dbTable || "";
     const valueColumn = selectedValueColumn(config);
-    const { isJson: jsonValueColumn } = useJsonValueColumn({ server: dbServer, table: dbTable, valueColumn });
+    // One columns lookup feeds both the JSON block and the Tag Analyzer key columns, since the
+    // collector config only stores column names — never which ones carry the TAG flags.
+    const { columns: tableColumns } = useTableColumns({ server: dbServer, table: dbTable });
+    const jsonValueColumn = useMemo(() => isJsonValueColumn(tableColumns, valueColumn), [tableColumns, valueColumn]);
+    const tagAnalyzerKeyColumns = useMemo(() => resolveTagAnalyzerKeyColumns(tableColumns), [tableColumns]);
     const stringValueColumn = config.stringOnly ? "" : (config.stringValueColumn || "");
 
     const [tableTags, setTableTags] = useState([]);
@@ -1829,6 +1835,10 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
             tagNames: group.tagNames,
             range: chartViewRanges[group.id] || chartData?.range || group.range,
             valueColumn,
+            // neo-web puts these straight into SQL, so they have to be the table's real
+            // PRIMARY KEY / BASETIME columns rather than the NAME/TIME defaults.
+            nameColumn: tagAnalyzerKeyColumns.nameColumn,
+            timeColumn: tagAnalyzerKeyColumns.timeColumn,
             stringOnly: Boolean(config.stringOnly),
         });
         if (!built.ok) {

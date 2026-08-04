@@ -53,6 +53,7 @@ import {
     isSameDataViewerChartRange,
     normalizeSelectedTagNames,
     QUICK_TIME_RANGE_GROUPS,
+    resolveTagAnalyzerKeyColumns,
     resolveTimeRangeInput,
     resolveTagNodes,
     sendNeoWebTagAnalyzerMessage,
@@ -1217,6 +1218,65 @@ test("buildNeoWebTagAnalyzerMessage builds chart-group scoped Tag Analyzer paylo
             jsonKey: "",
         },
     });
+});
+
+test("resolveTagAnalyzerKeyColumns reads the TAG key columns from the flags, not the names", () => {
+    assert.deepEqual(
+        resolveTagAnalyzerKeyColumns([
+            { name: "TAG_ID", type: "VARCHAR(100)", primaryKey: true },
+            { name: "TS", type: "DATETIME", basetime: true },
+            { name: "READING", type: "DOUBLE", summarized: true },
+        ]),
+        { nameColumn: "TAG_ID", timeColumn: "TS" }
+    );
+    assert.deepEqual(
+        resolveTagAnalyzerKeyColumns([
+            { name: "NAME", type: "VARCHAR(100)", primaryKey: true },
+            { name: "TIME", type: "DATETIME", basetime: true },
+        ]),
+        { nameColumn: "NAME", timeColumn: "TIME" }
+    );
+    assert.deepEqual(
+        resolveTagAnalyzerKeyColumns([{ name: "VALUE", type: "DOUBLE", summarized: true }]),
+        { nameColumn: "", timeColumn: "" },
+        "unflagged columns leave the fallback to the message builder"
+    );
+    assert.deepEqual(resolveTagAnalyzerKeyColumns(undefined), { nameColumn: "", timeColumn: "" });
+});
+
+test("buildNeoWebTagAnalyzerMessage sends the table's real key columns", () => {
+    const built = buildNeoWebTagAnalyzerMessage({
+        table: "TAG",
+        tagNames: ["sensor.a"],
+        range: { from: "2026-06-01T00:00:00.000Z", to: "2026-06-01T01:00:00.000Z" },
+        valueColumn: "READING",
+        nameColumn: "TAG_ID",
+        timeColumn: "TS",
+    });
+
+    assert.equal(built.ok, true);
+    assert.deepEqual(built.message.payload.tags[0].colName, {
+        name: "TAG_ID",
+        time: "TS",
+        value: "READING",
+        timeType: 6,
+        timeBaseTime: true,
+        jsonKey: "",
+    });
+});
+
+test("buildNeoWebTagAnalyzerMessage falls back to NAME/TIME when the key columns are unknown", () => {
+    const built = buildNeoWebTagAnalyzerMessage({
+        table: "TAG",
+        tagNames: ["sensor.a"],
+        valueColumn: "VALUE",
+        nameColumn: "",
+        timeColumn: "",
+    });
+
+    assert.equal(built.ok, true);
+    assert.equal(built.message.payload.tags[0].colName.name, "NAME");
+    assert.equal(built.message.payload.tags[0].colName.time, "TIME");
 });
 
 test("buildNeoWebTagAnalyzerMessage rejects unsupported payloads", () => {

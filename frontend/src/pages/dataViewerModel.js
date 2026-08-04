@@ -93,6 +93,32 @@ export function buildNeoWebTagAnalyzerRange(range = {}) {
     return { ...start, ...end };
 }
 
+/**
+ * The table's PRIMARY KEY and BASETIME column names, for the Tag Analyzer bridge.
+ *
+ * Every other layer already resolves these from the catalog — the tag data API overwrites
+ * whatever the client sends with the real columns (`resolveTagKeyColumnNames` in
+ * cgi-bin/src/db/types.js), and the collector takes the base column name from the append
+ * stream. The bridge payload was the last place still assuming NAME/TIME, and neo-web puts
+ * `colName.name`/`colName.time` straight into SQL, so a table that names them otherwise
+ * queries columns that do not exist.
+ *
+ * Returns "" for a column the flags do not identify; the message builder's NAME/TIME
+ * defaults then apply, which matches the backend's legacy fallback.
+ *
+ * @param {Array<{ name?: string, primaryKey?: boolean, basetime?: boolean }>} columns - columns API payload
+ * @returns {{ nameColumn: string, timeColumn: string }}
+ */
+export function resolveTagAnalyzerKeyColumns(columns) {
+    const rows = Array.isArray(columns) ? columns : [];
+    const nameByFlag = (flag) => String(rows.find((col) => col?.[flag])?.name ?? "").trim();
+
+    return {
+        nameColumn: nameByFlag("primaryKey"),
+        timeColumn: nameByFlag("basetime"),
+    };
+}
+
 export function buildNeoWebTagAnalyzerMessage({
     appName = NEO_WEB_TAG_ANALYZER_APP_NAME,
     title = "OPC UA Data Viewer",
