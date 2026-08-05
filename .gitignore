@@ -36,8 +36,29 @@ Thumbs.db
 # Claude
 .claude
 
+# 로컬 설계 메모 (커밋 대상 아님)
+frontend/docs/
+
+# Agent workflow scratch (notion-plan / notion-task / notion-simulate)
+.notion-plan/
+.notion-task/
+.notion-simulate/
+
+# MCP / test tool output
+.playwright-mcp/
+.playwright-report/
+test-results/
+
+# Ad-hoc screenshots dropped at repo root (docs/images, frontend assets stay tracked)
+/*.png
+!/icon.png
+
 # Http
 *.http
 
 # Collector runtime configs
 cgi-bin/conf.d
+
+# Collector runtime state
+cgi-bin/run/
+cgi-bin/data/

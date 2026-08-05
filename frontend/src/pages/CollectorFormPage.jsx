@@ -122,11 +122,17 @@ export default function CollectorFormPage({
     };
 
     // A JSON value column stores one merged payload row per cycle, so the row cannot carry a
-    // per-node sourceTimestamp — requestTime is the only coherent stamp. The policy is NOT
-    // rewritten behind the user's back: the conflict is shown in the form and blocks saving,
-    // so an existing collector's stored value stays visible until it is fixed deliberately.
+    // per-node sourceTimestamp — requestTime is the only coherent stamp. The form switches the
+    // policy itself and says why next to the disabled sourceTime option, rather than leaving an
+    // unsaveable value on screen. This also covers edit mode: columnKind resolves once the
+    // table's columns load, and the switch happens then.
     const jsonValueColumn = form.db.columnKind === "json";
     const timePolicyConflict = jsonValueColumn && form.timePolicy !== "requestTime";
+
+    useEffect(() => {
+        if (timePolicyConflict) update("timePolicy", "requestTime");
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [timePolicyConflict]);
 
     const nodeSelectionMode = form.db.autoCreateTable || form.db.stringOnly || form.db.columnKind === "json" || !!form.db.stringColumn ? "all" : "numeric-only";
     const opcuaConnectionTarget = useMemo(() => (form.opcua.server ? { server: form.opcua.server } : { endpoint: form.opcua.endpoint }), [form.opcua.server, form.opcua.endpoint]);
@@ -363,6 +369,7 @@ export default function CollectorFormPage({
                                 update={update}
                                 disabledOptions={jsonValueColumn ? { timePolicy: { sourceTime: JSON_REQUIRES_REQUEST_TIME } } : {}}
                                 conflicts={timePolicyConflict ? { timePolicy: `${JSON_REQUIRES_REQUEST_TIME} Switch to requestTime to save.` } : {}}
+                                notes={jsonValueColumn ? { timePolicy: `sourceTime is unavailable on a JSON value column. ${JSON_REQUIRES_REQUEST_TIME}` } : {}}
                             />
 
                             {/* Logging — very bottom */}

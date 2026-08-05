@@ -4742,7 +4742,8 @@ label.switch input:checked + .switch-slider::before {
     text-transform: none;
 }
 
-.table-combo-option:hover {
+.table-combo-option:hover,
+.table-combo-option.is-highlighted {
     background-color: var(--color-dropdown-option-hover);
 }
 
@@ -5051,6 +5052,17 @@ label.switch input:checked + .switch-slider::before {
     font-size: var(--font-size-sm);
     line-height: 1.4;
 }
+/* Same shape as .policy-conflict, muted: nothing has to be fixed, it only says why an option
+   is unavailable. */
+.policy-note {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--spacing-6);
+    margin-top: var(--spacing-8);
+    color: var(--color-on-surface-tertiary);
+    font-size: var(--font-size-sm);
+    line-height: 1.4;
+}
 .policy-option.is-selected {
     border-color: var(--color-primary);
     background-color: color-mix(in srgb, var(--color-primary) 10%, transparent);
@@ -5143,10 +5155,11 @@ label.switch input:checked + .switch-slider::before {
 }
 
 /* Variable rows — [badge 40px][node id][data type 84px][remove 26px] */
+/* overflow stays visible: a row's node dropdown is absolutely positioned and would be clipped
+   by the table box. Rows paint no background of their own, so nothing bleeds past the radius. */
 .dt-var-table {
     border: 1px solid var(--color-border);
     border-radius: var(--radius-base);
-    overflow: hidden;
 }
 .dt-var-row {
     display: flex;
@@ -5175,15 +5188,21 @@ label.switch input:checked + .switch-slider::before {
     font-weight: 600;
     line-height: 1;
 }
-/* Chrome-less select: the row itself is the control */
-/* A normal select: height, background, border, caret, hover and focus all come from the
-   global `input, select, textarea` rules. Only sizing and the mono face are local, because
-   the options are node identifiers. */
-.dt-var-node {
+/* Node picker: the `.table-combo` control from the Table field, sized to the row's node column.
+   Height, background, border, hover and focus all come from the global `input` rules and
+   `.table-combo-*`. Only sizing and the mono face are local, because the options are node
+   identifiers. */
+.dt-var-combo {
     flex: 1 1 auto;
+    min-width: 0;
+}
+.dt-var-node {
     min-width: 0;
     font-family: var(--font-family-mono);
     text-overflow: ellipsis;
+}
+.dt-var-combo .table-combo-option-label {
+    font-family: var(--font-family-mono);
 }
 .dt-var-node.is-empty {
     color: var(--color-on-surface-muted);

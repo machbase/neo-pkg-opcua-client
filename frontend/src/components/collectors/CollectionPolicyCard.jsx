@@ -47,7 +47,7 @@ export const POLICIES = [
 export const JSON_REQUIRES_REQUEST_TIME =
   'A JSON value column writes one merged row per cycle, so every value has to share the read time.'
 
-function PolicyRow({ policy, value, onChange, disabledOptions, conflictReason }) {
+function PolicyRow({ policy, value, onChange, disabledOptions, conflictReason, note }) {
   return (
     <div>
       <label className="form-label">{policy.label}</label>
@@ -86,11 +86,25 @@ function PolicyRow({ policy, value, onChange, disabledOptions, conflictReason })
           <span>{conflictReason}</span>
         </div>
       )}
+      {/* Why an option is unavailable. Unlike a conflict this is not an error the user has to
+          fix — it explains a choice the form already made for them. */}
+      {!conflictReason && note && (
+        <div className="policy-note">
+          <Icon name="info" className="icon-sm shrink-0" />
+          <span>{note}</span>
+        </div>
+      )}
     </div>
   )
 }
 
-export default function CollectionPolicyCard({ form, update, disabledOptions = {}, conflicts = {} }) {
+export default function CollectionPolicyCard({
+  form,
+  update,
+  disabledOptions = {},
+  conflicts = {},
+  notes = {},
+}) {
   return (
     <div className="form-card">
       <div className="form-card-header">
@@ -107,6 +121,7 @@ export default function CollectionPolicyCard({ form, update, disabledOptions = {
             value={form[policy.key] || policy.fallback}
             disabledOptions={disabledOptions[policy.key]}
             conflictReason={conflicts[policy.key]}
+            note={notes[policy.key]}
             onChange={(v) => update(policy.key, v)}
           />
         ))}
