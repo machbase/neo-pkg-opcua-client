@@ -1,318 +1,383 @@
-import { useState, useEffect, useMemo } from 'react'
-import { useParams, useNavigate } from 'react-router'
-import { useApp } from '../context/AppContext'
-import * as api from '../api/collectors'
-import Icon from '../components/common/Icon'
-import OpcuaSection from '../components/collectors/OpcuaSection'
-import DbSection from '../components/collectors/DbSection'
-import LogSection from '../components/collectors/LogSection'
-import NodeListEditor from '../components/collectors/NodeListEditor'
-import { normalizeCollectorNodes } from '../components/collectors/nodeTree'
-import { isStringDataType } from '../components/collectors/nodeRangeSelection'
-import { koToEn } from '../utils/korean'
+import { useState, useEffect, useMemo } from "react";
+import { useParams, useNavigate } from "react-router";
+import { useApp } from "../context/AppContext";
+import * as api from "../api/collectors";
+import Icon from "../components/common/Icon";
+import OpcuaSection from "../components/collectors/OpcuaSection";
+import DbSection from "../components/collectors/DbSection";
+import LogSection from "../components/collectors/LogSection";
+import NodeListEditor from "../components/collectors/NodeListEditor";
+import DerivedTagsEditor from "../components/collectors/DerivedTagsEditor";
+import CollectionPolicyCard, { JSON_REQUIRES_REQUEST_TIME } from "../components/collectors/CollectionPolicyCard";
+import { normalizeCollectorNodes } from "../components/collectors/nodeTree";
+import { normalizeDerivedTags, serializeDerivedTags } from "../components/collectors/derivedTag.js";
+import { isStringDataType } from "../components/collectors/nodeRangeSelection";
+import { koToEn } from "../utils/korean";
 
 const DEFAULTS = {
-  name: '',
-  opcua: {
-    server: '',
-    endpoint: '',
-    interval: 3000,
-    readRetryInterval: 100,
-    nodes: [],
-  },
-  db: {
-    server: '',
-    table: '',
-    column: '',
-    stringColumn: '',
-    stringOnly: false,
-    columnKind: '',
-    autoCreateTable: false,
-    tableStatus: 'unknown',
-  },
-  log: {
-    level: 'INFO',
-    output: 'file',
-    format: 'json',
-    file: {
-      path: '${CWD}/logs',
-      maxSize: '10MB',
-      maxFiles: 7,
-      rotate: 'size',
+    name: "",
+    derivedTags: [],
+    timePolicy: "sourceTime",
+    badStatusPolicy: "skip",
+    opcua: {
+        server: "",
+        endpoint: "",
+        interval: 3000,
+        readRetryInterval: 100,
+        nodes: [],
     },
-  },
-}
+    db: {
+        server: "",
+        table: "",
+        column: "",
+        stringColumn: "",
+        stringOnly: false,
+        columnKind: "",
+        columnSummarized: false,
+        autoCreateTable: false,
+        tableStatus: "unknown",
+    },
+    log: {
+        level: "INFO",
+        output: "file",
+        format: "json",
+        file: {
+            path: "${CWD}/logs",
+            maxSize: "10MB",
+            maxFiles: 7,
+            rotate: "size",
+        },
+    },
+};
 
 export default function CollectorFormPage({
-  detail,
-  onRefresh,
-  onRefreshDetail,
-  servers = [],
-  onOpenServerSettings,
-  onRefreshServers,
-  opcuaServers = [],
-  onOpenOpcuaServerSettings,
-  onRefreshOpcuaServers,
+    detail,
+    onRefresh,
+    onRefreshDetail,
+    servers = [],
+    onOpenServerSettings,
+    onRefreshServers,
+    opcuaServers = [],
+    onOpenOpcuaServerSettings,
+    onRefreshOpcuaServers,
 }) {
-  const { id } = useParams()
-  const navigate = useNavigate()
-  const { notify, setSelectedCollectorId } = useApp()
-  const isEdit = Boolean(id)
+    const { id } = useParams();
+    const navigate = useNavigate();
+    const { notify, setSelectedCollectorId } = useApp();
+    const isEdit = Boolean(id);
 
-  const [form, setForm] = useState(DEFAULTS)
-  const [saving, setSaving] = useState(false)
+    const [form, setForm] = useState(DEFAULTS);
+    const [saving, setSaving] = useState(false);
 
-  useEffect(() => {
-    if (!isEdit) setSelectedCollectorId(null)
-  }, [isEdit, setSelectedCollectorId])
+    useEffect(() => {
+        if (!isEdit) setSelectedCollectorId(null);
+    }, [isEdit, setSelectedCollectorId]);
 
-  useEffect(() => {
-    if (isEdit && detail?.config) {
-      const c = detail.config
-      setForm({
-        name: detail.name || id,
-        opcua: { ...DEFAULTS.opcua, ...c.opcua, nodes: normalizeCollectorNodes(c.opcua?.nodes) },
-        db: {
-          server: typeof c.db === 'string' ? c.db : '',
-          table: c.dbTable || '',
-          column: c.valueColumn || '',
-          stringColumn: c.stringValueColumn || '',
-          stringOnly: Boolean(c.stringOnly),
-          columnKind: '',
-          autoCreateTable: false,
-          tableStatus: 'existing',
-        },
-        log: {
-          ...DEFAULTS.log,
-          ...c.log,
-          file: { ...DEFAULTS.log.file, ...c.log?.file },
-        },
-      })
-    } else if (!isEdit) {
-      setForm(DEFAULTS)
-    }
-  }, [id, isEdit, detail])
-
-  const update = (path, value) => {
-    setForm(prev => {
-      const next = { ...prev }
-      const keys = path.split('.')
-      let obj = next
-      for (let i = 0; i < keys.length - 1; i++) {
-        obj[keys[i]] = { ...obj[keys[i]] }
-        obj = obj[keys[i]]
-      }
-      obj[keys[keys.length - 1]] = value
-      return next
-    })
-  }
-
-  const nodeSelectionMode =
-    form.db.autoCreateTable || form.db.stringOnly || form.db.columnKind === 'json' || !!form.db.stringColumn
-      ? 'all'
-      : 'numeric-only'
-  const opcuaConnectionTarget = useMemo(
-    () => (form.opcua.server ? { server: form.opcua.server } : { endpoint: form.opcua.endpoint }),
-    [form.opcua.server, form.opcua.endpoint]
-  )
-
-  const handleSubmit = async (e) => {
-    e.preventDefault()
-
-    const autoCreateTable = !isEdit && form.db.autoCreateTable === true && form.db.tableStatus === 'autoCreate'
-    const hasStringNodes = form.opcua.nodes.some((node) => isStringDataType(node?.dataType))
-
-    if (form.db.tableStatus === 'missing') {
-      notify('Table not found. Select an existing table before saving.', 'error')
-      return
-    }
-
-    if (isEdit && detail?.config?.stringValueColumn && !form.db.stringColumn && hasStringNodes) {
-      notify('String Value Column was configured before. Select a String Value Column before saving.', 'error')
-      return
-    }
-
-    if (autoCreateTable) {
-      if (!form.db.table) {
-        notify('Table is required', 'error')
-        return
-      }
-    } else if (form.db.stringOnly) {
-      if (!form.db.stringColumn) {
-        notify('String Value Column is required for string-only mode', 'error')
-        return
-      }
-    } else {
-      if (form.db.tableStatus === 'unknown' && !form.db.column) {
-        notify('Verify table before saving', 'error')
-        return
-      }
-      if (!form.db.column) {
-        notify('Value Column is required', 'error')
-        return
-      }
-      if (form.db.stringColumn && form.db.stringColumn === form.db.column) {
-        notify('String Value Column must differ from Value Column', 'error')
-        return
-      }
-    }
-
-    if (!form.opcua.server && !form.opcua.endpoint) {
-      notify('OPC UA Server is required', 'error')
-      return
-    }
-
-    setSaving(true)
-    try {
-      const config = {
-        opcua: {
-          interval: Number(form.opcua.interval),
-          readRetryInterval: Number(form.opcua.readRetryInterval),
-          nodes: form.opcua.nodes,
-        },
-        db: form.db.server,
-        dbTable: form.db.table,
-        log: {
-          level: form.log.level,
-          maxFiles: Number(form.log.file.maxFiles),
-        },
-      }
-
-      if (form.opcua.server) {
-        config.opcua.server = form.opcua.server
-      } else {
-        config.opcua.endpoint = form.opcua.endpoint
-      }
-
-      if (autoCreateTable) {
-        config.autoCreateTable = true
-      } else if (form.db.stringOnly) {
-        config.stringOnly = true
-        config.stringValueColumn = form.db.stringColumn
-      } else {
-        config.valueColumn = form.db.column
-        if (form.db.stringColumn && form.db.columnKind !== 'json') {
-          config.stringValueColumn = form.db.stringColumn
+    useEffect(() => {
+        if (isEdit && detail?.config) {
+            const c = detail.config;
+            setForm({
+                name: detail.name || id,
+                derivedTags: normalizeDerivedTags(c.derivedTags),
+                timePolicy: c.timePolicy || "sourceTime",
+                badStatusPolicy: c.badStatusPolicy || "skip",
+                opcua: { ...DEFAULTS.opcua, ...c.opcua, nodes: normalizeCollectorNodes(c.opcua?.nodes) },
+                db: {
+                    server: typeof c.db === "string" ? c.db : "",
+                    table: c.dbTable || "",
+                    column: c.valueColumn || "",
+                    stringColumn: c.stringValueColumn || "",
+                    stringOnly: Boolean(c.stringOnly),
+                    columnKind: "",
+                    columnSummarized: false,
+                    autoCreateTable: false,
+                    tableStatus: "existing",
+                },
+                log: {
+                    ...DEFAULTS.log,
+                    ...c.log,
+                    // The backend stores lowercase level keys; the selector compares against
+                    // uppercase LOG_LEVELS entries, so normalize on the way in.
+                    level: String(c.log?.level || DEFAULTS.log.level).toUpperCase(),
+                    file: { ...DEFAULTS.log.file, ...c.log?.file },
+                },
+            });
+        } else if (!isEdit) {
+            setForm(DEFAULTS);
         }
-      }
+    }, [id, isEdit, detail]);
 
-      if (isEdit) {
-        await api.updateCollector(id, config)
-        notify(`Job '${id}' updated`, 'success')
-      } else {
-        await api.createCollector(form.name, config)
-        notify(`Job created`, 'success')
-      }
-      if (onRefresh) await onRefresh()
-      if (isEdit && onRefreshDetail) await onRefreshDetail()
-      setSelectedCollectorId(isEdit ? id : form.name)
-      navigate('/')
-    } catch (e) {
-      notify(e.reason || e.message, 'error')
-    } finally {
-      setSaving(false)
-    }
-  }
+    const update = (path, value) => {
+        setForm((prev) => {
+            const next = { ...prev };
+            const keys = path.split(".");
+            let obj = next;
+            for (let i = 0; i < keys.length - 1; i++) {
+                obj[keys[i]] = { ...obj[keys[i]] };
+                obj = obj[keys[i]];
+            }
+            obj[keys[keys.length - 1]] = value;
+            return next;
+        });
+    };
 
-  return (
-    <div className="page">
-      <header className="page-header">
-        <div className="page-header-inner">
-          <div className="flex items-center gap-8">
-            <button onClick={() => navigate('/')} className="p-4 hover:bg-surface-hover rounded-base transition-colors shrink-0 tooltip" data-tooltip="Back">
-              <Icon name="arrow_back" />
-            </button>
-            <h2 className="page-title truncate">
-              {isEdit ? 'Edit Job' : 'New Job Configuration'}
-            </h2>
-          </div>
-          <div className="flex gap-8 shrink-0">
-            <button
-              type="button"
-              onClick={() => navigate('/')}
-              className="btn btn-ghost"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              form="collector-form"
-              disabled={saving}
-              className="btn btn-primary"
-            >
-              {saving ? 'Saving...' : (isEdit ? 'Update' : 'Create')}
-            </button>
-          </div>
-        </div>
-      </header>
+    // A JSON value column stores one merged payload row per cycle, so the row cannot carry a
+    // per-node sourceTimestamp — requestTime is the only coherent stamp. The form switches the
+    // policy itself and says why next to the disabled sourceTime option, rather than leaving an
+    // unsaveable value on screen. This also covers edit mode: columnKind resolves once the
+    // table's columns load, and the switch happens then.
+    const jsonValueColumn = form.db.columnKind === "json";
+    const timePolicyConflict = jsonValueColumn && form.timePolicy !== "requestTime";
 
-      <div className="page-body">
-        <div className="page-body-inner">
-          <form id="collector-form" onSubmit={handleSubmit}>
-            <div className="space-y-16">
-              {/* Job */}
-              <div className="form-card">
-                <div className="form-card-header">
-                  <span className="section-dot" />
-                  Job
-                  <Icon name="badge" className="ml-auto text-primary" />
+    useEffect(() => {
+        if (timePolicyConflict) update("timePolicy", "requestTime");
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [timePolicyConflict]);
+
+    const nodeSelectionMode = form.db.autoCreateTable || form.db.stringOnly || form.db.columnKind === "json" || !!form.db.stringColumn ? "all" : "numeric-only";
+    const opcuaConnectionTarget = useMemo(() => (form.opcua.server ? { server: form.opcua.server } : { endpoint: form.opcua.endpoint }), [form.opcua.server, form.opcua.endpoint]);
+
+    const handleSubmit = async (e) => {
+        e.preventDefault();
+
+        const autoCreateTable = !isEdit && form.db.autoCreateTable === true && form.db.tableStatus === "autoCreate";
+        const hasStringNodes = form.opcua.nodes.some((node) => isStringDataType(node?.dataType));
+
+        if (form.db.tableStatus === "missing") {
+            notify("Table not found. Select an existing table before saving.", "error");
+            return;
+        }
+
+        if (timePolicyConflict) {
+            notify(`Time Policy must be requestTime. ${JSON_REQUIRES_REQUEST_TIME}`, "error");
+            return;
+        }
+
+        if (form.db.tableStatus === "unsupportedBase") {
+            notify("This table uses a distance base axis. Select a time-based TAG table before saving.", "error");
+            return;
+        }
+
+        if (isEdit && detail?.config?.stringValueColumn && !form.db.stringColumn && hasStringNodes) {
+            notify("String Value Column was configured before. Select a String Value Column before saving.", "error");
+            return;
+        }
+
+        if (autoCreateTable) {
+            if (!form.db.table) {
+                notify("Table is required", "error");
+                return;
+            }
+        } else if (form.db.stringOnly) {
+            if (!form.db.stringColumn) {
+                notify("String Value Column is required for string-only mode", "error");
+                return;
+            }
+        } else {
+            if (form.db.tableStatus === "unknown" && !form.db.column) {
+                notify("Verify table before saving", "error");
+                return;
+            }
+            if (!form.db.column) {
+                notify("Value Column is required", "error");
+                return;
+            }
+            if (form.db.stringColumn && form.db.stringColumn === form.db.column) {
+                notify("String Value Column must differ from Value Column", "error");
+                return;
+            }
+        }
+
+        if (!form.opcua.server && !form.opcua.endpoint) {
+            notify("OPC UA Server is required", "error");
+            return;
+        }
+
+        setSaving(true);
+        try {
+            const finalStringOnly = form.db.stringOnly === true;
+
+            const config = {
+                opcua: {
+                    interval: Number(form.opcua.interval),
+                    readRetryInterval: Number(form.opcua.readRetryInterval),
+                    nodes: form.opcua.nodes,
+                },
+                timePolicy: form.timePolicy,
+                badStatusPolicy: form.badStatusPolicy,
+                derivedTags: finalStringOnly ? [] : serializeDerivedTags(form.derivedTags),
+                db: form.db.server,
+                dbTable: form.db.table,
+                log: {
+                    // Logger resolves levels through a lowercase-keyed table; an uppercase
+                    // value silently falls back to "info" and drops the user's choice.
+                    level: String(form.log.level).toLowerCase(),
+                    maxFiles: Number(form.log.file.maxFiles),
+                },
+            };
+
+            if (form.opcua.server) {
+                config.opcua.server = form.opcua.server;
+            } else {
+                config.opcua.endpoint = form.opcua.endpoint;
+            }
+
+            if (autoCreateTable) {
+                config.autoCreateTable = true;
+            } else if (form.db.stringOnly) {
+                config.stringOnly = true;
+                config.stringValueColumn = form.db.stringColumn;
+            } else {
+                config.valueColumn = form.db.column;
+                if (form.db.stringColumn && form.db.columnKind !== "json") {
+                    config.stringValueColumn = form.db.stringColumn;
+                }
+            }
+
+            try {
+                const v = await api.validateCollector(isEdit ? id : form.name, isEdit ? "update" : "create", config);
+                if (v && Array.isArray(v.warnings) && v.warnings.length) notify(v.warnings.join("; "), "info");
+            } catch (e) {
+                notify(e.reason || e.message, "error");
+                setSaving(false);
+                return;
+            }
+
+            if (isEdit) {
+                await api.updateCollector(id, config);
+                notify(`Job '${id}' updated`, "success");
+            } else {
+                await api.createCollector(form.name, config);
+                notify(`Job created`, "success");
+            }
+            if (onRefresh) await onRefresh();
+            if (isEdit && onRefreshDetail) await onRefreshDetail();
+            setSelectedCollectorId(isEdit ? id : form.name);
+            navigate("/");
+        } catch (e) {
+            notify(e.reason || e.message, "error");
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    return (
+        <div className="page">
+            <header className="page-header">
+                <div className="page-header-inner">
+                    <div className="flex items-center gap-8">
+                        <button onClick={() => navigate("/")} className="p-4 hover:bg-surface-hover rounded-base transition-colors shrink-0 tooltip" data-tooltip="Back">
+                            <Icon name="arrow_back" />
+                        </button>
+                        <h2 className="page-title truncate">{isEdit ? "Edit Job" : "New Job Configuration"}</h2>
+                    </div>
+                    <div className="flex gap-8 shrink-0">
+                        <button type="button" onClick={() => navigate("/")} className="btn btn-ghost">
+                            Cancel
+                        </button>
+                        <button type="submit" form="collector-form" disabled={saving} className="btn btn-primary">
+                            {saving ? "Saving..." : isEdit ? "Update" : "Create"}
+                        </button>
+                    </div>
                 </div>
-                <div>
-                  <label className="form-label">Name</label>
-                  <input
-                    type="text"
-                    required
-                    disabled={isEdit}
-                    value={form.name}
-                    onChange={e => update('name', koToEn(e.target.value).replace(/[^a-zA-Z0-9_-]/g, ''))}
-                    className="w-full disabled:opacity-50"
-                    placeholder="e.g. FLOW-WEST-001"
-                  />
+            </header>
+
+            <div className="page-body">
+                <div className="page-body-inner">
+                    <form id="collector-form" onSubmit={handleSubmit}>
+                        <div className="space-y-16">
+                            {/* Job */}
+                            <div className="form-card">
+                                <div className="form-card-header">
+                                    <span className="section-dot" />
+                                    Job
+                                    <Icon name="badge" className="ml-auto text-primary" />
+                                </div>
+                                <div>
+                                    <label className="form-label">Name</label>
+                                    <input
+                                        type="text"
+                                        required
+                                        disabled={isEdit}
+                                        value={form.name}
+                                        onChange={(e) => update("name", koToEn(e.target.value).replace(/[^a-zA-Z0-9_-]/g, ""))}
+                                        className="w-full disabled:opacity-50"
+                                        placeholder="e.g. FLOW-WEST-001"
+                                    />
+                                </div>
+                            </div>
+
+                            {/* OPC UA + Database */}
+                            <div className="grid grid-cols-1 lg:grid-cols-2 gap-16">
+                                <OpcuaSection
+                                    form={form}
+                                    update={update}
+                                    opcuaServers={opcuaServers}
+                                    onOpenOpcuaServerSettings={onOpenOpcuaServerSettings}
+                                    onRefreshOpcuaServers={onRefreshOpcuaServers}
+                                />
+                                <DbSection
+                                    form={form}
+                                    update={update}
+                                    servers={servers}
+                                    onOpenServerSettings={onOpenServerSettings}
+                                    onRefreshServers={onRefreshServers}
+                                    isEdit={isEdit}
+                                />
+                            </div>
+
+                            {/* Node Mapping */}
+                            <div className="form-card">
+                                <div className="form-card-header">
+                                    <span className="section-dot" />
+                                    Node Mapping
+                                    <Icon name="account_tree" className="ml-auto text-primary" />
+                                </div>
+                                <NodeListEditor
+                                    nodes={form.opcua.nodes}
+                                    onChange={(nodes) => update("opcua.nodes", nodes)}
+                                    endpoint={form.opcua.endpoint}
+                                    endpointTarget={opcuaConnectionTarget}
+                                    selectionMode={nodeSelectionMode}
+                                    storageMode={form.db.autoCreateTable || form.db.stringOnly ? "string" : form.db.columnKind === "json" ? "json" : "default"}
+                                    derivedTags={form.derivedTags}
+                                />
+                            </div>
+
+                            {/* Derived Tags */}
+                            <div className="form-card">
+                                <div className="form-card-header">
+                                    <span className="section-dot" />
+                                    Derived Tags
+                                    <Icon name="calculate" className="ml-auto text-primary" />
+                                </div>
+                                <DerivedTagsEditor
+                                    derivedTags={form.derivedTags}
+                                    onChange={(dt) => update("derivedTags", dt)}
+                                    nodes={form.opcua.nodes}
+                                    storageMode={form.db.stringOnly ? "string" : form.db.columnKind === "json" ? "json" : "default"}
+                                    timePolicy={form.timePolicy}
+                                    tableName={form.db.table}
+                                    summarizedValueColumn={form.db.autoCreateTable === true || (form.db.columnKind !== "json" && form.db.columnSummarized === true)}
+                                />
+                            </div>
+
+                            {/* Collection Policy — precedes the tag lists: timePolicy / badStatusPolicy
+                  govern how both source nodes and derived tags are stamped and stored. */}
+                            <CollectionPolicyCard
+                                form={form}
+                                update={update}
+                                disabledOptions={jsonValueColumn ? { timePolicy: { sourceTime: JSON_REQUIRES_REQUEST_TIME } } : {}}
+                                conflicts={timePolicyConflict ? { timePolicy: `${JSON_REQUIRES_REQUEST_TIME} Switch to requestTime to save.` } : {}}
+                                notes={jsonValueColumn ? { timePolicy: `sourceTime is unavailable on a JSON value column. ${JSON_REQUIRES_REQUEST_TIME}` } : {}}
+                            />
+
+                            {/* Logging — very bottom */}
+                            <LogSection form={form} update={update} />
+                        </div>
+                    </form>
                 </div>
-              </div>
-
-              {/* OPC UA + Database */}
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-16">
-                <OpcuaSection
-                  form={form}
-                  update={update}
-                  opcuaServers={opcuaServers}
-                  onOpenOpcuaServerSettings={onOpenOpcuaServerSettings}
-                  onRefreshOpcuaServers={onRefreshOpcuaServers}
-                />
-                <DbSection
-                  form={form}
-                  update={update}
-                  servers={servers}
-                  onOpenServerSettings={onOpenServerSettings}
-                  onRefreshServers={onRefreshServers}
-                  isEdit={isEdit}
-                />
-              </div>
-
-              {/* Node Mapping */}
-              <div className="form-card">
-                <div className="form-card-header">
-                  <span className="section-dot" />
-                  Node Mapping
-                  <Icon name="account_tree" className="ml-auto text-primary" />
-                </div>
-                <NodeListEditor
-                  nodes={form.opcua.nodes}
-                  onChange={nodes => update('opcua.nodes', nodes)}
-                  endpoint={form.opcua.endpoint}
-                  endpointTarget={opcuaConnectionTarget}
-                  selectionMode={nodeSelectionMode}
-                  storageMode={form.db.autoCreateTable || form.db.stringOnly ? 'string' : form.db.columnKind === 'json' ? 'json' : 'default'}
-                />
-              </div>
-
-              {/* Logging — very bottom */}
-              <LogSection form={form} update={update} />
             </div>
-          </form>
         </div>
-      </div>
-    </div>
-  )
+    );
 }

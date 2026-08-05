@@ -46,25 +46,26 @@ export function queryTagData({
     return request("GET", `/cgi-bin/api/db/table/data?${params}`);
 }
 
-export async function queryTagBoundaryTime({
-    server,
-    table,
-    names,
-    valueColumn,
-    stringValueColumn,
-    direction,
-}) {
-    const data = await queryTagData({
+/**
+ * Reads the selected tags' boundary times out of the V$<TABLE>_STAT view.
+ * Machbase already aggregates MIN_TIME/MAX_TIME per tag there, so this costs one lookup
+ * instead of scanning the table for a single row.
+ */
+export function queryTagStat({ server, table, names }) {
+    const params = encodeDataViewerQuery({
         server,
         table,
-        names,
-        valueColumn,
-        stringValueColumn,
-        direction,
-        pageSize: 1,
+        names: Array.isArray(names) ? names.map((name) => String(name || "").trim()).filter(Boolean).join(",") : names,
     });
-    const row = Array.isArray(data?.rows) ? data.rows[0] : null;
-    return row?.time ?? row?.TIME ?? row?.Time ?? null;
+
+    return request("GET", `/cgi-bin/api/db/table/stat?${params}`);
+}
+
+export async function queryTagBoundaryTime({ server, table, names, direction }) {
+    const data = await queryTagStat({ server, table, names });
+    // Null means none of the selected tags has ever been written, so there is no boundary
+    // to anchor a range on. Scanning for a row would not find one either.
+    return (direction === "oldest" ? data?.minTime : data?.maxTime) ?? null;
 }
 
 export function buildDataViewerChartQueryPath({

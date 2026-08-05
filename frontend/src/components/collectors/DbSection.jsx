@@ -1,11 +1,15 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import Icon from "../common/Icon";
 import * as serversApi from "../../api/servers";
+import { baseAxisOfColumns, isDistanceBaseTable } from "./tableBaseAxis";
 import { useApp } from "../../context/AppContext";
 
 const NUMERIC_TYPES = new Set(["SHORT", "INTEGER", "LONG", "FLOAT", "DOUBLE"]);
 const AUTO_TABLE_VALUE_COLUMN = "VALUE";
 const AUTO_TABLE_STRING_COLUMN = "STR_VALUE";
+// The table list API does not report the base axis, so every table needs its own columns lookup.
+// Cap the concurrent lookups so servers with many tables do not get a burst of requests.
+const BASE_AXIS_PROBE_CONCURRENCY = 6;
 
 function classifyColumn(col) {
     const t = (col?.type || "").toUpperCase();
@@ -68,6 +72,39 @@ export default function DbSection({
     const [loadingColumns, setLoadingColumns] = useState(false);
     const [tableDropdownOpen, setTableDropdownOpen] = useState(false);
     const tableComboRef = useRef(null);
+    const baseAxisCacheRef = useRef(new Map());
+    const tablesRequestRef = useRef(0);
+
+    // The list API carries no base axis info, so probe it per table through the columns API.
+    // Results are cached per server+table so reopening the dropdown does not refetch them.
+    const filterOutDistanceBaseTables = useCallback(async (server, list) => {
+        const cache = baseAxisCacheRef.current;
+        const labelOf = (t) => displayTableName(t.user || "SYS", t.name);
+        const queue = list.filter((t) => !cache.has(`${server}::${labelOf(t)}`));
+
+        const probe = async () => {
+            while (queue.length > 0) {
+                const target = queue.shift();
+                if (!target) return;
+                const label = labelOf(target);
+                try {
+                    const data = await serversApi.listColumns(server, label);
+                    cache.set(`${server}::${label}`, baseAxisOfColumns(data?.columns));
+                } catch {
+                    // Do not hide tables whose probe failed.
+                    // If one is actually selected, verifyTable probes again and blocks it.
+                    cache.set(`${server}::${label}`, "time");
+                }
+            }
+        };
+
+        const workerCount = Math.min(BASE_AXIS_PROBE_CONCURRENCY, queue.length);
+        await Promise.all(Array.from({ length: workerCount }, probe));
+
+        // The collector appends the collection time to the BASETIME column, so a table
+        // with a distance base axis can never be an append target in the first place.
+        return list.filter((t) => cache.get(`${server}::${labelOf(t)}`) !== "distance");
+    }, []);
 
     useEffect(() => {
         if (!db.server && servers.length > 0) {
@@ -80,17 +117,24 @@ export default function DbSection({
             setTables([]);
             return;
         }
+        const requestId = tablesRequestRef.current + 1;
+        tablesRequestRef.current = requestId;
         setLoadingTables(true);
         try {
             const data = await serversApi.listTables(db.server);
-            setTables(data || []);
+            const usable = await filterOutDistanceBaseTables(db.server, data || []);
+            if (tablesRequestRef.current !== requestId) return;
+            setTables(usable);
         } catch (e) {
+            if (tablesRequestRef.current !== requestId) return;
             notify(e.reason || e.message, "error");
             setTables([]);
         } finally {
-            setLoadingTables(false);
+            if (tablesRequestRef.current === requestId) {
+                setLoadingTables(false);
+            }
         }
-    }, [db.server, notify]);
+    }, [db.server, filterOutDistanceBaseTables, notify]);
 
     const verifyTable = useCallback(async (options = {}) => {
         const { allowAutoCreate = true, notifyOnError = true, table = db.table } = options;
@@ -107,8 +151,17 @@ export default function DbSection({
         setLoadingColumns(true);
         try {
             const data = await serversApi.listColumns(db.server, tableName);
-            setColumns(data?.columns || []);
             if (db.autoCreateTable) update("db.autoCreateTable", false);
+            // The list filters these out, but the combo also accepts typed input, so block it here too.
+            if (isDistanceBaseTable(data?.columns)) {
+                setColumns([]);
+                if (db.tableStatus !== "unsupportedBase") update("db.tableStatus", "unsupportedBase");
+                if (notifyOnError) {
+                    notify(`Table '${tableName}' uses a distance base axis and cannot be collected.`, "error");
+                }
+                return "unsupportedBase";
+            }
+            setColumns(data?.columns || []);
             if (db.tableStatus !== "existing") update("db.tableStatus", "existing");
             return "existing";
         } catch (e) {
@@ -136,6 +189,22 @@ export default function DbSection({
     useEffect(() => {
         fetchTables();
     }, [fetchTables]);
+
+    // Edit mode opens with a server/table already chosen but no columns loaded, so columnKind
+    // — and everything derived from it, like the JSON time-policy conflict — stayed empty until
+    // the user touched the table field. Resolve the columns once for a table the form already
+    // considers existing. Typing a new name sets tableStatus back to "unknown", so this does
+    // not fire on every keystroke.
+    const verifiedTableRef = useRef("");
+    useEffect(() => {
+        const tableName = normalizeTableInput(db.table);
+        if (!db.server || !tableName) return;
+        if (db.tableStatus !== "existing" || columns.length > 0) return;
+        const key = `${db.server}::${tableName}`;
+        if (verifiedTableRef.current === key) return;
+        verifiedTableRef.current = key;
+        verifyTable({ allowAutoCreate: false, notifyOnError: false, table: tableName });
+    }, [columns.length, db.server, db.table, db.tableStatus, verifyTable]);
 
     useEffect(() => {
         if (!tableDropdownOpen) return;
@@ -176,6 +245,20 @@ export default function DbSection({
             update("db.columnKind", selectedColumnKind);
         }
     }, [selectedColumnKind, db.columnKind, update]);
+
+    // Whether the selected VALUE column is SUMMARIZED — derived tags with onError:"null"
+    // cannot target a SUMMARIZED column. Lifted so DerivedTagsEditor can disable that option.
+    const selectedColumnSummarized = useMemo(() => {
+        if (!db.column) return false;
+        const col = columns.find((c) => c.name === db.column);
+        return Boolean(col && col.summarized);
+    }, [db.column, columns]);
+
+    useEffect(() => {
+        if (Boolean(db.columnSummarized) !== selectedColumnSummarized) {
+            update("db.columnSummarized", selectedColumnSummarized);
+        }
+    }, [selectedColumnSummarized, db.columnSummarized, update]);
 
     useEffect(() => {
         if (!db.table || loadingColumns) return;
@@ -292,6 +375,7 @@ export default function DbSection({
 
     const autoCreateMode = !isEdit && db.autoCreateTable === true && db.tableStatus === "autoCreate";
     const tableMissing = db.tableStatus === "missing";
+    const tableUnsupportedBase = db.tableStatus === "unsupportedBase";
     const tableReady = db.tableStatus === "existing";
     const isJsonMode = selectedColumnKind === "json";
     const stringOnly = !!db.stringOnly;
@@ -444,6 +528,17 @@ export default function DbSection({
                         <Icon name="info" className="icon-sm shrink-0 mt-1" />
                         <span>
                             Table not found. Select an existing table before saving.
+                        </span>
+                    </div>
+                )}
+
+                {hasTable && tableUnsupportedBase && (
+                    <div className="text-xs flex items-start gap-6" style={{ color: "var(--color-error)" }}>
+                        <Icon name="info" className="icon-sm shrink-0 mt-1" />
+                        <span>
+                            This table uses a distance base axis. Collector writes the
+                            collection time to the base column, so only time-based TAG
+                            tables can be used.
                         </span>
                     </div>
                 )}

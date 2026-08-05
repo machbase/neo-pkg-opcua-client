@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import * as echarts from "echarts";
 import Icon from "../components/common/Icon";
 import { useApp } from "../context/AppContext";
@@ -33,9 +34,14 @@ import {
     buildDataViewerTagSelectionUpdate,
     buildDataViewerWheelZoomRange,
     buildDataViewerZoomControlRange,
+    buildDerivedTagRows,
     buildNeoWebTagAnalyzerMessage,
+    buildRawColumnWidths,
     buildRawResultColumns,
+    buildRawRowNameColors,
+    buildSeriesColorMap,
     buildTagRows,
+    DEFAULT_DATA_VIEWER_TIME_RANGE,
     extractDataViewerDataZoomRange,
     formatDataViewerNavigatorRangeLabels,
     formatDataViewerTime,
@@ -43,6 +49,7 @@ import {
     formatTimeRangeLabel,
     getDataViewerChartRangeMs,
     getDataViewerRawPageSize,
+    usesLastDataAnchor,
     getResultHeading,
     getScanDirectionLabel,
     getTimeFormatLabel,
@@ -51,13 +58,24 @@ import {
     hasDataViewerRawNextPage,
     hasExplicitDataViewerDataZoomEventRange,
     hasAssetHierarchy,
+    isJsonValueColumn,
     isSameDataViewerChartRange,
     normalizeSelectedTagNames,
+    resolveTagAnalyzerKeyColumns,
     resolveTimeRangeInput,
     resolveTagNodes,
     sendNeoWebTagAnalyzerMessage,
     showsDataViewerTimeControls,
+    JSON_VALUE_COLUMN_BLOCK_REASON,
 } from "./dataViewerModel";
+import useTableColumns from "../hooks/useTableColumns";
+import useModalDismiss from "../hooks/useModalDismiss";
+
+// Must match `.data-viewer-raw-table th, td { height: 25px }` — the virtualizer trusts it
+// instead of measuring, which is what keeps scrolling allocation-free.
+const RAW_ROW_HEIGHT = 25;
+// The name cell's colour dot plus its margin, which the column has to fit alongside the text.
+const RAW_NAME_DOT_SPACE = 15;
 
 const WEEKDAY_LABELS = ["S", "M", "T", "W", "T", "F", "S"];
 const MONTH_LABELS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -203,6 +221,17 @@ function TimeRangeModal({ range, onApply, onClose }) {
     const [error, setError] = useState("");
     const [picker, setPicker] = useState(null);
 
+    // While the date picker popover is open it owns the first dismissal, so Escape (and a click
+    // on the overlay) closes the picker rather than throwing away the whole range edit.
+    const dismiss = useCallback(() => {
+        if (picker) {
+            setPicker(null);
+            return;
+        }
+        onClose();
+    }, [onClose, picker]);
+    const overlayProps = useModalDismiss(dismiss);
+
     const handleQuickRange = (option) => {
         setFrom(option.value[0]);
         setTo(option.value[1]);
@@ -277,7 +306,12 @@ function TimeRangeModal({ range, onApply, onClose }) {
             setError("Please check the entered time.");
             return;
         }
-        if (nextFrom && nextTo && new Date(nextFrom).getTime() > new Date(nextTo).getTime()) {
+        // A one-sided range can't pin the bounded window that pagination is measured against, so reject it.
+        if (!nextFrom || !nextTo) {
+            setError("Both From and To are required.");
+            return;
+        }
+        if (new Date(nextFrom).getTime() > new Date(nextTo).getTime()) {
             setError("From should be earlier than To.");
             return;
         }
@@ -286,7 +320,7 @@ function TimeRangeModal({ range, onApply, onClose }) {
     };
 
     return (
-        <div className="modal-overlay data-viewer-time-overlay">
+        <div className="modal-overlay data-viewer-time-overlay" {...overlayProps}>
             <div className="modal modal-md data-viewer-time-modal animate-fade-in">
                 <div className="modal-header">
                     <div className="modal-header-title">
@@ -415,7 +449,7 @@ function TimeRangeModal({ range, onApply, onClose }) {
                 </div>
 
                 <div className="modal-footer">
-                    <button type="button" className="btn btn-primary" onClick={handleApply}>
+                    <button type="button" className="btn btn-primary" onClick={handleApply} disabled={!from.trim() || !to.trim()}>
                         Apply
                     </button>
                     <button type="button" className="btn btn-secondary" onClick={onClose}>
@@ -430,9 +464,10 @@ function TimeRangeModal({ range, onApply, onClose }) {
 function FormatTimezoneModal({ timeFormat, timeZone, onApply, onClose }) {
     const [nextFormat, setNextFormat] = useState(timeFormat || DEFAULT_TIME_FORMAT);
     const [nextZone, setNextZone] = useState(timeZone || DEFAULT_TIME_ZONE);
+    const overlayProps = useModalDismiss(onClose);
 
     return (
-        <div className="modal-overlay data-viewer-time-overlay">
+        <div className="modal-overlay data-viewer-time-overlay" {...overlayProps}>
             <div className="modal modal-md data-viewer-time-modal data-viewer-format-modal animate-fade-in">
                 <div className="modal-header">
                     <div className="modal-header-title">
@@ -482,7 +517,7 @@ function FormatTimezoneModal({ timeFormat, timeZone, onApply, onClose }) {
     );
 }
 
-function TagEChart({ series, timeFormat, timeZone, timeRange, displayRange, onDisplayRangeChange, onShiftMainRange }) {
+function TagEChart({ series, timeFormat, timeZone, timeRange, displayRange, seriesColors, onDisplayRangeChange, onShiftMainRange }) {
     const containerRef = useRef(null);
     const chartRef = useRef(null);
     const rangeRef = useRef({ currentRange: {}, navigatorRange: {}, onDisplayRangeChange });
@@ -491,8 +526,8 @@ function TagEChart({ series, timeFormat, timeZone, timeRange, displayRange, onDi
     const allPoints = useMemo(() => series.flatMap((item) => item.data), [series]);
     const hasChartData = allPoints.length > 0;
     const options = useMemo(
-        () => buildDataViewerEChartOption({ series, timeFormat, timeZone, timeRange, displayRange }),
-        [displayRange, series, timeFormat, timeRange, timeZone]
+        () => buildDataViewerEChartOption({ series, timeFormat, timeZone, timeRange, displayRange, seriesColors }),
+        [displayRange, series, seriesColors, timeFormat, timeRange, timeZone]
     );
     const currentRange = useMemo(
         () => getDataViewerChartRangeMs(allPoints, displayRange || timeRange),
@@ -527,25 +562,63 @@ function TagEChart({ series, timeFormat, timeZone, timeRange, displayRange, onDi
                 ...(eventState || {}),
             };
         };
-        const convertMouseEventToTimestamp = (event) => {
+        // The axis extent the chart is drawing right now. Its two ends are the plot's left and
+        // right edges expressed in axis units, so value clamping needs no pixel math.
+        const getAxisExtent = () => {
+            const axis = chart.getOption?.()?.xAxis?.[0] || {};
+            const axisMin = Number(axis.min);
+            const axisMax = Number(axis.max);
+            if (Number.isFinite(axisMin) && Number.isFinite(axisMax) && axisMax > axisMin) {
+                return { min: axisMin, max: axisMax };
+            }
+            const { currentRange: activeRange } = rangeRef.current;
+            const start = Number(activeRange?.startTime);
+            const end = Number(activeRange?.endTime);
+            return Number.isFinite(start) && Number.isFinite(end) && end > start ? { min: start, max: end } : undefined;
+        };
+        // Container-relative pixel edges of the plot. `option.grid.left`/`right` cannot be used:
+        // with `containLabel: true` the plot is pushed further inward by the axis label width,
+        // so converting the axis ends back to pixels is the only honest source.
+        const getPlotPixelBounds = () => {
+            const extent = getAxisExtent();
+            if (!extent) return undefined;
+            const left = Number(chart.convertToPixel?.({ xAxisIndex: 0 }, extent.min));
+            const right = Number(chart.convertToPixel?.({ xAxisIndex: 0 }, extent.max));
+            return Number.isFinite(left) && Number.isFinite(right) && right > left ? { left, right } : undefined;
+        };
+        // `reject` keeps a gesture from starting on the legend / navigator / margins.
+        // `clamp` lets an in-flight drag survive the pointer leaving the plot: the pointer keeps
+        // reporting, and the value is pinned to the axis end it walked past.
+        const convertMouseEventToTimestamp = (event, { outside = "reject" } = {}) => {
             const rect = container.getBoundingClientRect?.();
             if (!rect) return undefined;
 
             const pixel = [event.clientX - rect.left, event.clientY - rect.top];
-            if (!chart.containPixel?.({ gridIndex: 0 }, pixel)) return undefined;
+            if (outside === "reject" && !chart.containPixel?.({ gridIndex: 0 }, pixel)) return undefined;
+
+            const extent = getAxisExtent();
+            const toAxisTime = (time) => {
+                if (!Number.isFinite(time)) return undefined;
+                if (outside !== "clamp" || !extent) return time;
+                return Math.min(Math.max(time, extent.min), extent.max);
+            };
 
             const fromAxis = chart.convertFromPixel?.({ xAxisIndex: 0 }, pixel);
-            const fromGrid = chart.convertFromPixel?.({ gridIndex: 0 }, pixel);
             const axisTime = Array.isArray(fromAxis) ? Number(fromAxis[0]) : Number(fromAxis);
-            if (Number.isFinite(axisTime)) return axisTime;
+            if (Number.isFinite(axisTime)) return toAxisTime(axisTime);
 
+            const fromGrid = chart.convertFromPixel?.({ gridIndex: 0 }, pixel);
             const gridTime = Array.isArray(fromGrid) ? Number(fromGrid[0]) : Number(fromGrid);
-            if (Number.isFinite(gridTime)) return gridTime;
+            if (Number.isFinite(gridTime)) return toAxisTime(gridTime);
 
-            const { currentRange: activeRange } = rangeRef.current;
-            const start = Number(activeRange?.startTime);
-            const end = Number(activeRange?.endTime);
-            return Number.isFinite(start) && Number.isFinite(end) ? start + (end - start) / 2 : undefined;
+            // Both conversions refused (unresolvable axis finder). Interpolate over the measured
+            // plot bounds before falling back to the middle of the window.
+            const bounds = getPlotPixelBounds();
+            if (bounds && extent) {
+                const ratio = (pixel[0] - bounds.left) / (bounds.right - bounds.left);
+                return toAxisTime(extent.min + ratio * (extent.max - extent.min));
+            }
+            return extent ? (extent.min + extent.max) / 2 : undefined;
         };
         const handleMouseWheelZoom = (event) => {
             if (event.deltaY === 0) return;
@@ -579,6 +652,13 @@ function TagEChart({ series, timeFormat, timeZone, timeRange, displayRange, onDi
                 height: Number.isFinite(height) ? height : 178,
             };
         };
+        // clientX -> container-relative pixel, pinned to the plot edges captured at mousedown.
+        const clampToPlotPixel = (dragState, clientX) => {
+            const containerX = clientX - dragState.containerLeft;
+            const bounds = dragState.plotBounds;
+            if (!bounds) return containerX;
+            return Math.min(Math.max(containerX, bounds.left), bounds.right);
+        };
         const emitDragRange = (dragState, endTime) => {
             const nextRange = buildDataViewerDragRangeUpdate({
                 mode: dragState.mode,
@@ -603,7 +683,7 @@ function TagEChart({ series, timeFormat, timeZone, timeRange, displayRange, onDi
             setDragPreview(null);
             if (!dragState) return;
 
-            const endTime = convertMouseEventToTimestamp(event);
+            const endTime = convertMouseEventToTimestamp(event, { outside: "clamp" });
             if (!Number.isFinite(endTime) || Math.abs(event.clientX - dragState.startX) < 8) return;
 
             emitDragRange(dragState, endTime);
@@ -614,16 +694,23 @@ function TagEChart({ series, timeFormat, timeZone, timeRange, displayRange, onDi
             event.preventDefault();
             event.stopPropagation();
 
-            const endTime = convertMouseEventToTimestamp(event);
+            const endTime = convertMouseEventToTimestamp(event, { outside: "clamp" });
             if (dragState.mode === "pan") {
                 if (Number.isFinite(endTime) && Math.abs(event.clientX - dragState.startX) >= 1) {
                     emitDragRange(dragState, endTime);
                 }
                 return;
             }
-            const left = Math.min(dragState.startX, event.clientX) - dragState.containerLeft;
-            const width = Math.abs(event.clientX - dragState.startX);
-            setDragPreview({ mode: dragState.mode, left, width, ...dragState.gridBounds });
+            // Both ends go through the same clamp so the guide stops exactly where the applied
+            // range stops.
+            const startLeft = clampToPlotPixel(dragState, dragState.startX);
+            const currentLeft = clampToPlotPixel(dragState, event.clientX);
+            setDragPreview({
+                mode: dragState.mode,
+                left: Math.min(startLeft, currentLeft),
+                width: Math.abs(currentLeft - startLeft),
+                ...dragState.gridBounds,
+            });
         };
         const handleDragEnd = (event) => {
             if (!dragStateRef.current) return;
@@ -654,8 +741,14 @@ function TagEChart({ series, timeFormat, timeZone, timeRange, displayRange, onDi
                 navigatorRange: activeNavigatorRange,
                 onDisplayRangeChange: activeRangeChange,
                 gridBounds: getMainGridBounds(),
+                plotBounds: getPlotPixelBounds(),
             };
-            setDragPreview(mode === "pan" ? null : { mode, left: event.clientX - rect.left, width: 0, ...dragStateRef.current.gridBounds });
+            setDragPreview(mode === "pan" ? null : {
+                mode,
+                left: clampToPlotPixel(dragStateRef.current, event.clientX),
+                width: 0,
+                ...dragStateRef.current.gridBounds,
+            });
             window.addEventListener("mousemove", handleDragMove, true);
             window.addEventListener("mouseup", handleDragEnd, true);
         };
@@ -848,6 +941,11 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
     const dbServer = typeof config.db === "string" ? config.db : "";
     const dbTable = config.dbTable || "";
     const valueColumn = selectedValueColumn(config);
+    // One columns lookup feeds both the JSON block and the Tag Analyzer key columns, since the
+    // collector config only stores column names — never which ones carry the TAG flags.
+    const { columns: tableColumns } = useTableColumns({ server: dbServer, table: dbTable });
+    const jsonValueColumn = useMemo(() => isJsonValueColumn(tableColumns, valueColumn), [tableColumns, valueColumn]);
+    const tagAnalyzerKeyColumns = useMemo(() => resolveTagAnalyzerKeyColumns(tableColumns), [tableColumns]);
     const stringValueColumn = config.stringOnly ? "" : (config.stringValueColumn || "");
 
     const [tableTags, setTableTags] = useState([]);
@@ -857,6 +955,10 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
     const [tagError, setTagError] = useState("");
     const nodes = useMemo(() => resolveTagNodes(configuredNodes, tableTags), [configuredNodes, tableTags]);
     const tagRows = useMemo(() => buildTagRows(nodes), [nodes]);
+    const derivedTagRows = useMemo(
+        () => buildDerivedTagRows(config?.derivedTags, nodes.map((node) => node?.name)),
+        [config, nodes]
+    );
     const showAssetTab = hasAssetHierarchy(assetHierarchy);
     const assetHierarchyPending = Boolean(dbServer && dbTable && !assetHierarchyChecked && tagsLoading);
     const assetRows = useMemo(() => buildAssetRows(assetHierarchy, tableTags), [assetHierarchy, tableTags]);
@@ -866,8 +968,12 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
     const [selectedTagNames, setSelectedTagNames] = useState([]);
     const [mode, setMode] = useState("raw");
     const [resultPage, setResultPage] = useState(1);
-    const [range, setRange] = useState({ from: "", to: "" });
-    const [resolvedRange, setResolvedRange] = useState({ from: "", to: "" });
+    const [range, setRange] = useState(DEFAULT_DATA_VIEWER_TIME_RANGE);
+    // range is the expression the user typed (now-1h, last-5m, ...); pinnedRange is that expression
+    // resolved once into absolute timestamps. Recomputing now on every fetch would drift the window
+    // and break pagination, so every query reads pinnedRange and re-pinning happens only on Apply / Refresh.
+    const [pinnedRange, setPinnedRange] = useState(null);
+    const [rangeRefreshToken, setRangeRefreshToken] = useState(0);
     const [rangeEditor, setRangeEditor] = useState(null);
     const [splitChartGroups, setSplitChartGroups] = useState([]);
     const [splitChartRanges, setSplitChartRanges] = useState({});
@@ -890,6 +996,7 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
     const [result, setResult] = useState({ rows: [], total: 0, page: 1, pageSize: getDataViewerRawPageSize([]) });
     const [rawPageBounds, setRawPageBounds] = useState(null);
     const [rawPageRequest, setRawPageRequest] = useState({ page: 1 });
+    const rawScrollRef = useRef(null);
     const rowsRequestRef = useRef(0);
     const chartRequestRef = useRef(0);
     const endPageRequestRef = useRef(0);
@@ -937,10 +1044,15 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
     }, [dbServer, dbTable, notify]);
 
     const selectableRows = useMemo(
-        () => [...tagRows, ...assetRows].filter((row) => row.type === "tag" && row.tag?.name),
-        [assetRows, tagRows]
+        () => [...tagRows, ...derivedTagRows, ...assetRows].filter((row) => row.type === "tag" && row.tag?.name),
+        [assetRows, derivedTagRows, tagRows]
     );
-    const activeTagRows = activeTagTab === "asset" && showAssetTab ? assetRows : tagRows;
+    // The asset tab is built from the server's tag list, so derived tags already appear there
+    // under whatever folder their asset metadata puts them in — only the Tags tab appends them.
+    const activeTagRows = useMemo(
+        () => (activeTagTab === "asset" && showAssetTab ? assetRows : [...tagRows, ...derivedTagRows]),
+        [activeTagTab, assetRows, derivedTagRows, showAssetTab, tagRows]
+    );
 
     useEffect(() => {
         if (activeTagTab === "asset" && !showAssetTab) {
@@ -1047,10 +1159,10 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
         () => buildDataViewerChartGroups({
             selectedTagNames,
             splitGroups: splitChartGroups,
-            globalRange: resolvedRange,
+            globalRange: pinnedRange || { from: "", to: "" },
             splitRanges: resolvedSplitChartRanges,
         }),
-        [resolvedRange, resolvedSplitChartRanges, selectedTagNames, splitChartGroups]
+        [pinnedRange, resolvedSplitChartRanges, selectedTagNames, splitChartGroups]
     );
     const splitAssignedNames = useMemo(() => new Set(splitChartGroups.flatMap((group) => group.tagNames || [])), [splitChartGroups]);
 
@@ -1239,9 +1351,70 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
         return { from, to };
     }, [dbServer, dbTable, stringValueColumn, valueColumn]);
 
-    const resolveEffectiveRange = useCallback(async () => {
-        return resolveRangeForTagNames(range, selectedTagNames);
-    }, [range, resolveRangeForTagNames, selectedTagNames]);
+    const selectedTagNamesRef = useRef(selectedTagNames);
+    useEffect(() => {
+        selectedTagNamesRef.current = selectedTagNames;
+    }, [selectedTagNames]);
+
+    // now-* is measured off the wall clock, so it stays pinned across selection changes and
+    // pagination is left alone. last-* is measured off the selected tags' latest data time, so
+    // the window has to follow the selection: a window still anchored to another tag's era
+    // queries an empty range and the table shows no data even though the tag has plenty of it
+    // (two tags whose latest rows are years apart reproduce this every time).
+    const lastAnchorTagKey = usesLastDataAnchor(range) ? selectedTagNames.join("\u0000") : "";
+
+    // Identifies the inputs a pinned window was resolved from. fetchRows compares it with
+    // pinnedRange.key so it never queries using a window that belongs to an earlier selection,
+    // and so the stat lookup is awaited instead of racing a row request against it.
+    const pinKey = useMemo(
+        () => [range.from ?? "", range.to ?? "", rangeRefreshToken, lastAnchorTagKey].join("\u0000"),
+        [lastAnchorTagKey, range.from, range.to, rangeRefreshToken]
+    );
+
+    useEffect(() => {
+        let cancelled = false;
+        (async () => {
+            const tagNames = selectedTagNamesRef.current;
+            try {
+                const next = await resolveRangeForTagNames(range, tagNames);
+                if (cancelled) return;
+                if (next.from === null || next.to === null) {
+                    // Still stamped with pinKey, so fetchRows stops waiting and reports the problem.
+                    setPinnedRange({ from: "", to: "", key: pinKey });
+                    if (tagNames.length > 0) {
+                        setError("Please check the entered time.");
+                    }
+                    return;
+                }
+                setPinnedRange({ from: next.from || "", to: next.to || "", key: pinKey });
+            } catch (e) {
+                if (cancelled) return;
+                setPinnedRange({ from: "", to: "", key: pinKey });
+                // With nothing selected there is no window to resolve, which is not an error.
+                if (tagNames.length > 0) {
+                    setError(e.reason || e.message || "Failed to resolve the time range");
+                }
+            }
+        })();
+        return () => {
+            cancelled = true;
+        };
+    }, [pinKey, range, resolveRangeForTagNames]);
+
+    // A newly pinned window invalidates any carried-over page request. Toggling a tag builds one
+    // with reason "tags", which carries the previous page's row bounds as from/to, and fetchRows
+    // prefers those over the pinned window — so the caption would show the new window while the
+    // rows came from the old one. Dropping it here keeps the two in step.
+    const appliedPinKeyRef = useRef(pinKey);
+    useEffect(() => {
+        if (appliedPinKeyRef.current === pinKey) return;
+        appliedPinKeyRef.current = pinKey;
+        rowsRequestRef.current += 1;
+        endPageRequestRef.current += 1;
+        setRawPageBounds(null);
+        setRawPageRequest({ page: 1 });
+        setResultPage(1);
+    }, [pinKey]);
 
     const fetchRows = useCallback(async () => {
         const requestId = rowsRequestRef.current + 1;
@@ -1252,11 +1425,18 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
             setLoading(false);
             return;
         }
+        // The window for this range/selection has not been pinned yet — the stat lookup is still
+        // in flight. Querying now would use the previous window and then immediately re-query,
+        // so wait; the pin effect re-runs this with a matching key.
+        if (pinnedRange?.key !== pinKey) {
+            setLoading(true);
+            return;
+        }
         setLoading(true);
         setError("");
         try {
-            const { from: queryFrom, to: queryTo } = await resolveEffectiveRange();
-            if (queryFrom === null || queryTo === null) {
+            const { from: queryFrom, to: queryTo } = pinnedRange;
+            if (!queryFrom || !queryTo) {
                 if (rowsRequestRef.current !== requestId) return;
                 setError("Please check the entered time.");
                 setResult({ rows: [], total: 0, page: resultPage, pageSize: rawPageSize });
@@ -1284,7 +1464,6 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
             if (rowsRequestRef.current !== requestId) return;
             const nextRows = data?.rows || [];
             const nextBounds = buildDataViewerRawPageBounds(nextRows);
-            setResolvedRange({ from: queryFrom ?? "", to: queryTo ?? "" });
             setResult(data || { rows: [], total: 0, page: resultPage, pageSize: rawPageSize });
             setRawPageBounds(nextBounds);
         } catch (e) {
@@ -1299,7 +1478,7 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
                 setLoading(false);
             }
         }
-    }, [backwardScan, canQuery, dbServer, dbTable, notify, rawPageRequest, rawPageSize, resolveEffectiveRange, resultPage, selectedTagNames, stringValueColumn, valueColumn]);
+    }, [backwardScan, canQuery, dbServer, dbTable, notify, pinKey, pinnedRange, rawPageRequest, rawPageSize, resultPage, selectedTagNames, stringValueColumn, valueColumn]);
 
     useEffect(() => {
         fetchRows();
@@ -1349,6 +1528,77 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
         return splitChartRanges[rangeEditor.groupId] || activeRange;
     }, [activeRange, rangeEditor, splitChartRanges]);
 
+    const assetColumnKey = assetHierarchy?.column || "asset";
+    const rawColumns = useMemo(
+        () => buildRawResultColumns(result.rows, { hiddenKeys: showAssetTab ? [assetColumnKey] : [] }),
+        [assetColumnKey, result.rows, showAssetTab]
+    );
+    const rawColumnWidths = useMemo(() => buildRawColumnWidths(result.rows, rawColumns, {
+        timeSample: result.rows.length ? formatDataViewerTime(result.rows[0].time, timeFormat, timeZone) : "",
+        extra: { name: RAW_NAME_DOT_SPACE },
+    }), [rawColumns, result.rows, timeFormat, timeZone]);
+    const rawTableMinWidth = useMemo(
+        () => Object.values(rawColumnWidths).reduce((total, width) => total + width, 0),
+        [rawColumnWidths]
+    );
+    const rawNameColors = useMemo(() => buildRawRowNameColors(result.rows), [result.rows]);
+    // One colour per tag for every panel. Taken from the "default" group — it always holds all
+    // selected tags — so splitting a tag into its own chart keeps the colour it had in the main
+    // one instead of restarting the palette. Falls back to the raw row order before any chart
+    // result exists, which is the same ordering.
+    const seriesColors = useMemo(() => {
+        const mainSeries = chartResults.default?.series;
+        if (!Array.isArray(mainSeries) || mainSeries.length === 0) return rawNameColors;
+        return buildSeriesColorMap(mainSeries.map((item) => item?.name));
+    }, [chartResults, rawNameColors]);
+    // Only the rows in view are mounted: selecting N tags fetches N * rowsPerTag rows, so a plain
+    // render grows with every tag added. Rows are a fixed 25px (.data-viewer-raw-table td), so the
+    // size never has to be measured. Spacer rows above and below stand in for the rest.
+    const rowVirtualizer = useVirtualizer({
+        count: result.rows.length,
+        getScrollElement: () => rawScrollRef.current,
+        estimateSize: () => RAW_ROW_HEIGHT,
+        overscan: 16,
+    });
+    const virtualRows = rowVirtualizer.getVirtualItems();
+    const rawTableBody = useMemo(() => {
+        const first = virtualRows[0];
+        const last = virtualRows[virtualRows.length - 1];
+        const padTop = first ? first.start : 0;
+        const padBottom = last ? rowVirtualizer.getTotalSize() - last.end : 0;
+        return (
+            <tbody>
+                {padTop > 0 && <tr aria-hidden="true" style={{ height: padTop }} />}
+                {virtualRows.map((virtualRow) => {
+                    const row = result.rows[virtualRow.index];
+                    if (!row) return null;
+                    return (
+                        <tr key={virtualRow.key}>
+                            {rawColumns.map((column) => {
+                                const value = column.key === "time"
+                                    ? formatDataViewerTime(row[column.key], timeFormat, timeZone)
+                                    : String(row[column.key] ?? "");
+                                if (column.key === "name") {
+                                    return (
+                                        <td key={column.key} className="mono raw-name" style={{ "--raw-dot": rawNameColors[value] }}>
+                                            {value}
+                                        </td>
+                                    );
+                                }
+                                return (
+                                    <td key={column.key} className={`mono${column.key === "value" ? " is-numeric" : ""}`}>
+                                        {value}
+                                    </td>
+                                );
+                            })}
+                        </tr>
+                    );
+                })}
+                {padBottom > 0 && <tr aria-hidden="true" style={{ height: padBottom }} />}
+            </tbody>
+        );
+    }, [rawColumns, rawNameColors, result.rows, rowVirtualizer, timeFormat, timeZone, virtualRows]);
+
     if (!collector) {
         return (
             <div className="empty-state flex flex-col items-center justify-center h-full">
@@ -1358,13 +1608,25 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
         );
     }
 
-    const timeRangeButtonText = formatTimeRangeLabel(activeRange.from, activeRange.to);
+    // The dashboard disables the entry button, but the route can still be reached by URL.
+    if (jsonValueColumn) {
+        return (
+            <div className="empty-state flex flex-col items-center justify-center h-full">
+                <Icon name="data_object" className="icon-lg opacity-30 mb-12" />
+                <p className="text-md font-medium text-on-surface-tertiary">{JSON_VALUE_COLUMN_BLOCK_REASON}</p>
+                <p className="text-sm text-on-surface-tertiary mt-8">{`${dbTable} · ${valueColumn}`}</p>
+            </div>
+        );
+    }
+
+    // The button keeps showing what the user chose (now-1h, last-5m, ...); the absolute window
+    // those expressions were pinned to is shown underneath, since that is what queries and
+    // pagination actually run against.
+    const timeRangeButtonText = formatTimeRangeLabel(activeRange.from, activeRange.to, timeZone);
+    const pinnedRangeText = pinnedRange ? formatTimeRangeLabel(pinnedRange.from, pinnedRange.to, timeZone) : "";
     const timeFormatButtonText = `${getTimeFormatLabel(timeFormat)} / ${getTimeZoneLabel(timeZone)}`;
     const headerLabels = buildDataViewerHeaderLabels(collector.id, dbTable);
     const resultHeading = getResultHeading(mode);
-    const rawColumns = buildRawResultColumns(result.rows, {
-        hiddenKeys: showAssetTab ? [assetHierarchy?.column || "asset"] : [],
-    });
     const handleScanDirectionChange = (nextBackwardScan) => {
         rowsRequestRef.current += 1;
         endPageRequestRef.current += 1;
@@ -1465,15 +1727,69 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
         }
         setRangeEditor(null);
     };
+    // Re-pin the query window against the current time (now) / the latest data time (last).
+    // A window given as absolute times resolves to the same values, so this effectively just re-queries.
+    const handleRefreshRange = async () => {
+        chartRequestRef.current += 1;
+        rowsRequestRef.current += 1;
+        endPageRequestRef.current += 1;
+        setChartViewRanges({});
+        setChartNavigatorRanges({});
+        setRawPageBounds(null);
+        setRawPageRequest({ page: 1 });
+        setResultPage(1);
+        setRangeRefreshToken((token) => token + 1);
+
+        if (!canQuery) return;
+        const splitRequestId = splitRangeRequestRef.current + 1;
+        splitRangeRequestRef.current = splitRequestId;
+        // Split charts hold their own pinned windows, so re-pin them against the same instant.
+        for (const group of splitChartGroups) {
+            const groupRange = splitChartRanges[group.id];
+            if (!groupRange) continue;
+            try {
+                const { from: queryFrom, to: queryTo } = await resolveRangeForTagNames(groupRange, group.tagNames);
+                if (splitRangeRequestRef.current !== splitRequestId) return;
+                if (!queryFrom || !queryTo) continue;
+                const data = await queryTagData({
+                    server: dbServer,
+                    table: dbTable,
+                    names: group.tagNames,
+                    valueColumn,
+                    stringValueColumn,
+                    direction: backwardScan ? "latest" : "oldest",
+                    from: queryFrom,
+                    to: queryTo,
+                    pageSize: getDataViewerRawPageSize(group.tagNames, rawRowsPerTag),
+                    boundedRange: true,
+                });
+                if (splitRangeRequestRef.current !== splitRequestId) return;
+                setResolvedSplitChartRanges((current) => ({
+                    ...current,
+                    [group.id]: { from: queryFrom, to: queryTo },
+                }));
+                setSplitChartRows((current) => ({
+                    ...current,
+                    [group.id]: data?.rows || [],
+                }));
+            } catch (e) {
+                if (splitRangeRequestRef.current !== splitRequestId) return;
+                const message = e.reason || e.message || "Failed to refresh chart range";
+                setChartError(message);
+                notify(message, "error");
+                return;
+            }
+        }
+    };
     const handleEndPage = async () => {
-        if (!canQuery || endLoading) return;
+        if (!canQuery || endLoading || pinnedRange?.key !== pinKey) return;
         const requestId = endPageRequestRef.current + 1;
         endPageRequestRef.current = requestId;
         setEndLoading(true);
         setError("");
         try {
-            const { from: queryFrom, to: queryTo } = await resolveEffectiveRange();
-            if (queryFrom === null || queryTo === null) {
+            const { from: queryFrom, to: queryTo } = pinnedRange;
+            if (!queryFrom || !queryTo) {
                 if (endPageRequestRef.current !== requestId) return;
                 setError("Please check the entered time.");
                 return;
@@ -1519,6 +1835,10 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
             tagNames: group.tagNames,
             range: chartViewRanges[group.id] || chartData?.range || group.range,
             valueColumn,
+            // neo-web puts these straight into SQL, so they have to be the table's real
+            // PRIMARY KEY / BASETIME columns rather than the NAME/TIME defaults.
+            nameColumn: tagAnalyzerKeyColumns.nameColumn,
+            timeColumn: tagAnalyzerKeyColumns.timeColumn,
             stringOnly: Boolean(config.stringOnly),
         });
         if (!built.ok) {
@@ -1750,17 +2070,22 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
                                     if (row.type === "folder") {
                                         const collapsed = collapsedTagFolders.has(row.key);
                                         return (
-                                            <div key={row.key} className="node-tree-row node-tree-row-folder" style={{ paddingLeft: row.depth * 16 }}>
-                                                <button
-                                                    type="button"
-                                                    className="node-tree-toggle"
-                                                    onClick={() => toggleTagFolder(row.key)}
-                                                    aria-label={`${row.label} ${collapsed ? "expand" : "collapse"}`}
-                                                >
+                                            // The whole row toggles, not just the chevron — the label is
+                                            // the bigger target and reads as part of the same control.
+                                            <button
+                                                key={row.key}
+                                                type="button"
+                                                className="node-tree-row node-tree-row-folder"
+                                                style={{ "--tree-indent": `${row.depth * 16}px` }}
+                                                onClick={() => toggleTagFolder(row.key)}
+                                                aria-expanded={!collapsed}
+                                                aria-label={`${row.label} ${collapsed ? "expand" : "collapse"}`}
+                                            >
+                                                <span className="node-tree-toggle">
                                                     <Icon name={collapsed ? "chevron_right" : "expand_more"} className="icon-sm" />
-                                                </button>
+                                                </span>
                                                 <span className="node-tree-label truncate">{row.label}</span>
-                                            </div>
+                                            </button>
                                         );
                                     }
                                     const checked = selectedTagNames.includes(row.tag.name);
@@ -1768,7 +2093,7 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
                                         <label
                                             key={row.key}
                                             className={`data-viewer-tag-row ${checked ? "is-active" : ""}`}
-                                            style={{ paddingLeft: row.depth * 16 }}
+                                            style={{ "--tree-indent": `${row.depth * 16}px` }}
                                             title={row.tag.nodeId || row.tag.name}
                                         >
                                             <span className="node-tree-toggle">
@@ -1780,6 +2105,7 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
                                                 />
                                             </span>
                                             <span className="node-tree-label truncate">{row.label}</span>
+                                            {row.derived && <span className="badge badge-primary badge-xs shrink-0">derived</span>}
                                             {row.tag.dataType && <span className="badge badge-success">{row.tag.dataType}</span>}
                                         </label>
                                     );
@@ -1796,6 +2122,25 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
                                         <div className="form-card-header !mb-0">
                                             <span className="section-dot" />
                                             {resultHeading}
+                                        </div>
+                                    )}
+                                    {showsDataViewerTimeControls(mode) && (
+                                        <div className="data-viewer-pinned-block">
+                                            <button
+                                                type="button"
+                                                aria-label="Refresh time range"
+                                                title="Re-pin the time range and reload"
+                                                className="btn btn-ghost btn-icon"
+                                                disabled={loading || endLoading}
+                                                onClick={handleRefreshRange}
+                                            >
+                                                <Icon name="refresh" className="icon-sm" />
+                                            </button>
+                                            {pinnedRangeText && (
+                                                <div className="data-viewer-pinned-range" title={pinnedRangeText}>
+                                                    {pinnedRangeText}
+                                                </div>
+                                            )}
                                         </div>
                                     )}
                                     <div className="data-viewer-title-actions">
@@ -1852,28 +2197,23 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
                             {!canQuery && <div className="empty-state">Database table and tag are required</div>}
                             {canQuery && mode === "raw" && (
                                 <div className="table-card data-viewer-raw-card">
-                                    <div className="table-card-body">
-                                        <table className="table-clean data-viewer-raw-table">
+                                    <div className="table-card-body" ref={rawScrollRef}>
+                                        <table className="table-clean data-viewer-raw-table" style={{ minWidth: rawTableMinWidth }}>
+                                            <colgroup>
+                                                {rawColumns.map((column) => (
+                                                    <col key={column.key} style={{ width: rawColumnWidths[column.key] }} />
+                                                ))}
+                                            </colgroup>
                                             <thead>
                                                 <tr>
                                                     {rawColumns.map((column) => (
-                                                        <th key={column.key}>{column.label}</th>
+                                                        <th key={column.key} className={column.key === "value" ? "is-numeric" : undefined}>
+                                                            {column.label}
+                                                        </th>
                                                     ))}
                                                 </tr>
                                             </thead>
-                                            <tbody>
-                                                {result.rows.map((row, i) => (
-                                                    <tr key={`${row.name}-${row.time}-${i}`}>
-                                                        {rawColumns.map((column) => (
-                                                            <td key={column.key} className="mono">
-                                                                {column.key === "time"
-                                                                    ? formatDataViewerTime(row[column.key], timeFormat, timeZone)
-                                                                    : String(row[column.key] ?? "")}
-                                                            </td>
-                                                        ))}
-                                                    </tr>
-                                                ))}
-                                            </tbody>
+                                            {rawTableBody}
                                         </table>
                                         {loading && <div className="empty-state">Loading...</div>}
                                         {!loading && result.rows.length === 0 && <div className="empty-state">No data</div>}
@@ -1896,7 +2236,11 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
                                         });
                                         const chartMenuOpen = openChartMenuId === group.id;
                                         return (
-                                            <div key={group.id} className={`table-card data-viewer-chart-card ${group.split ? "is-split" : "is-main"}`}>
+                                            <div
+                                                key={group.id}
+                                                className={`table-card data-viewer-chart-card ${group.split ? "is-split" : "is-main"}`}
+                                                style={group.split ? { "--split-accent": seriesColors[group.tagNames[0]] } : undefined}
+                                            >
                                                 <div className="data-viewer-chart-panel-header">
                                                     <div className="data-viewer-chart-panel-title">
                                                         <Icon name={group.split ? "call_split" : "query_stats"} className="icon-sm text-primary" />
@@ -2006,6 +2350,7 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
                                                 <div className="table-card-body">
                                                     <TagEChart
                                                         series={chartData.series}
+                                                        seriesColors={seriesColors}
                                                         timeFormat={timeFormat}
                                                         timeZone={timeZone}
                                                         timeRange={chartData.range}

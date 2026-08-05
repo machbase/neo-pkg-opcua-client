@@ -18,6 +18,7 @@ import {
     buildDataViewerShiftMainRangeUpdate,
     buildDataViewerDragRangeUpdate,
     buildDataViewerTagSelectionUpdate,
+    buildDerivedTagRows,
     buildDataViewerWheelZoomRange,
     buildDataViewerZoomControlRange,
     buildNeoWebTagAnalyzerMessage,
@@ -26,8 +27,12 @@ import {
     buildTagChartSeries,
     buildDataViewerPath,
     buildDataViewerHeaderLabels,
+    buildRawColumnWidths,
     buildRawResultColumns,
+    buildSeriesColorMap,
+    buildRawRowNameColors,
     defaultSelectedTag,
+    DEFAULT_DATA_VIEWER_TIME_RANGE,
     extractDataViewerDataZoomRange,
     formatDataViewerAxisTime,
     formatDataViewerNavigatorRangeLabels,
@@ -36,6 +41,8 @@ import {
     formatTimeRangeLabel,
     getDataViewerChartRangeMs,
     getDataViewerRawPageSize,
+    isJsonValueColumn,
+    usesLastDataAnchor,
     normalizeDataViewerRowsPerTag,
     getResultHeading,
     getScanDirectionLabel,
@@ -46,6 +53,7 @@ import {
     isSameDataViewerChartRange,
     normalizeSelectedTagNames,
     QUICK_TIME_RANGE_GROUPS,
+    resolveTagAnalyzerKeyColumns,
     resolveTimeRangeInput,
     resolveTagNodes,
     sendNeoWebTagAnalyzerMessage,
@@ -178,6 +186,118 @@ test("buildTagRows keeps ordinary tags as a flat list", () => {
         ["tag", 0, "sensor_a"],
         ["tag", 0, "sensor_b"],
     ]);
+});
+
+test("buildRawRowNameColors assigns colors in first-appearance order, matching the chart", () => {
+    const rows = [
+        { name: "norm", time: 3, value: 1 },
+        { name: "pwr", time: 3, value: 2 },
+        { name: "norm", time: 2, value: 3 },
+        { name: "pick", time: 2, value: 4 },
+    ];
+    const colors = buildRawRowNameColors(rows);
+
+    assert.deepEqual(Object.keys(colors), ["norm", "pwr", "pick"]);
+    assert.notEqual(colors.norm, colors.pwr);
+    // The dot only matches the chart line if both walk the palette in the same order.
+    assert.deepEqual(Object.keys(colors), buildTagChartSeries(rows).map((series) => series.name));
+});
+
+test("buildTagRows keeps branches intact when the node list moves between them and back", () => {
+    // Config order does this: several Functions nodes, one _System node, then more Functions.
+    const node = (leaf, folder) => ({
+        name: leaf,
+        nodeId: `ns=1;s=${leaf}`,
+        treePath: ["Simulation Examples", folder, leaf],
+    });
+    const rows = buildTagRows([
+        node("Ramp1", "Functions"),
+        node("_EnableDiagnostics", "_System"),
+        node("Sine1", "Functions"),
+        node("Sine2", "Functions"),
+    ]);
+
+    assert.deepEqual(rows.map((row) => [row.type, row.depth, row.label]), [
+        ["folder", 0, "Simulation Examples"],
+        ["folder", 1, "Functions"],
+        ["tag", 2, "Ramp1"],
+        ["tag", 2, "Sine1"],
+        ["tag", 2, "Sine2"],
+        ["folder", 1, "_System"],
+        ["tag", 2, "_EnableDiagnostics"],
+    ]);
+    // Every leaf still collapses with its own folder.
+    const sine1 = rows.find((row) => row.label === "Sine1");
+    assert.deepEqual(sine1.ancestorKeys, [
+        "folder:Simulation Examples",
+        "folder:Simulation Examples/Functions",
+    ]);
+});
+
+test("buildRawColumnWidths sizes columns from every row, not the visible ones", () => {
+    const rows = [
+        { time: "t", name: "short", value: "1" },
+        { time: "t", name: "a_very_long_tag_name_far_below_the_fold", value: "1" },
+    ];
+    const columns = [{ key: "time", label: "Time" }, { key: "name", label: "Name" }, { key: "value", label: "Value" }];
+    const widths = buildRawColumnWidths(rows, columns, { timeSample: "2026-07-29 16:00:16.165" });
+
+    // Row 2 is what the name column has to fit, even though row 1 is the one on screen.
+    assert.ok(widths.name > buildRawColumnWidths([rows[0]], columns, {}).name);
+    // A timestamp that fits exactly must not land a fraction of a pixel short and get ellipsized.
+    const stamp = "2026-07-29 16:00:16.165";
+    assert.ok(widths.time > stamp.length * 8.401 + 32);
+    // Short columns never collapse below the floor, long ones never blow past the cap.
+    assert.ok(widths.value >= 90);
+    assert.ok(buildRawColumnWidths([{ name: "x".repeat(500) }], [{ key: "name", label: "Name" }], {}).name <= 640);
+    // A full OPC UA path is ordinary content, so it must fit rather than hit the cap.
+    const longPath = "Simulation_Examples_Functions__System__Description";
+    const pathWidth = buildRawColumnWidths([{ name: longPath }], [{ key: "name", label: "Name" }], { extra: { name: 15 } }).name;
+    assert.ok(pathWidth > longPath.length * 8.401);
+});
+
+test("buildSeriesColorMap keeps a tag's colour when it is split into its own panel", () => {
+    const mainPanel = ["Ramp1", "Ramp2", "norm", "pwr"];
+    const colors = buildSeriesColorMap(mainPanel);
+
+    // A split panel renders one series; without the shared map it would take the first colour.
+    const splitColors = buildSeriesColorMap(["pwr"]);
+    assert.notEqual(colors.pwr, splitColors.pwr);
+    assert.equal(colors.pwr, buildSeriesColorMap(mainPanel).pwr);
+    assert.equal(new Set(Object.values(colors)).size, mainPanel.length);
+});
+
+test("buildRawRowNameColors ignores blank names and non-array input", () => {
+    assert.deepEqual(buildRawRowNameColors(null), {});
+    assert.deepEqual(Object.keys(buildRawRowNameColors([{ name: "" }, { value: 1 }, { name: "a" }])), ["a"]);
+});
+
+test("buildDerivedTagRows marks derived tags as flat depth-0 rows", () => {
+    const rows = buildDerivedTagRows([
+        { name: "power", expression: "A * B" },
+        { name: "norm", expression: "sqrt(A)" },
+    ]);
+
+    assert.deepEqual(rows.map((row) => [row.type, row.depth, row.label, row.derived]), [
+        ["tag", 0, "power", true],
+        ["tag", 0, "norm", true],
+    ]);
+    assert.deepEqual(rows.map((row) => row.tag.name), ["power", "norm"]);
+});
+
+test("buildDerivedTagRows skips names already listed as source tags", () => {
+    const rows = buildDerivedTagRows([{ name: "power" }, { name: "norm" }], ["power"]);
+
+    assert.deepEqual(rows.map((row) => row.label), ["norm"]);
+});
+
+test("buildDerivedTagRows ignores blank, duplicate, and non-array input", () => {
+    assert.deepEqual(buildDerivedTagRows(null), []);
+    assert.deepEqual(buildDerivedTagRows(undefined), []);
+    assert.deepEqual(
+        buildDerivedTagRows([{ name: "  " }, { name: "power" }, { name: "power" }, {}]).map((row) => row.label),
+        ["power"]
+    );
 });
 
 test("buildTagRows uses nodeTree when browse selection stores tree structure", () => {
@@ -1100,6 +1220,65 @@ test("buildNeoWebTagAnalyzerMessage builds chart-group scoped Tag Analyzer paylo
     });
 });
 
+test("resolveTagAnalyzerKeyColumns reads the TAG key columns from the flags, not the names", () => {
+    assert.deepEqual(
+        resolveTagAnalyzerKeyColumns([
+            { name: "TAG_ID", type: "VARCHAR(100)", primaryKey: true },
+            { name: "TS", type: "DATETIME", basetime: true },
+            { name: "READING", type: "DOUBLE", summarized: true },
+        ]),
+        { nameColumn: "TAG_ID", timeColumn: "TS" }
+    );
+    assert.deepEqual(
+        resolveTagAnalyzerKeyColumns([
+            { name: "NAME", type: "VARCHAR(100)", primaryKey: true },
+            { name: "TIME", type: "DATETIME", basetime: true },
+        ]),
+        { nameColumn: "NAME", timeColumn: "TIME" }
+    );
+    assert.deepEqual(
+        resolveTagAnalyzerKeyColumns([{ name: "VALUE", type: "DOUBLE", summarized: true }]),
+        { nameColumn: "", timeColumn: "" },
+        "unflagged columns leave the fallback to the message builder"
+    );
+    assert.deepEqual(resolveTagAnalyzerKeyColumns(undefined), { nameColumn: "", timeColumn: "" });
+});
+
+test("buildNeoWebTagAnalyzerMessage sends the table's real key columns", () => {
+    const built = buildNeoWebTagAnalyzerMessage({
+        table: "TAG",
+        tagNames: ["sensor.a"],
+        range: { from: "2026-06-01T00:00:00.000Z", to: "2026-06-01T01:00:00.000Z" },
+        valueColumn: "READING",
+        nameColumn: "TAG_ID",
+        timeColumn: "TS",
+    });
+
+    assert.equal(built.ok, true);
+    assert.deepEqual(built.message.payload.tags[0].colName, {
+        name: "TAG_ID",
+        time: "TS",
+        value: "READING",
+        timeType: 6,
+        timeBaseTime: true,
+        jsonKey: "",
+    });
+});
+
+test("buildNeoWebTagAnalyzerMessage falls back to NAME/TIME when the key columns are unknown", () => {
+    const built = buildNeoWebTagAnalyzerMessage({
+        table: "TAG",
+        tagNames: ["sensor.a"],
+        valueColumn: "VALUE",
+        nameColumn: "",
+        timeColumn: "",
+    });
+
+    assert.equal(built.ok, true);
+    assert.equal(built.message.payload.tags[0].colName.name, "NAME");
+    assert.equal(built.message.payload.tags[0].colName.time, "TIME");
+});
+
 test("buildNeoWebTagAnalyzerMessage rejects unsupported payloads", () => {
     assert.equal(buildNeoWebTagAnalyzerMessage({ table: "", tagNames: ["sensor.a"] }).ok, false);
     assert.equal(buildNeoWebTagAnalyzerMessage({ table: "TAG", tagNames: [] }).ok, false);
@@ -1160,20 +1339,27 @@ test("buildDataViewerEChartOption creates line chart options with data zoom", ()
     assert.equal(option.toolbox.show, false);
 });
 
-test("buildDataViewerEChartOption moves main chart below multi-row legend", () => {
-    const series = Array.from({ length: 9 }, (_, index) => ({
-        name: `sensor.${index}`,
-        data: [[Date.parse("2026-06-01T00:00:00Z"), index]],
-    }));
-    const option = buildDataViewerEChartOption({
-        series,
+test("buildDataViewerEChartOption keeps the plot size independent of the tag count", () => {
+    // The legend is type "scroll": it stays on one line and paginates however many tags are
+    // selected, so reserving vertical space per legend row only squashed the plot.
+    const build = (count) => buildDataViewerEChartOption({
+        series: Array.from({ length: count }, (_, index) => ({
+            name: `sensor.${index}`,
+            data: [[Date.parse("2026-06-01T00:00:00Z"), index]],
+        })),
         timeRange: { from: "2026-06-01T00:00:00.000Z", to: "2026-06-01T00:10:00.000Z" },
         timeZone: "UTC",
     });
 
-    assert.ok(option.grid[0].top > 40);
-    assert.ok(option.grid[0].height < 178);
-    assert.equal(option.legend.type, "scroll");
+    const few = build(2);
+    const many = build(39);
+
+    assert.equal(many.grid[0].top, few.grid[0].top);
+    assert.equal(many.grid[0].height, few.grid[0].height);
+    assert.equal(many.legend.type, "scroll");
+    // The legend still gets a row to draw in, and never grows into the plot.
+    assert.ok(many.legend.height > 0);
+    assert.ok(many.legend.top + many.legend.height <= many.grid[0].top);
 });
 
 test("buildDataViewerEChartOption lays out large multi-tag data by time range", () => {
@@ -1538,4 +1724,58 @@ test("formatTimeRangeLabel shortens concrete date ranges", () => {
         formatTimeRangeLabel("2026-06-01 12:34:56.789", "2026-06-01 12:35:01.789"),
         "2026-06-01 12:34:56 ~ 2026-06-01 12:35:01"
     );
+});
+
+test("formatTimeRangeLabel renders the pinned range in the selected time zone", () => {
+    assert.equal(
+        formatTimeRangeLabel("2026-06-01T00:34:56.789Z", "2026-06-01T00:35:01.789Z", "Asia/Seoul"),
+        "2026-06-01 09:34:56 ~ 2026-06-01 09:35:01"
+    );
+});
+
+test("DEFAULT_DATA_VIEWER_TIME_RANGE is a bounded last-1-hour window", () => {
+    // Starting from an empty range leaves no bounded query window, so pagination has nothing to page against.
+    assert.deepEqual(DEFAULT_DATA_VIEWER_TIME_RANGE, { from: "now-1h", to: "now" });
+    assert.ok(DEFAULT_DATA_VIEWER_TIME_RANGE.from);
+    assert.ok(DEFAULT_DATA_VIEWER_TIME_RANGE.to);
+});
+
+test("DEFAULT_DATA_VIEWER_TIME_RANGE resolves to a one hour window ending now", () => {
+    const base = new Date("2026-06-01T12:00:00.000Z");
+    assert.equal(resolveTimeRangeInput(DEFAULT_DATA_VIEWER_TIME_RANGE.from, base, "from"), "2026-06-01T11:00:00.000Z");
+    assert.equal(resolveTimeRangeInput(DEFAULT_DATA_VIEWER_TIME_RANGE.to, base, "to"), "2026-06-01T12:00:00.001Z");
+});
+
+test("usesLastDataAnchor separates data-anchored ranges from wall-clock ranges", () => {
+    assert.equal(usesLastDataAnchor({ from: "last-5m", to: "last" }), true);
+    assert.equal(usesLastDataAnchor({ from: "last-1h", to: "now" }), true);
+    assert.equal(usesLastDataAnchor({ from: "now-1h", to: "now" }), false);
+    assert.equal(usesLastDataAnchor(DEFAULT_DATA_VIEWER_TIME_RANGE), false);
+    assert.equal(usesLastDataAnchor({ from: "2026-06-01 00:00:00", to: "2026-06-02 00:00:00" }), false);
+    assert.equal(usesLastDataAnchor({}), false);
+});
+
+test("isJsonValueColumn detects a JSON value column by the configured column name", () => {
+    const columns = [
+        { name: "JN", type: "VARCHAR(100)", primaryKey: true },
+        { name: "JT", type: "DATETIME", basetime: true },
+        { name: "JV", type: "JSON" },
+    ];
+    assert.equal(isJsonValueColumn(columns, "JV"), true);
+    assert.equal(isJsonValueColumn(columns, "jv"), true, "column names are case-insensitive");
+    assert.equal(isJsonValueColumn(columns, " JV "), true);
+    assert.equal(isJsonValueColumn(columns, "JT"), false);
+});
+
+test("isJsonValueColumn is false for ordinary value columns and unknown input", () => {
+    const columns = [
+        { name: "NAME", type: "VARCHAR(100)" },
+        { name: "TIME", type: "DATETIME" },
+        { name: "VALUE", type: "DOUBLE" },
+    ];
+    assert.equal(isJsonValueColumn(columns, "VALUE"), false);
+    assert.equal(isJsonValueColumn(columns, "MISSING"), false);
+    assert.equal(isJsonValueColumn(columns, ""), false);
+    assert.equal(isJsonValueColumn(undefined, "VALUE"), false);
+    assert.equal(isJsonValueColumn([{ name: "VALUE" }], "VALUE"), false, "a column with no type is not JSON");
 });

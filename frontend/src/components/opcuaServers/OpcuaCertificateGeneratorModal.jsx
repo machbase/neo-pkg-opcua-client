@@ -1,4 +1,5 @@
 import { useState } from "react";
+import useModalDismiss from "../../hooks/useModalDismiss";
 import Icon from "../common/Icon";
 
 const DEFAULT_DAYS = 3650;
@@ -158,9 +159,11 @@ export default function OpcuaCertificateGeneratorModal({ onGenerate, onClose }) 
         downloadBlob(zip, `${baseName}_certificate.zip`);
     };
 
+    const overlayProps = useModalDismiss(onClose);
+
     return (
-        <div className="modal-overlay" onMouseDown={onClose}>
-            <div className="modal modal-md" onMouseDown={(e) => e.stopPropagation()}>
+        <div className="modal-overlay" {...overlayProps}>
+            <div className="modal modal-md">
                 <div className="modal-header">
                     <div className="modal-header-title">
                         <Icon name="verified_user" className="text-primary" />

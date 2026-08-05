@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import {
     buildSeriesFromChartRows,
     buildDataViewerChartQueryPath,
+    queryTagStat,
     queryTagBoundaryTime,
     queryTagData,
     queryTagDataTotal,
@@ -148,7 +149,7 @@ test("queryTagData omits page when refreshing within current page bounds", async
     }
 });
 
-test("queryTagBoundaryTime loads one boundary row and returns its time", async () => {
+test("queryTagBoundaryTime asks the stat view, not a row scan", async () => {
     const originalFetch = globalThis.fetch;
     const calls = [];
     globalThis.fetch = async (url, options = {}) => {
@@ -157,7 +158,7 @@ test("queryTagBoundaryTime loads one boundary row and returns its time", async (
             status: 200,
             text: async () => JSON.stringify({
                 ok: true,
-                data: { rows: [{ TIME: "2026-07-07 16:18:09.016" }] },
+                data: { table: "TAG", names: ["sensor.a", "sensor.b"], minTime: null, maxTime: "2026-07-07T16:18:09.016Z" },
             }),
         };
     };
@@ -170,11 +171,12 @@ test("queryTagBoundaryTime loads one boundary row and returns its time", async (
             direction: "latest",
         });
 
-        assert.equal(time, "2026-07-07 16:18:09.016");
+        assert.equal(time, "2026-07-07T16:18:09.016Z");
         const url = calls[0].url;
-        assert.ok(url.includes("direction=latest"));
-        assert.ok(url.includes("pageSize=1"));
-        assert.ok(url.includes("names=sensor.a%2Csensor.b"));
+        assert.ok(url.includes("/cgi-bin/api/db/table/stat?"), url);
+        assert.ok(url.includes("names=sensor.a%2Csensor.b"), url);
+        assert.ok(!url.includes("pageSize"), url);
+        assert.equal(calls.length, 1);
     } finally {
         globalThis.fetch = originalFetch;
     }
@@ -305,5 +307,48 @@ test("queryTagChartData loads chart rows through web api query instead of db tql
     } finally {
         globalThis.fetch = originalFetch;
         delete globalThis.localStorage;
+    }
+});
+
+
+
+
+test("queryTagBoundaryTime reads the boundary from the stat endpoint", async () => {
+    const calls = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async (url) => {
+        calls.push(String(url));
+        return {
+            ok: true,
+            status: 200,
+            text: async () => JSON.stringify({
+                ok: true,
+                data: { table: "MACHROLL", names: ["a"], minTime: "2022-06-30T15:00:00.000Z", maxTime: "2024-06-30T14:59:59.000Z" },
+            }),
+        };
+    };
+    try {
+        const latest = await queryTagBoundaryTime({ server: "localhost", table: "MACHROLL", names: ["a"], direction: "latest" });
+        const oldest = await queryTagBoundaryTime({ server: "localhost", table: "MACHROLL", names: ["a"], direction: "oldest" });
+        assert.equal(latest, "2024-06-30T14:59:59.000Z");
+        assert.equal(oldest, "2022-06-30T15:00:00.000Z");
+        assert.ok(calls.every((u) => u.includes("/cgi-bin/api/db/table/stat?")), calls.join(" | "));
+        assert.ok(!calls.some((u) => u.includes("pageSize")), "must not fall back to a row scan");
+    } finally {
+        globalThis.fetch = originalFetch;
+    }
+});
+
+test("queryTagBoundaryTime returns null when the tags have never been written", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => ({
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({ ok: true, data: { table: "T", names: ["a"], minTime: null, maxTime: null } }),
+    });
+    try {
+        assert.equal(await queryTagBoundaryTime({ server: "s", table: "T", names: ["a"], direction: "latest" }), null);
+    } finally {
+        globalThis.fetch = originalFetch;
     }
 });

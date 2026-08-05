@@ -1,8 +1,29 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Icon from "../common/Icon";
 import NodeBrowserPanel from "./NodeBrowserPanel";
+import NodeRenameModal from "./NodeRenameModal";
 import { normalizeCollectorNode } from "./nodeTree";
 import { normalizeTagNameInput } from "./tagName";
+
+// NODE PATH breadcrumb cell: OPC UA tree path with depth badge; falls back to nodeId.
+function NodePathCell({ node }) {
+    const path = Array.isArray(node.treePath) && node.treePath.length ? node.treePath : null;
+    if (!path) {
+        return <span className="text-xs text-on-surface-disabled">— no path</span>;
+    }
+    const last = path.length - 1;
+    return (
+        <span className="inline-flex flex-wrap items-center gap-4 text-sm">
+            {path.map((seg, i) => (
+                <span key={i} className="inline-flex items-center gap-4">
+                    {i > 0 && <span className="text-on-surface-disabled">›</span>}
+                    <span className={i === last ? "font-semibold" : "text-on-surface-secondary"}>{seg}</span>
+                </span>
+            ))}
+            <span className="badge badge-primary" style={{ fontSize: 10, padding: "2px 5px" }}>depth {path.length}</span>
+        </span>
+    );
+}
 
 const NODE_ID_PATTERN = /^ns=\d+;[isgb]=.+$/;
 
@@ -105,7 +126,7 @@ function CalcSteps({ node, onFieldChange, onOrderChange }) {
                 );
                 if (idx === 0)
                     return (
-                        <span key={`wrap-${key}`} className="node-calc-inline" style={{ gap: "var(--spacing-4)" }}>
+                        <span key={`wrap-${key}`} className="node-calc-group">
                             {seg}
                             <span className="node-calc-seg-paren">)</span>
                         </span>
@@ -116,7 +137,8 @@ function CalcSteps({ node, onFieldChange, onOrderChange }) {
     );
 }
 
-export default function NodeListEditor({ nodes, onChange, endpoint, endpointTarget, selectionMode = "numeric-only", storageMode = "default" }) {
+export default function NodeListEditor({ nodes, onChange, endpoint, endpointTarget, selectionMode = "numeric-only", storageMode = "default", derivedTags = [] }) {
+    const [renameItems, setRenameItems] = useState(null);
     const [name, setName] = useState("");
     const [nodeId, setNodeId] = useState("");
     const [nodeIdError, setNodeIdError] = useState(null);
@@ -189,6 +211,23 @@ export default function NodeListEditor({ nodes, onChange, endpoint, endpointTarg
         const parsed = parseNumberInput(raw);
         if (Number.isNaN(parsed)) return;
         patchNode(origIdx, { [field]: parsed });
+    };
+
+    const openRename = (indices) => {
+        const sorted = [...indices].sort((a, b) => a - b);
+        setRenameItems(
+            sorted.map((idx) => ({
+                nodeIdx: idx,
+                treePath: Array.isArray(nodes[idx]?.treePath) ? nodes[idx].treePath : [],
+                originalName: nodes[idx]?.name || "",
+            }))
+        );
+    };
+
+    const applyRenames = (renames) => {
+        const byIdx = new Map(renames.map((r) => [r.nodeIdx, r.name]));
+        onChange(nodes.map((n, i) => (byIdx.has(i) ? { ...n, name: byIdx.get(i) } : n)));
+        setRenameItems(null);
     };
 
     const removeNode = (idx) => {
@@ -382,7 +421,17 @@ export default function NodeListEditor({ nodes, onChange, endpoint, endpointTarg
                     </span>
                     <button
                         type="button"
-                        className="btn btn-sm btn-danger ml-auto"
+                        className="btn btn-sm btn-ghost ml-auto"
+                        onClick={() => openRename([...selectedRows])}
+                        style={{ visibility: selectedRows.size > 0 ? "visible" : "hidden" }}
+                        aria-hidden={selectedRows.size === 0}
+                    >
+                        <Icon name="edit" className="icon-sm" />
+                        Rename {selectedRows.size} selected
+                    </button>
+                    <button
+                        type="button"
+                        className="btn btn-sm btn-danger"
                         onClick={bulkDelete}
                         style={{ visibility: selectedRows.size > 0 ? "visible" : "hidden" }}
                         aria-hidden={selectedRows.size === 0}
@@ -438,12 +487,12 @@ export default function NodeListEditor({ nodes, onChange, endpoint, endpointTarg
                                             className={`th-sort${sortKey === "nodeId" ? " is-active" : ""}`}
                                             onClick={() => toggleSort("nodeId")}
                                         >
-                                            Node ID
+                                            Node ID / Path
                                             <Icon name={sortIcon("nodeId")} className="icon-sm" />
                                         </button>
                                     </th>
                                     <th>Transform</th>
-                                    <th style={{ width: 60 }}>Actions</th>
+                                    <th style={{ width: 88 }}>Actions</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -495,17 +544,17 @@ export default function NodeListEditor({ nodes, onChange, endpoint, endpointTarg
                                                     </button>
                                                 )}
                                             </td>
-                                            <td
-                                                className="mono text-on-surface-secondary"
-                                                title={row.nodeId}
-                                            >
-                                                <div className="flex items-center gap-6">
-                                                    <span className="truncate">{row.nodeId}</span>
-                                                    {row.dataType && (
-                                                        <span className="badge badge-success" style={{ fontSize: 10, padding: '2px 5px', flexShrink: 0 }}>
-                                                            {row.dataType}
-                                                        </span>
-                                                    )}
+                                            <td title={row.nodeId}>
+                                                <div className="flex flex-col gap-4">
+                                                    <div className="flex items-center gap-6 mono text-on-surface-secondary">
+                                                        <span className="truncate">{row.nodeId}</span>
+                                                        {row.dataType && (
+                                                            <span className="badge badge-success" style={{ fontSize: 10, padding: '2px 5px', flexShrink: 0 }}>
+                                                                {row.dataType}
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                    <NodePathCell node={row} />
                                                 </div>
                                             </td>
                                             <td>
@@ -524,14 +573,24 @@ export default function NodeListEditor({ nodes, onChange, endpoint, endpointTarg
                                                 )}
                                             </td>
                                             <td>
-                                                <button
-                                                    type="button"
-                                                    onClick={() => removeNode(idx)}
-                                                    className="btn-icon-sm text-error"
-                                                    title="Delete"
-                                                >
-                                                    <Icon name="delete" className="icon-sm" />
-                                                </button>
+                                                <div className="flex items-center gap-2">
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => openRename([idx])}
+                                                        className="btn-icon-sm"
+                                                        title="Rename"
+                                                    >
+                                                        <Icon name="edit" className="icon-sm" />
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => removeNode(idx)}
+                                                        className="btn-icon-sm text-error"
+                                                        title="Delete"
+                                                    >
+                                                        <Icon name="delete" className="icon-sm" />
+                                                    </button>
+                                                </div>
                                             </td>
                                         </tr>
                                     );
@@ -559,6 +618,18 @@ export default function NodeListEditor({ nodes, onChange, endpoint, endpointTarg
                     onSync={handleBrowseSync}
                     onClose={() => setBrowserOpen(false)}
                     selectionMode={selectionMode}
+                />
+            )}
+
+            {renameItems && renameItems.length > 0 && (
+                <NodeRenameModal
+                    items={renameItems}
+                    allNodeNames={nodes
+                        .map((n, i) => (renameItems.some((it) => it.nodeIdx === i) ? null : n.name))
+                        .filter(Boolean)}
+                    derivedNames={derivedTags.map((c) => c && c.name).filter(Boolean)}
+                    onApply={applyRenames}
+                    onClose={() => setRenameItems(null)}
                 />
             )}
         </div>

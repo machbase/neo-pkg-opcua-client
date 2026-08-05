@@ -35,6 +35,16 @@ export const stopCollector = (name) =>
 export const installCollector = (name) =>
   request('POST', `${BASE}/install?name=${encodeURIComponent(name)}`)
 
+// Derived-tag expression check while typing.
+// body: { expression, variables:{A:node,...}, sampleValues?:{A:number,...} }
+export const validateExpression = (body) =>
+  request('POST', '/cgi-bin/api/expression/validate', body)
+
+// Full collector dry-run before save. Does not persist, install, or create tables.
+// Returns { mode, effectiveTimePolicy, effectiveBadStatusPolicy, derivedTags[], warnings[], storage }.
+export const validateCollector = (name, mode, config) =>
+  request('POST', '/cgi-bin/api/collector/validate', { name, mode, config })
+
 export const testDbConnection = (db) =>
   request('POST', '/cgi-bin/api/db/connect', db)
 

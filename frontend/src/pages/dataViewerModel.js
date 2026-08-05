@@ -93,6 +93,32 @@ export function buildNeoWebTagAnalyzerRange(range = {}) {
     return { ...start, ...end };
 }
 
+/**
+ * The table's PRIMARY KEY and BASETIME column names, for the Tag Analyzer bridge.
+ *
+ * Every other layer already resolves these from the catalog — the tag data API overwrites
+ * whatever the client sends with the real columns (`resolveTagKeyColumnNames` in
+ * cgi-bin/src/db/types.js), and the collector takes the base column name from the append
+ * stream. The bridge payload was the last place still assuming NAME/TIME, and neo-web puts
+ * `colName.name`/`colName.time` straight into SQL, so a table that names them otherwise
+ * queries columns that do not exist.
+ *
+ * Returns "" for a column the flags do not identify; the message builder's NAME/TIME
+ * defaults then apply, which matches the backend's legacy fallback.
+ *
+ * @param {Array<{ name?: string, primaryKey?: boolean, basetime?: boolean }>} columns - columns API payload
+ * @returns {{ nameColumn: string, timeColumn: string }}
+ */
+export function resolveTagAnalyzerKeyColumns(columns) {
+    const rows = Array.isArray(columns) ? columns : [];
+    const nameByFlag = (flag) => String(rows.find((col) => col?.[flag])?.name ?? "").trim();
+
+    return {
+        nameColumn: nameByFlag("primaryKey"),
+        timeColumn: nameByFlag("basetime"),
+    };
+}
+
 export function buildNeoWebTagAnalyzerMessage({
     appName = NEO_WEB_TAG_ANALYZER_APP_NAME,
     title = "OPC UA Data Viewer",
@@ -203,6 +229,76 @@ export function buildRawResultColumns(rows = [], options = {}) {
         key,
         label: formatRawColumnLabel(key),
     }));
+}
+
+// Walks PANEL_COLORS in name order, which is how ECharts assigns colours to a panel's series.
+// One map built from the main panel's order is then handed to every panel and to the raw table,
+// so a tag keeps its colour when it is split into its own chart — a split panel holds a single
+// series and would otherwise always take the first palette entry.
+export function buildSeriesColorMap(names = []) {
+    const colors = {};
+    let index = 0;
+
+    for (const raw of Array.isArray(names) ? names : []) {
+        const name = String(raw ?? "");
+        if (!name || colors[name]) continue;
+        colors[name] = PANEL_COLORS[index % PANEL_COLORS.length];
+        index += 1;
+    }
+
+    return colors;
+}
+
+// Colour per tag name for the raw table's name dot. buildTagChartSeries keys its series off the
+// order names first appear in the rows, so feeding the same order here makes a tag's dot match
+// the line it gets in the chart.
+export function buildRawRowNameColors(rows = []) {
+    return buildSeriesColorMap((Array.isArray(rows) ? rows : []).map((row) => getRawRowNameValue(row)));
+}
+
+// Measured for the raw table's fonts: D2Coding 14px cells, bold 14px sans headers.
+const RAW_MONO_CHAR_WIDTH = 8.401;
+const RAW_HEADER_CHAR_WIDTH = 7;
+// .data-viewer-raw-table td { padding: 0 16px }
+const RAW_CELL_PADDING = 32;
+const RAW_COLUMN_MIN_WIDTH = 90;
+// Generous, since the body scrolls sideways — this only guards against a runaway string value,
+// it is not meant to clip ordinary tag names (a full OPC UA path can run past 50 characters).
+const RAW_COLUMN_MAX_WIDTH = 640;
+// Char width is an estimate, so round up and leave a couple of pixels: landing 0.2px short is
+// enough for the browser to ellipsize a value that otherwise fits exactly.
+const RAW_COLUMN_SLACK = 2;
+
+// Column widths derived from the whole result set, not from the rows currently mounted.
+// `table-layout: fixed` is required by the virtualised body, and fixed layout otherwise sizes
+// columns to the ~40 visible rows — content gets clipped and the table can never exceed its
+// container, which is what removed the horizontal scrollbar. Measuring every row instead keeps
+// the widths stable while scrolling and lets the table overflow when the data is genuinely wide.
+export function buildRawColumnWidths(rows = [], columns = [], options = {}) {
+    const { timeSample = "", extra = {} } = options;
+    const safeRows = Array.isArray(rows) ? rows : [];
+    const widths = {};
+
+    for (const column of columns || []) {
+        if (!column || !column.key) continue;
+        let chars = 0;
+        if (column.key === "time") {
+            // Timestamps render at a fixed width, so one formatted sample stands for all rows.
+            chars = String(timeSample).length;
+        } else {
+            for (const row of safeRows) {
+                const length = String(row?.[column.key] ?? "").length;
+                if (length > chars) chars = length;
+            }
+        }
+
+        const headerPx = String(column.label ?? "").length * RAW_HEADER_CHAR_WIDTH;
+        const cellPx = chars * RAW_MONO_CHAR_WIDTH + (extra[column.key] || 0);
+        const px = Math.ceil(Math.max(headerPx, cellPx) + RAW_CELL_PADDING + RAW_COLUMN_SLACK);
+        widths[column.key] = Math.min(RAW_COLUMN_MAX_WIDTH, Math.max(RAW_COLUMN_MIN_WIDTH, px));
+    }
+
+    return widths;
 }
 
 export function getResultHeading(mode) {
@@ -568,6 +664,43 @@ export function buildDataViewerGlobalTimeUpdate({
     };
 }
 
+// Default query window. Leaving the range empty means there is no bounded window to query, so pagination has no fixed basis either.
+export const DEFAULT_DATA_VIEWER_TIME_RANGE = { from: "now-1h", to: "now" };
+
+// The Data Viewer renders a JSON value column as a raw payload string: the chart cannot plot it,
+// the grid cannot size it, and none of the numeric paths apply. Until that is handled properly
+// the viewer is blocked for these collectors rather than showing something misleading.
+export const JSON_VALUE_COLUMN_BLOCK_REASON =
+    "This collector stores values in a JSON column, which the Data Viewer cannot display yet.";
+
+/**
+ * Whether the collector's value column is a JSON column.
+ *
+ * @param {Array<{ name?: string, type?: string }>} columns - the columns API payload
+ * @param {string} valueColumn - the collector's configured value column
+ * @returns {boolean}
+ */
+export function isJsonValueColumn(columns, valueColumn) {
+    const target = String(valueColumn ?? "").trim().toUpperCase();
+    if (!target) return false;
+    const column = (columns || []).find(
+        (col) => String(col?.name ?? "").trim().toUpperCase() === target
+    );
+    return String(column?.type ?? "").trim().toUpperCase() === "JSON";
+}
+
+/**
+ * Whether a range is anchored on the selected tags' latest data time (last, last-5m, ...)
+ * rather than on the wall clock (now, now-1h, ...).
+ *
+ * @param {{ from?: string, to?: string }} range
+ * @returns {boolean}
+ */
+export function usesLastDataAnchor(range = {}) {
+    const startsWithLast = (value) => String(value ?? "").trim().startsWith("last");
+    return startsWithLast(range.from) || startsWithLast(range.to);
+}
+
 export const QUICK_TIME_RANGE_GROUPS = [
     [
         { key: "now-5s", name: "Last 5 seconds", value: ["now-5s", "now"] },
@@ -654,48 +787,57 @@ export function getTagTreePath(node) {
     return null;
 }
 
+// Builds the tree first, then emits it depth-first. Emitting in node order instead would break
+// whenever the node list moves between branches and comes back — config order does exactly that
+// (Functions..., _System, Functions...). A folder already emitted was skipped the second time,
+// so its later children were left hanging under whichever folder happened to precede them.
+// Children keep first-seen order within each parent, so nothing is re-sorted.
 export function buildTagRows(nodes = []) {
-    const rows = [];
-    const folders = new Set();
+    const root = { children: [], index: new Map() };
 
     for (const node of nodes) {
         const path = getTagTreePath(node);
         if (!path) {
-            rows.push({
+            root.children.push({
                 type: "tag",
                 key: `tag:${node.name}`,
-                depth: 0,
                 label: node.name || node.nodeId || "-",
                 tag: node,
             });
             continue;
         }
 
-        const tagLabel = path[path.length - 1];
+        let parent = root;
         for (let i = 0; i < path.length - 1; i++) {
-            const folderKey = path.slice(0, i + 1).join("/");
-            const ancestorKeys = path.slice(0, i).map((_, index) => `folder:${path.slice(0, index + 1).join("/")}`);
-            if (!folders.has(folderKey)) {
-                folders.add(folderKey);
-                rows.push({
-                    type: "folder",
-                    key: `folder:${folderKey}`,
-                    ancestorKeys,
-                    depth: i,
-                    label: path[i],
-                });
+            const key = `folder:${path.slice(0, i + 1).join("/")}`;
+            let folder = parent.index.get(key);
+            if (!folder) {
+                folder = { type: "folder", key, label: path[i], children: [], index: new Map() };
+                parent.index.set(key, folder);
+                parent.children.push(folder);
             }
+            parent = folder;
         }
-        const tagAncestorKeys = path.slice(0, -1).map((_, index) => `folder:${path.slice(0, index + 1).join("/")}`);
-        rows.push({
+        parent.children.push({
             type: "tag",
             key: `tag:${node.name || path.join("/")}`,
-            ancestorKeys: tagAncestorKeys,
-            depth: path.length - 1,
-            label: tagLabel,
+            label: path[path.length - 1],
             tag: node,
         });
     }
+
+    const rows = [];
+    const walk = (entries, depth, ancestorKeys) => {
+        for (const entry of entries) {
+            if (entry.type === "folder") {
+                rows.push({ type: "folder", key: entry.key, ancestorKeys, depth, label: entry.label });
+                walk(entry.children, depth + 1, [...ancestorKeys, entry.key]);
+                continue;
+            }
+            rows.push({ type: "tag", key: entry.key, ancestorKeys, depth, label: entry.label, tag: entry.tag });
+        }
+    };
+    walk(root.children, 0, []);
 
     return rows;
 }
@@ -815,6 +957,38 @@ export function buildAssetRows(assetHierarchy, tags = []) {
 export function getVisibleTagRows(rows = [], collapsedKeys = new Set()) {
     const collapsed = collapsedKeys instanceof Set ? collapsedKeys : new Set(collapsedKeys || []);
     return rows.filter((row) => !(row.ancestorKeys || []).some((key) => collapsed.has(key)));
+}
+
+// Derived tags live in `config.derivedTags`, never in `config.opcua.nodes`, so buildTagRows
+// never sees them. They also have no OPC UA tree path, so they cannot sit in the node tree —
+// they are appended as flat rows below it, each marked so the list can badge them.
+// `takenNames` drops the ones already listed: when a collector has no configured nodes,
+// resolveTagNodes falls back to the DB tag list, which already contains derived names.
+export function buildDerivedTagRows(derivedTags = [], takenNames = []) {
+    if (!Array.isArray(derivedTags)) return [];
+    const seen = new Set(
+        (Array.isArray(takenNames) ? takenNames : [])
+            .map((name) => String(name ?? "").trim())
+            .filter(Boolean)
+    );
+
+    const rows = [];
+    for (const item of derivedTags) {
+        const raw = typeof item === "string" ? item : item?.name;
+        const name = String(raw ?? "").trim();
+        if (!name || seen.has(name)) continue;
+        seen.add(name);
+        rows.push({
+            type: "tag",
+            key: `derived:${name}`,
+            depth: 0,
+            label: name,
+            derived: true,
+            tag: { name, derived: true },
+        });
+    }
+
+    return rows;
 }
 
 export function resolveTagNodes(configuredNodes = [], tableTags = []) {
@@ -956,9 +1130,7 @@ const PANEL_NAVIGATOR_GRID_SIDE = 58;
 const PANEL_SLIDER_HEIGHT = 26;
 const PANEL_MAIN_TOP_WITH_LEGEND = 40;
 const PANEL_MAIN_HEIGHT = 178;
-const PANEL_LEGEND_ITEMS_PER_ROW = 4;
 const PANEL_LEGEND_ROW_HEIGHT = 18;
-const PANEL_MAIN_MIN_HEIGHT = 96;
 const PANEL_MAIN_SERIES_ID_PREFIX = "main-series-";
 const PANEL_COLORS = ["#5470c6", "#91cc75", "#fac858", "#ee6666", "#73c0de", "#3ba272", "#fc8452", "#9a60b4", "#ea7ccc"];
 const PANEL_MOUSE_WHEEL_ZOOM_IN_FACTOR = 0.82;
@@ -1298,15 +1470,16 @@ function buildNeoLikeTooltipFormatter(params, timeFormat, timeZone) {
     </div>`;
 }
 
-function getPanelLegendLayout(series = []) {
-    const rowCount = Math.max(1, Math.ceil(Math.max(0, series.length) / PANEL_LEGEND_ITEMS_PER_ROW));
-    const extraLegendHeight = Math.max(0, rowCount - 1) * PANEL_LEGEND_ROW_HEIGHT;
-    const mainTop = PANEL_MAIN_TOP_WITH_LEGEND + extraLegendHeight;
+// The legend is `type: "scroll"`, so it renders on one line and paginates however many series
+// there are. Reserving a row per four series therefore bought empty space: at 39 tags it pushed
+// the plot down 188px and clamped it to a 96px floor, which is the chart looking
+// squashed. The plot now keeps its full height regardless of how many tags are selected.
+function getPanelLegendLayout() {
     return {
-        rowCount,
-        mainTop,
-        mainHeight: Math.max(PANEL_MAIN_MIN_HEIGHT, PANEL_MAIN_HEIGHT - extraLegendHeight),
-        legendHeight: Math.max(PANEL_LEGEND_ROW_HEIGHT, mainTop - PANEL_LEGEND_TOP - 8),
+        rowCount: 1,
+        mainTop: PANEL_MAIN_TOP_WITH_LEGEND,
+        mainHeight: PANEL_MAIN_HEIGHT,
+        legendHeight: Math.max(PANEL_LEGEND_ROW_HEIGHT, PANEL_MAIN_TOP_WITH_LEGEND - PANEL_LEGEND_TOP - 8),
     };
 }
 
@@ -1316,12 +1489,16 @@ export function buildDataViewerEChartOption({
     displayRange,
     timeFormat = DEFAULT_TIME_FORMAT,
     timeZone = DEFAULT_TIME_ZONE,
+    // Tag-name keyed colours, so a split panel keeps the colour the tag has in the main chart.
+    // Falls back to this panel's own palette position for names the map does not cover.
+    seriesColors = {},
 } = {}) {
+    const colorFor = (item, index) => seriesColors[String(item?.name ?? "")] || PANEL_COLORS[index % PANEL_COLORS.length];
     const allPoints = series.flatMap((item) => Array.isArray(item?.data) ? item.data : []);
     const panelRange = getPanelRange(allPoints, displayRange || timeRange);
     const navigatorRange = getPanelRange(allPoints, timeRange);
     const yAxisRange = getYAxisRange(series, panelRange);
-    const legendLayout = getPanelLegendLayout(series);
+    const legendLayout = getPanelLegendLayout();
 
     return {
         backgroundColor: "#252525",
@@ -1542,11 +1719,11 @@ export function buildDataViewerEChartOption({
                 sampling: item.data?.length > 1000 ? "lttb" : undefined,
                 lineStyle: {
                     width: 1,
-                    color: PANEL_COLORS[index % PANEL_COLORS.length],
+                    color: colorFor(item, index),
                     opacity: 1,
                 },
                 itemStyle: {
-                    color: PANEL_COLORS[index % PANEL_COLORS.length],
+                    color: colorFor(item, index),
                     opacity: 1,
                 },
                 connectNulls: false,
@@ -1568,11 +1745,11 @@ export function buildDataViewerEChartOption({
                 sampling: item.data?.length > 1000 ? "lttb" : undefined,
                 lineStyle: {
                     width: 1,
-                    color: PANEL_COLORS[index % PANEL_COLORS.length],
+                    color: colorFor(item, index),
                     opacity: 0.85,
                 },
                 itemStyle: {
-                    color: PANEL_COLORS[index % PANEL_COLORS.length],
+                    color: colorFor(item, index),
                     opacity: 0.85,
                 },
                 emphasis: { disabled: true },
@@ -1833,12 +2010,12 @@ export function formatDataViewerNavigatorRangeLabels(range = {}, timeFormat = DE
     };
 }
 
-export function formatTimeRangeLabel(from, to) {
+export function formatTimeRangeLabel(from, to, timeZone = DEFAULT_TIME_ZONE) {
     const formatPart = (value, fallback) => {
         const text = String(value || "").trim();
         if (!text) return fallback;
         if (text.includes("now") || text.includes("last")) return text;
-        return formatDataViewerTime(text, "YYYY-MM-DD HH24:MI:SS");
+        return formatDataViewerTime(text, "YYYY-MM-DD HH24:MI:SS", timeZone);
     };
 
     if (!from && !to) return "Time range not set";
