@@ -643,6 +643,57 @@ runner.run('Handler: collectorPost', {
         t.assertEqual(created.schema.columns[0].length, 95);
     },
 
+    // JSON 모드는 NAME 에 Record Name 하나만 쓴다. 가드가 job 이름을 재던 시절에는 긴 Record Name
+    // 이 통과한 뒤 매 사이클 append 가 실패했다(설정은 저장됨). 근거: machbase/neo#1367.
+    'rejects a JSON collector whose record name exceeds the primary column': (t) => {
+        const H = makeHandler();
+        mockCGI._servers['server-a'] = { host: 'h', port: 5656, user: 'SYS', password: 'pw' };
+        mockMachbaseClient.tableMeta = { ID: 10, TYPE: 6, NAME: 'TAG' };
+        mockMachbaseClient.columns = [
+            { NAME: 'NAME', TYPE: 5, ID: 0, FLAG: 0x8000000, LENGTH: 5 },
+            { NAME: 'TIME', TYPE: 6, ID: 1, FLAG: 0x1000000, LENGTH: 8 },
+            { NAME: 'PAYLOAD', TYPE: 61, ID: 2, FLAG: 0x2000000, LENGTH: 0 },
+        ];
+
+        let result;
+        H.collectorPost('c1', {
+            db: 'server-a',
+            dbTable: 'TAG',
+            valueColumn: 'PAYLOAD',
+            tagName: 'RECORD_NAME_TOO_LONG',
+            timePolicy: 'requestTime',
+            opcua: { interval: 1000, endpoint: 'opc.tcp://h:4840', nodes: [{ nodeId: 'ns=1;s=a', name: 'a' }] },
+        }, (r) => { result = r; });
+
+        t.assert(!result.ok, 'should not be ok');
+        t.assert(result.reason.includes('tag name length 20 exceeds NAME VARCHAR(5)'),
+            `should measure the record name, got: ${result.reason}`);
+    },
+
+    // 반대 방향: 긴 job 이름이라도 짧은 Record Name 을 쓰면 통과해야 한다.
+    'accepts a JSON collector whose record name fits even when the job name does not': (t) => {
+        const H = makeHandler();
+        mockCGI._servers['server-a'] = { host: 'h', port: 5656, user: 'SYS', password: 'pw' };
+        mockMachbaseClient.tableMeta = { ID: 10, TYPE: 6, NAME: 'TAG' };
+        mockMachbaseClient.columns = [
+            { NAME: 'NAME', TYPE: 5, ID: 0, FLAG: 0x8000000, LENGTH: 8 },
+            { NAME: 'TIME', TYPE: 6, ID: 1, FLAG: 0x1000000, LENGTH: 8 },
+            { NAME: 'PAYLOAD', TYPE: 61, ID: 2, FLAG: 0x2000000, LENGTH: 0 },
+        ];
+
+        let result;
+        H.collectorPost('a-very-long-job-name', {
+            db: 'server-a',
+            dbTable: 'TAG',
+            valueColumn: 'PAYLOAD',
+            tagName: 'SHORT',
+            timePolicy: 'requestTime',
+            opcua: { interval: 1000, endpoint: 'opc.tcp://h:4840', nodes: [{ nodeId: 'ns=1;s=a', name: 'a' }] },
+        }, (r) => { result = r; });
+
+        t.assert(result.ok, `should be ok, got: ${result.reason}`);
+    },
+
     'rejects existing table when tag name exceeds primary column length': (t) => {
         const H = makeHandler();
         mockCGI._servers['server-a'] = { host: 'h', port: 5656, user: 'SYS', password: 'pw' };
@@ -1790,6 +1841,220 @@ runner.run('Handler: dbTableColumns', {
     },
 });
 
+// ── dbTableStat ──────────────────────────────────────────────────────────────
+
+runner.run('Handler: dbTableStat', {
+    'converts nanosecond epoch boundaries to ISO': (t) => {
+        const H = makeHandler();
+        mockMachbaseClient.users = [{ USER_ID: 1, NAME: 'SYS' }];
+        mockMachbaseClient.tableMeta = { ID: 10, TYPE: 6, NAME: 'TAG' };
+        // A live V$..._STAT returns DATETIME as a nanosecond epoch integer over the raw query path.
+        mockMachbaseClient.queryResults = [
+            [{ MIN_TIME: 1787013552300000000, MAX_TIME: 1787027718614000000 }],
+        ];
+
+        let result;
+        H.dbTableStat({ host: 'h', port: 5656, user: 'sys', password: 'p' }, {
+            table: 'TAG',
+            names: 'collector-a',
+        }, (r) => { result = r; });
+
+        t.assert(result.ok, 'should be ok');
+        t.assertEqual(result.data.minTime, '2026-08-18T00:39:12.300Z');
+        t.assertEqual(result.data.maxTime, '2026-08-18T04:35:18.614Z');
+        t.assertEqual(result.data.names.length, 1);
+        t.assert(mockMachbaseClient.closed, 'client should be closed');
+    },
+
+    'accepts the ISO strings machcli returns for the same columns': (t) => {
+        const H = makeHandler();
+        mockMachbaseClient.users = [{ USER_ID: 1, NAME: 'SYS' }];
+        mockMachbaseClient.tableMeta = { ID: 10, TYPE: 6, NAME: 'TAG' };
+        mockMachbaseClient.queryResults = [
+            [{ MIN_TIME: '2026-08-18T10:22:16.739+09:00', MAX_TIME: '2026-08-18T11:22:16.739+09:00' }],
+        ];
+
+        let result;
+        H.dbTableStat({ host: 'h', port: 5656, user: 'sys', password: 'p' }, {
+            table: 'TAG',
+            names: ['a', 'b'],
+        }, (r) => { result = r; });
+
+        t.assert(result.ok, 'should be ok');
+        t.assertEqual(result.data.minTime, '2026-08-18T01:22:16.739Z');
+        t.assertEqual(result.data.maxTime, '2026-08-18T02:22:16.739Z');
+    },
+
+    'reports null when the selected tags have never been written': (t) => {
+        const H = makeHandler();
+        mockMachbaseClient.users = [{ USER_ID: 1, NAME: 'SYS' }];
+        mockMachbaseClient.tableMeta = { ID: 10, TYPE: 6, NAME: 'TAG' };
+        mockMachbaseClient.queryResults = [[{ MIN_TIME: null, MAX_TIME: null }]];
+
+        let result;
+        H.dbTableStat({ host: 'h', port: 5656, user: 'sys', password: 'p' }, {
+            table: 'TAG', names: 'never-written',
+        }, (r) => { result = r; });
+
+        t.assert(result.ok, 'should be ok');
+        t.assertEqual(result.data.minTime, null);
+        t.assertEqual(result.data.maxTime, null);
+    },
+
+    'requires a name': (t) => {
+        const H = makeHandler();
+        let result;
+        H.dbTableStat({ host: 'h', port: 5656, user: 'sys', password: 'p' }, {
+            table: 'TAG',
+        }, (r) => { result = r; });
+
+        t.assert(!result.ok, 'should fail');
+    },
+
+    'rejects a table that is not a TAG table': (t) => {
+        const H = makeHandler();
+        mockMachbaseClient.users = [{ USER_ID: 1, NAME: 'SYS' }];
+        mockMachbaseClient.tableMeta = { ID: 10, TYPE: 1, NAME: 'LOGT' };
+
+        let result;
+        H.dbTableStat({ host: 'h', port: 5656, user: 'sys', password: 'p' }, {
+            table: 'LOGT', names: 'a',
+        }, (r) => { result = r; });
+
+        t.assert(!result.ok, 'should fail');
+    },
+});
+
+// ── dbTableChart jsonKeys ────────────────────────────────────────────────────
+
+runner.run('Handler: dbTableChart jsonKeys', {
+    'projects one column per key in a single scan': (t) => {
+        const H = makeHandler();
+        mockMachbaseClient.users = [{ USER_ID: 1, NAME: 'SYS' }];
+        mockMachbaseClient.tableMeta = { ID: 10, TYPE: 6, NAME: 'TAG' };
+
+        let result;
+        H.dbTableChart({ host: 'h', port: 5656, user: 'sys', password: 'p' }, {
+            table: 'TAG', names: 'collector-a', valueColumn: 'PAYLOAD',
+            jsonKeys: 'Sine1,Plant1.Line1.Temperature',
+        }, (r) => { result = r; });
+
+        t.assert(result.ok, 'should be ok');
+        t.assertEqual(result.data.jsonKeys.length, 2);
+        // Quoted bracket form: keeps a dotted key literal (the dot form would traverse nesting)
+        // and, unlike the bare form, survives a key that contains a closing bracket.
+        t.assert(result.data.query.includes(`PAYLOAD->'$["Sine1"]'`), 'first key projected');
+        t.assert(
+            result.data.query.includes(`PAYLOAD->'$["Plant1.Line1.Temperature"]'`),
+            'a dotted key stays inside one bracket'
+        );
+        t.assert(!result.data.query.includes('UNION'), 'must stay a single scan');
+    },
+
+    'keeps the long-format query when no keys are given': (t) => {
+        const H = makeHandler();
+        mockMachbaseClient.users = [{ USER_ID: 1, NAME: 'SYS' }];
+        mockMachbaseClient.tableMeta = { ID: 10, TYPE: 6, NAME: 'TAG' };
+
+        let result;
+        H.dbTableChart({ host: 'h', port: 5656, user: 'sys', password: 'p' }, {
+            table: 'TAG', names: 'sensor.a',
+        }, (r) => { result = r; });
+
+        t.assert(result.ok, 'should be ok');
+        t.assertEqual(result.data.jsonKeys.length, 0);
+        t.assert(result.data.query.includes('AS NAME'), 'scalar path is unchanged');
+        t.assert(!result.data.query.includes('->'), 'no projection without keys');
+    },
+
+    // The quoted path carries far more than the bare one did. Only a double quote is genuinely
+    // unaddressable -- the json path grammar has no escape, so no quoting form survives it.
+    'refuses only what the quoted json path cannot carry': (t) => {
+        const H = makeHandler();
+        mockMachbaseClient.users = [{ USER_ID: 1, NAME: 'SYS' }];
+        mockMachbaseClient.tableMeta = { ID: 10, TYPE: 6, NAME: 'TAG' };
+
+        for (const bad of ['say "hi"', 'line\nbreak', 'tab\there']) {
+            let result;
+            H.dbTableChart({ host: 'h', port: 5656, user: 'sys', password: 'p' }, {
+                table: 'TAG', names: 'collector-a', valueColumn: 'PAYLOAD', jsonKeys: bad,
+            }, (r) => { result = r; });
+            t.assert(!result.ok, `should reject ${JSON.stringify(bad)}`);
+        }
+    },
+
+    'carries keys the bare bracket form had to reject': (t) => {
+        const H = makeHandler();
+        mockMachbaseClient.users = [{ USER_ID: 1, NAME: 'SYS' }];
+        mockMachbaseClient.tableMeta = { ID: 10, TYPE: 6, NAME: 'TAG' };
+
+        // The real payload key that used to fail: it holds `]`, `[`, `'` and `+`.
+        const real = "Rand_~!@#$%^&*()_-+={[}.<>/?]om5";
+        let result;
+        H.dbTableChart({ host: 'h', port: 5656, user: 'sys', password: 'p' }, {
+            table: 'TAG', names: 'collector-a', valueColumn: 'PAYLOAD', jsonKeys: real,
+        }, (r) => { result = r; });
+
+        t.assert(result.ok, 'a key with ] must be projectable');
+        t.assert(result.data.query.includes(`PAYLOAD->'$["${real}"]'`), 'key kept whole inside quotes');
+
+        // A single quote is doubled for the SQL literal rather than refused.
+        let quoted;
+        H.dbTableChart({ host: 'h', port: 5656, user: 'sys', password: 'p' }, {
+            table: 'TAG', names: 'collector-a', valueColumn: 'PAYLOAD', jsonKeys: "it's",
+        }, (r) => { quoted = r; });
+        t.assert(quoted.ok, "a key with ' must be projectable");
+        t.assert(quoted.data.query.includes(`$["it''s"]`), 'single quote doubled, not rejected');
+    },
+
+    // 40개는 흔한 규모다. 예전 캡(32)이 이런 collector 를 이유 없이 막았다.
+    'projects an ordinary number of keys without complaint': (t) => {
+        const H = makeHandler();
+        mockMachbaseClient.users = [{ USER_ID: 1, NAME: 'SYS' }];
+        mockMachbaseClient.tableMeta = { ID: 10, TYPE: 6, NAME: 'TAG' };
+
+        const many = Array.from({ length: 40 }, (_, i) => `k${i}`).join(',');
+        let result;
+        H.dbTableChart({ host: 'h', port: 5656, user: 'sys', password: 'p' }, {
+            table: 'TAG', names: 'collector-a', valueColumn: 'PAYLOAD', jsonKeys: many,
+        }, (r) => { result = r; });
+
+        t.assert(result.ok, `40 keys should pass, got: ${result.reason}`);
+        t.assertEqual(result.data.jsonKeys.length, 40);
+    },
+
+    'caps the number of projected keys': (t) => {
+        const H = makeHandler();
+        mockMachbaseClient.users = [{ USER_ID: 1, NAME: 'SYS' }];
+        mockMachbaseClient.tableMeta = { ID: 10, TYPE: 6, NAME: 'TAG' };
+
+        const many = Array.from({ length: 200 }, (_, i) => `k${i}`).join(',');
+        let result;
+        H.dbTableChart({ host: 'h', port: 5656, user: 'sys', password: 'p' }, {
+            table: 'TAG', names: 'collector-a', valueColumn: 'PAYLOAD', jsonKeys: many,
+        }, (r) => { result = r; });
+
+        t.assert(!result.ok, 'should fail past the cap');
+    },
+
+    // 개수보다 먼저 걸리는 건 URL 길이다. 서버가 읽지도 못하는 431 대신 이유를 말해준다.
+    'refuses a key set too long for one request URL': (t) => {
+        const H = makeHandler();
+        mockMachbaseClient.users = [{ USER_ID: 1, NAME: 'SYS' }];
+        mockMachbaseClient.tableMeta = { ID: 10, TYPE: 6, NAME: 'TAG' };
+
+        // 60개 × 190자 = 약 11,400자 — 개수 캡(128)에는 안 걸리고 길이 캡에만 걸린다.
+        const long = Array.from({ length: 60 }, (_, i) => `k${i}` + 'x'.repeat(188)).join(',');
+        let result;
+        H.dbTableChart({ host: 'h', port: 5656, user: 'sys', password: 'p' }, {
+            table: 'TAG', names: 'collector-a', valueColumn: 'PAYLOAD', jsonKeys: long,
+        }, (r) => { result = r; });
+
+        t.assert(!result.ok, 'should fail on total length');
+        t.assert(result.reason.includes('too long for one request'), `got: ${result.reason}`);
+    },
+});
+
 // ── dbTableTags ──────────────────────────────────────────────────────────────
 
 runner.run('Handler: dbTableTags', {
@@ -2313,6 +2578,73 @@ runner.run('Handler: dbTableTags', {
 // ── dbTableData ──────────────────────────────────────────────────────────────
 
 runner.run('Handler: dbTableData', {
+    // 앱이 실제로 부르는 건 chart 가 아니라 이 경로다. alias 발행·values 정렬·jsonKeys echo 가
+    // 여기서만 검증된다 — 이 테스트가 없을 때 SELECT 에서 `AS JV{n}` 를 지워도 전 스위트가 통과했다.
+    'projects the selected payload keys and returns them positionally': (t) => {
+        const H = makeHandler();
+        mockMachbaseClient.users = [{ USER_ID: 1, NAME: 'SYS' }];
+        mockMachbaseClient.tableMeta = { ID: 10, TYPE: 6, NAME: 'TAG' };
+        mockMachbaseClient.queryResults = [
+            [
+                { TIME: new Date('2026-06-01T00:01:00Z'), NAME: 'c1', JV0: 'true', JV1: '1.5', JV2: 'hi' },
+                { TIME: new Date('2026-06-01T00:00:00Z'), NAME: 'c1', JV0: 'false', JV1: ' ', JV2: null },
+            ],
+        ];
+
+        let result;
+        H.dbTableData({ host: 'h', port: 5656, user: 'SYS', password: 'p' }, {
+            table: 'TAG', names: 'c1', valueColumn: 'PAYLOAD',
+            jsonKeys: 'flag,level,label', direction: 'latest', page: 1, pageSize: 10,
+        }, (r) => { result = r; });
+
+        t.assert(result.ok, 'should be ok');
+        const sql = mockMachbaseClient.queries[mockMachbaseClient.queries.length - 1].sql;
+        t.assert(sql.includes(`PAYLOAD->'$["flag"]' AS JV0`), 'first key aliased to JV0');
+        t.assert(sql.includes(`PAYLOAD->'$["label"]' AS JV2`), 'third key aliased to JV2');
+        t.assertEqual(result.data.jsonKeys.join(','), 'flag,level,label');
+
+        // json 연산자는 무조건 VARCHAR 라 저장된 문자열과 숫자를 구분할 수 없다. 그래서 숫자로
+        // 보이는 값도 손대지 않고 그대로 넘긴다 — '1.5' 가 1.5 로 바뀌면 저장된 값을 확인할
+        // 방법이 사라진다. boolean 만 예외로 되돌린다(값 변경이 아니라 복원이고, 클라이언트에서
+        // 하면 이 경로를 공유하는 스칼라 차트까지 바뀐다).
+        t.assertEqual(result.data.rows[0].values[0], true);
+        t.assertEqual(result.data.rows[0].values[1], '1.5');
+        t.assertEqual(result.data.rows[0].values[2], 'hi');
+        t.assertEqual(result.data.rows[1].values[0], false);
+        // 공백뿐인 값만 null 로 접는다. 그리드에서 빈칸과 구분되지 않는 공백이 찍히기 때문.
+        t.assertEqual(result.data.rows[1].values[1], null);
+        t.assertEqual(result.data.rows[1].values[2], null);
+        t.assertEqual(result.data.rows[0].name, 'c1');
+    },
+
+    // 강제 변환이 남아 있으면 저장된 문자열이 그리드에서 다른 값으로 보인다. 사용자가 payload
+    // 원문을 볼 방법이 없어졌으므로 이 훼손은 되돌릴 수 없다.
+    'passes numeric-looking payload strings through verbatim': (t) => {
+        const H = makeHandler();
+        mockMachbaseClient.users = [{ USER_ID: 1, NAME: 'SYS' }];
+        mockMachbaseClient.tableMeta = { ID: 10, TYPE: 6, NAME: 'TAG' };
+        mockMachbaseClient.queryResults = [[{
+            TIME: new Date('2026-06-01T00:00:00Z'), NAME: 'c1',
+            JV0: '007', JV1: '1e3', JV2: '3.10', JV3: '0x1F', JV4: '0.0000001234',
+            JV5: 23.420000076293945,
+        }]];
+
+        let result;
+        H.dbTableData({ host: 'h', port: 5656, user: 'SYS', password: 'p' }, {
+            table: 'TAG', names: 'c1', valueColumn: 'PAYLOAD',
+            jsonKeys: 'serial,exp,trailing,code,tiny,widened', pageSize: 10,
+        }, (r) => { result = r; });
+
+        t.assertEqual(result.data.rows[0].values[0], '007');
+        t.assertEqual(result.data.rows[0].values[1], '1e3');
+        t.assertEqual(result.data.rows[0].values[2], '3.10');
+        t.assertEqual(result.data.rows[0].values[3], '0x1F');
+        // 1e-6 반올림은 숫자로 도착한 값에만 적용한다. 문자열에 걸면 0 이 되어 사라진다.
+        t.assertEqual(result.data.rows[0].values[4], '0.0000001234');
+        // 반대로 드라이버가 숫자로 넘겨준 칸은 스칼라 경로와 같은 함수를 거친다.
+        t.assertEqual(result.data.rows[0].values[5], 23.42);
+    },
+
     'returns latest raw rows with backward scan and current page metadata': (t) => {
         const H = makeHandler();
         mockMachbaseClient.users = [{ USER_ID: 1, NAME: 'SYS' }];

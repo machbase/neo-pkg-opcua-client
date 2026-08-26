@@ -565,6 +565,68 @@ runner.run('Collector.collect — stringOnly', {
     },
 });
 
+runner.run('Collector.collect — json mode tagName', {
+    'writes the configured tagName instead of the job name': (t) => {
+        const config = {
+            ...baseConfig,
+            valueColumn: 'PAYLOAD',
+            tagName: 'line1-json',
+            opcua: { ...baseConfig.opcua, nodes: [{ nodeId: 'ns=1;s=Temp', name: 'temp' }] },
+        };
+        const dbStream = new MockMachbaseStream();
+        dbStream.valueColumnFamily = 'JSON';
+        const { c } = makeCollector(config, { dbStream });
+        c.start();
+        c.opcua.readResult = [{ value: 5, sourceTimestamp: 1000 }];
+        dbStream.appended = [];
+        c.collect();
+
+        t.assertEqual(dbStream.appended[0].NAME, 'line1-json');
+        t.assertEqual(c.collectorName, 'collector-a', 'the job identity is unchanged');
+        clearTimeout(c.timer);
+    },
+
+    'falls back to the job name when tagName is absent or blank': (t) => {
+        for (const tagName of [undefined, '', '   ']) {
+            const config = {
+                ...baseConfig,
+                valueColumn: 'PAYLOAD',
+                ...(tagName === undefined ? {} : { tagName }),
+                opcua: { ...baseConfig.opcua, nodes: [{ nodeId: 'ns=1;s=Temp', name: 'temp' }] },
+            };
+            const dbStream = new MockMachbaseStream();
+            dbStream.valueColumnFamily = 'JSON';
+            const { c } = makeCollector(config, { dbStream });
+            c.start();
+            c.opcua.readResult = [{ value: 5, sourceTimestamp: 1000 }];
+            dbStream.appended = [];
+            c.collect();
+
+            t.assertEqual(dbStream.appended[0].NAME, 'collector-a', `tagName=${JSON.stringify(tagName)}`);
+            clearTimeout(c.timer);
+        }
+    },
+
+    'trims a padded tagName so it matches what a query would ask for': (t) => {
+        const config = {
+            ...baseConfig,
+            valueColumn: 'PAYLOAD',
+            tagName: '  padded  ',
+            opcua: { ...baseConfig.opcua, nodes: [{ nodeId: 'ns=1;s=Temp', name: 'temp' }] },
+        };
+        const dbStream = new MockMachbaseStream();
+        dbStream.valueColumnFamily = 'JSON';
+        const { c } = makeCollector(config, { dbStream });
+        c.start();
+        c.opcua.readResult = [{ value: 5, sourceTimestamp: 1000 }];
+        dbStream.appended = [];
+        c.collect();
+
+        t.assertEqual(dbStream.appended[0].NAME, 'padded');
+        clearTimeout(c.timer);
+    },
+});
+
 runner.run('Collector.collect — json mode', {
     'aggregates all nodes into one JSON row using collector name': (t) => {
         const config = {
@@ -1127,6 +1189,32 @@ runner.run('Collector.collect — derived tags', {
         });
         c.start();
         t.assertEqual(c._previousValues.calc, 123);
+        clearTimeout(c.timer);
+    },
+
+    // JSON 모드의 restore 는 append 가 쓰는 것과 같은 키로 읽어야 한다. 기존 테스트는 tagName 없는
+    // config 라 두 값이 같아서, 바인드를 collectorName 으로 되돌려도 전부 통과했다.
+    'JSON restore binds the record name, not the job name': (t) => {
+        const config = {
+            ...baseConfig,
+            valueColumn: 'PAYLOAD',
+            tagName: 'LINE_01',
+            opcua: {
+                ...baseConfig.opcua,
+                nodes: [{ nodeId: 'ns=1;s=A', name: 'a', onChanged: true }],
+            },
+        };
+        const dbStream = new MockMachbaseStream();
+        dbStream.valueColumnFamily = 'JSON';
+        const { c, dbQueries } = makeCollector(config, {
+            dbStream,
+            queryRows: [{ NAME: 'LINE_01', PAYLOAD: '{"a":7}' }],
+        });
+        c.start();
+        t.assert(dbQueries.length > 0, 'restore should query db');
+        t.assertEqual(dbQueries[0].values[0], 'LINE_01',
+            `should bind the record name, got: ${dbQueries[0].values[0]}`);
+        t.assertEqual(c._previousValues.a, 7);
         clearTimeout(c.timer);
     },
 

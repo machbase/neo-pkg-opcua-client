@@ -1,6 +1,7 @@
 /**
- * GET /cgi-bin/api/db/table/data?server=xxx&table=xxx&name=xxx
- * GET /cgi-bin/api/db/table/data?server=xxx&table=xxx&names=xxx,yyy
+ * GET /cgi-bin/api/db/table/stat?server=xxx&table=xxx&names=aaa&names=bbb
+ *
+ * Boundary times (MIN_TIME / MAX_TIME) for the selected tags, read from V$<TABLE>_STAT.
  */
 
 const path = require('path');
@@ -10,7 +11,7 @@ const ROOT = _argv.slice(0, _argv.lastIndexOf('/cgi-bin/') + '/cgi-bin'.length);
 const { CGI } = require(path.join(ROOT, 'src', 'cgi', 'cgi_util.js'));
 const Handler = require(path.join(ROOT, 'src', 'cgi', 'handler.js'));
 
-const query = CGI.parseQuery({ arrayKeys: ['names', 'jsonKeys'] });
+const query = CGI.parseQuery({ arrayKeys: ['names'] });
 const reply = (r) => CGI.reply(r);
 
 const handlers = {
@@ -32,32 +33,11 @@ const handlers = {
       reply({ ok: false, reason: `server '${query.server}' not found` });
       return;
     }
-    const params = {
+    Handler.dbTableStat(db, {
       table: query.table,
       name: query.name,
       names: query.names,
-      valueColumn: query.valueColumn,
-      // Payload keys the server should extract instead of returning the whole document.
-      jsonKeys: query.jsonKeys,
-      stringValueColumn: query.stringValueColumn,
-      primaryColumn: query.primaryColumn,
-      timeColumn: query.timeColumn,
-      direction: query.direction,
-      from: query.from,
-      to: query.to,
-      page: query.page,
-      pageSize: query.pageSize,
-      boundedRange: query.boundedRange,
-      cursorSide: query.cursorSide,
-      cursorTime: query.cursorTime,
-      cursorName: query.cursorName,
-      cursorOffset: query.cursorOffset,
-    };
-    if (query.includeTotal === 'true') {
-      Handler.dbTableDataTotal(db, params, reply);
-      return;
-    }
-    Handler.dbTableData(db, params, reply);
+    }, reply);
   },
 };
 

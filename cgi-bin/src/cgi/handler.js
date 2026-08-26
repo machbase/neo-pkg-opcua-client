@@ -6,17 +6,7 @@ const process = require('process');
 const { CGI } = require('./cgi_util.js');
 const Service = require('./service.js');
 const { MachbaseClient } = require('../db/client.js');
-const {
-  Column,
-  TableSchema,
-  ColumnType,
-  FLAG_PRIMARY,
-  FLAG_BASETIME,
-  FLAG_SUMMARIZED,
-  FLAG_METADATA,
-  findTagKeyColumnName,
-  resolveTagKeyColumnNames,
-} = require('../db/types.js');
+const { Column, TableSchema, ColumnType, FLAG_PRIMARY, FLAG_BASETIME, FLAG_SUMMARIZED, FLAG_METADATA, findTagKeyColumnName, resolveTagKeyColumnNames } = require('../db/types.js');
 const OpcuaClient = require('../opcua/opcua-client.js');
 const Expression = require('../expression/evaluator.js');
 const { mergeCollectorConfig } = require('../config/collector-config.js');
@@ -448,7 +438,9 @@ function normalizeOpcuaCapabilities(value, previous) {
 
   const source = OPCUA_CAPABILITY_SOURCES[input.maxNodesPerReadSource]
     ? input.maxNodesPerReadSource
-    : (input.maxNodesPerRead === undefined || input.maxNodesPerRead === null ? 'default' : 'server');
+    : input.maxNodesPerRead === undefined || input.maxNodesPerRead === null
+      ? 'default'
+      : 'server';
   const capabilities = {
     maxNodesPerRead: null,
     maxNodesPerReadSource: source,
@@ -468,9 +460,7 @@ function normalizeOpcuaReadBatchSize(config, previous, capabilities, preservePre
   const hasPrevious = previous && previous.readBatchSize !== undefined && previous.readBatchSize !== null;
   const serverLimit = capabilities.maxNodesPerRead > 0 ? capabilities.maxNodesPerRead : null;
   const defaultValue = serverLimit ? Math.min(serverLimit, OPCUA_DEFAULT_READ_BATCH_SIZE) : OPCUA_DEFAULT_READ_BATCH_SIZE;
-  const value = hasInput
-    ? config.readBatchSize
-    : (preservePrevious && hasPrevious ? previous.readBatchSize : defaultValue);
+  const value = hasInput ? config.readBatchSize : preservePrevious && hasPrevious ? previous.readBatchSize : defaultValue;
   const readBatchSize = normalizePositiveInteger(value, 'readBatchSize');
   if (!serverLimit) {
     return readBatchSize;
@@ -545,15 +535,13 @@ function normalizeOpcuaServerSecurity(security, options = {}) {
     return normalized;
   }
 
-  const securityPolicy = hasOwn(input, 'securityPolicy')
-    ? input.securityPolicy
-    : (previous.securityPolicy || 'None');
+  const securityPolicy = hasOwn(input, 'securityPolicy') ? input.securityPolicy : previous.securityPolicy || 'None';
   const messageSecurityMode = hasOwn(input, 'messageSecurityMode')
     ? input.messageSecurityMode
-    : (hasOwn(input, 'securityMode') ? input.securityMode : (previous.messageSecurityMode || 'None'));
-  const authMode = hasOwn(input, 'authMode')
-    ? input.authMode
-    : (previous.authMode || 'Anonymous');
+    : hasOwn(input, 'securityMode')
+      ? input.securityMode
+      : previous.messageSecurityMode || 'None';
+  const authMode = hasOwn(input, 'authMode') ? input.authMode : previous.authMode || 'Anonymous';
 
   normalized.securityPolicy = normalizeChoice(securityPolicy, OPCUA_SECURITY_POLICIES, 'security.securityPolicy');
   normalized.messageSecurityMode = normalizeChoice(messageSecurityMode, OPCUA_MESSAGE_SECURITY_MODES, 'security.messageSecurityMode');
@@ -930,13 +918,31 @@ function maxNameLength(items, nameFn) {
   return maxLen;
 }
 
+/**
+ * collector 가 실제로 NAME 컬럼에 쓰게 될 이름 중 가장 긴 것의 길이.
+ *
+ * JSON 모드는 한 사이클을 한 row 로 합치고 그 row 의 NAME 은 Record Name 하나뿐이다. 노드 이름은
+ * payload 의 키로 들어가므로 NAME 컬럼과 무관하다. 그래서 여기서 재는 값은 collector.js 가 실제로
+ * 쓰는 값(this.tagName)과 같은 규칙으로 구해야 한다 — Record Name 이 생기기 전에는 두 값이 모두
+ * collectorName 이라 구분할 필요가 없었고, 그 시절 코드가 job 이름을 재고 있었다.
+ *
+ * 어긋나면 양방향으로 틀린다. 짧은 job 이름 + 긴 Record Name 은 검사를 통과한 뒤 매 사이클 append
+ * 가 실패하고(설정은 멀쩡히 저장된다), 반대 조합은 문제없는 설정을 부당하게 거부한다.
+ *
+ * 근거: machbase/neo#1367 — "name 컬럼의 크기를 넘어서는 tag가 있으면 append 실패".
+ */
 function maxTagNameLengthForConfig(collectorName, config, columns) {
   if (isCollectorJsonMode(config, columns)) {
-    return String(collectorName || '').length;
+    // collector.js 의 `String(config.tagName || '').trim() || this.collectorName` 과 같은 순서여야
+    // 한다. 그냥 `(tagName || collectorName)` 로 두면 공백뿐인 tagName 이 truthy 라 collectorName
+    // 까지 가지 못하고 길이 0 으로 측정된다 — 실제로는 collector 가 collectorName 을 쓰므로
+    // VARCHAR 폭 검사를 그냥 통과시킨다.
+    const recordName = String((config && config.tagName) || '').trim() || String(collectorName || '');
+    return recordName.length;
   }
 
-  const nodeMax = maxNameLength(collectorNodeList(config), node => (node && node.name != null ? String(node.name) : ''));
-  const derivedMax = maxNameLength(collectorDerivedTagList(config), tag => (tag && tag.name != null ? String(tag.name) : ''));
+  const nodeMax = maxNameLength(collectorNodeList(config), (node) => (node && node.name != null ? String(node.name) : ''));
+  const derivedMax = maxNameLength(collectorDerivedTagList(config), (tag) => (tag && tag.name != null ? String(tag.name) : ''));
   return Math.max(nodeMax, derivedMax);
 }
 
@@ -1105,7 +1111,11 @@ function validateDerivedConfig(config) {
       throw userFacingError(`derivedTags[${i}] must be an object`);
     }
 
+    // 소스 노드 루프와 마찬가지로 trim 한 값을 되돌려 쓴다. 안 그러면 검사는 trim 된 값으로
+    // 하면서 설정에는 원본이 남고, collector 가 앞뒤 공백이 붙은 이름을 append 하게 된다 —
+    // neo-web 은 조회할 때 그 공백을 말없이 잘라내므로 결과가 비어 버린다.
     const name = normalizeText(tag.name);
+    tag.name = name;
     if (!name) {
       throw userFacingError(`derivedTags[${i}].name is required`);
     }
@@ -1178,13 +1188,10 @@ function validateDerivedConfig(config) {
           throw userFacingError(`derived tag '${name}' timeSource must be 'latest' or one of its variables`);
         }
         if (!usedMap[timeSource]) {
-          pushDerivedWarning(
-            warnings,
-            'time-source-not-in-expression',
-            `derived tag '${name}' timeSource '${timeSource}' is not used in expression`,
-            name,
-            { alias: timeSource, target: variables[timeSource] }
-          );
+          pushDerivedWarning(warnings, 'time-source-not-in-expression', `derived tag '${name}' timeSource '${timeSource}' is not used in expression`, name, {
+            alias: timeSource,
+            target: variables[timeSource],
+          });
         }
       } else {
         for (const alias of aliases) {
@@ -1194,7 +1201,7 @@ function validateDerivedConfig(config) {
               'latest-uses-unused-variable-time',
               `derived tag '${name}' timeSource 'latest' can use timestamp from unused variable '${alias}'`,
               name,
-              { alias, target: variables[alias] }
+              { alias, target: variables[alias] },
             );
           }
         }
@@ -1289,9 +1296,7 @@ function validateCollectorTableCompatibility(name, config) {
     }
 
     const selectedValueColumn = selectedCollectorValueColumn(config, columns);
-    const storageMode = config.stringOnly === true
-      ? 'string'
-      : (selectedValueColumn && columnType(selectedValueColumn) === ColumnType.JSON ? 'json' : 'default');
+    const storageMode = config.stringOnly === true ? 'string' : selectedValueColumn && columnType(selectedValueColumn) === ColumnType.JSON ? 'json' : 'default';
     if (hasDerivedNullPolicy(config)) {
       if (config.stringOnly === true) {
         throw userFacingError('derivedTags are not supported when stringOnly is true');
@@ -1307,7 +1312,7 @@ function validateCollectorTableCompatibility(name, config) {
 
     return {
       storageMode,
-      nullableDerived: !hasDerivedNullPolicy(config) || !(selectedValueColumn && (columnFlag(selectedValueColumn) & FLAG_SUMMARIZED)),
+      nullableDerived: !hasDerivedNullPolicy(config) || !(selectedValueColumn && columnFlag(selectedValueColumn) & FLAG_SUMMARIZED),
     };
   } finally {
     client.close();
@@ -2597,9 +2602,88 @@ function rowCountValue(row) {
 const INTERNAL_QUERY_ROW_FIELDS = new Set(['buffer', 'names']);
 const TAG_DATA_MAX_PAGE_SIZE = 1000000;
 
+/**
+ * machcli 가 돌려준 숫자 한 칸을 웹 콘솔의 /db/query 응답과 같은 자리수로 맞춘다.
+ *
+ * FLOAT(4바이트) 컬럼을 읽으면 float64 로 넓혀지면서 23.42 가 23.420000076293945 로 온다. 저장된
+ * 값이 아니라 읽는 과정에서 생기는 잡음이라 여기서 지운다.
+ *
+ * 문자열에는 절대 적용하지 않는다 — projectedValue 참고.
+ */
 function normalizeWebQueryNumericValue(value) {
   if (typeof value !== 'number' || !Number.isFinite(value)) return value;
   return Math.round(value * 1000000) / 1000000;
+}
+
+const TAG_DATA_PROJECTION_ALIAS = 'JV';
+
+/**
+ * payload 키 하나에 대한 json 경로. SQL 문자열 리터럴 안에 들어갈 형태로 만든다.
+ *
+ * 따옴표 형태를 쓰는 건 의도다. `$[key]` 는 첫 `]` 에서 경로를 닫으므로 `]` 가 든 키는 반토막이
+ * 나고 나머지가 문법 오류가 된다. `$["key"]` 는 `]` `[` `\` `'` `.` 공백 콤마를 문제없이
+ * 담는다(서버로 실측 확인). 작은따옴표는 경로 전체가 SQL 문자열 리터럴 안에 있으므로 여전히
+ * 이중화해야 한다. 큰따옴표만 방법이 없는데, json 경로 문법 자체에 이스케이프가 없기 때문이다.
+ */
+function tagDataJsonPath(key) {
+  return `$["${String(key).replace(/'/g, "''")}"]`;
+}
+
+/**
+ * A row whose payload keys were extracted by the server.
+ *
+ * Read by generated alias (JV0, JV1, ...) rather than by position: a JSH result row also carries
+ * internal `buffer` and `names` fields, so walking its keys picks those up instead of the columns.
+ * The values come back as VARCHAR because that is what the json operator returns, and every one of
+ * them is handed on as the stored text — see projectedValue for why none of it is coerced.
+ */
+function projectedTagDataRow(row, req, jsonKeys) {
+  const plain = JSON.parse(JSON.stringify(row || {}));
+  return {
+    time: pickRowValue(plain, ['TIME', 'time']),
+    name: pickRowValue(plain, ['NAME', 'name']),
+    values: jsonKeys.map((_, index) => {
+      const alias = `${TAG_DATA_PROJECTION_ALIAS}${index}`;
+      const raw = pickRowValue(plain, [alias, alias.toLowerCase()]);
+      return projectedValue(raw);
+    }),
+  };
+}
+
+/**
+ * json 연산자가 돌려준 payload 값 한 칸. 문자열은 손대지 않고 그대로 내보낸다.
+ *
+ * `col->'$["k"]'` 의 반환 타입은 무조건 VARCHAR 라 payload 에 담긴 문자열 "3" 과 숫자 3 을 구분할
+ * 방법이 없다. 예전에는 숫자로 보이면 Number() 로 바꿨는데, collector 는 문자열을 그대로 담고
+ * (_normalizeJsonValue) 이 경로는 payload 원문을 더 이상 클라이언트로 보내지 않으므로 "007" -> 7,
+ * "1e3" -> 1000, "3.10" -> 3.1 이 되면 저장된 값을 확인할 방법이 아예 사라진다. 그리드가 저장된
+ * 값을 그대로 보여야 한다.
+ *
+ * boolean 만은 예외로 여기서 되돌린다. JSON payload 의 true 가 VARCHAR "true" 로 도착한 것을
+ * boolean 으로 되돌리는 건 값을 바꾸는 게 아니라 복원이다. 반면 "007" -> 7 은 되돌릴 수 없는
+ * 손실이라 뺐다 — 이 둘의 차이가 여기 기준이다.
+ *
+ * 이 매핑을 클라이언트(buildTagChartSeries)로 옮겨봤다가 되돌렸다. 그 함수는 스칼라 collector 의
+ * 차트 경로이기도 해서, STR_VALUE 에 "false" 를 담는 stringOnly collector 가 시리즈 없음에서
+ * 0 을 그리는 쪽으로 조용히 바뀐다. JSON 을 고치려다 스칼라를 건드리는 셈이다.
+ *
+ * 1e-6 반올림은 **숫자로 도착한 값에만 두 경로 모두 적용**하는 쪽으로 맞췄다. 반올림이 있는 이유는
+ * FLOAT 컬럼을 읽을 때 생기는 float64 확장 잡음을 지우는 것인데(normalizeWebQueryNumericValue),
+ * 그 잡음은 읽기 과정에서 생기므로 payload 를 텍스트로 되받는 이 경로에는 애초에 없다. 반대로
+ * 맞추려면(= 여기서도 반올림하려면) 문자열을 숫자로 되돌려야 해서 위 결정과 정면으로 어긋난다.
+ * 그래서 규칙은 하나다 — 숫자로 온 값은 양쪽 다 같은 함수를 거치고, 텍스트로 온 값은 어느
+ * 경로에서도 숫자로 만들지 않는다.
+ *
+ * 공백뿐인 문자열을 null 로 접는 것만 남겼다. 값 없음을 나타내는 칸이라 그대로 두면 그리드에
+ * 빈칸과 구분되지 않는 공백이 찍힌다.
+ */
+function projectedValue(value) {
+  if (value === undefined || value === null || value === '') return null;
+  if (typeof value !== 'string') return normalizeWebQueryNumericValue(value);
+  if (value === 'true') return true;
+  if (value === 'false') return false;
+  if (value.trim() === '') return null;
+  return value;
 }
 
 function normalizeTagDataRow(row, req) {
@@ -2635,6 +2719,31 @@ function normalizeTagDataRow(row, req) {
 
 function buildTagMetaTableRef(table) {
   return table.tableUser ? `${table.tableUser}._${table.tableName}_META` : `_${table.tableName}_META`;
+}
+
+/**
+ * V$<TABLE>_STAT hands DATETIME back in two different shapes depending on how it was read:
+ * machcli returns an ISO string, while the raw /db/query path returns a NANOSECOND epoch integer
+ * (verified on a live server: MIN_TIME came back as 1787013552300000000). Accept both so the
+ * caller does not have to know which path produced the row.
+ */
+function statTimeToIso(value) {
+  if (value === undefined || value === null || value === '') return null;
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value.toISOString();
+  }
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) return null;
+    const ms = Math.abs(value) > 100000000000000 ? value / 1000000 : value;
+    const date = new Date(ms);
+    return Number.isNaN(date.getTime()) ? null : date.toISOString();
+  }
+  const text = String(value).trim();
+  if (!text) return null;
+  const numeric = Number(text);
+  if (Number.isFinite(numeric)) return statTimeToIso(numeric);
+  const parsed = new Date(text);
+  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
 }
 
 function buildTagStatViewRef(table) {
@@ -2681,14 +2790,8 @@ function findAssetHierarchy(row) {
 
 function mapTagMetaResponse(rows, assetColumn, assetHierarchy = null, primaryColumn = 'NAME') {
   const tags = [];
-  const assetColumnNames = assetColumn
-    ? [assetColumn, assetColumn.toUpperCase(), assetColumn.toLowerCase()]
-    : [];
-  const primaryColumnNames = [
-    primaryColumn,
-    String(primaryColumn || '').toUpperCase(),
-    String(primaryColumn || '').toLowerCase(),
-  ].filter(Boolean);
+  const assetColumnNames = assetColumn ? [assetColumn, assetColumn.toUpperCase(), assetColumn.toLowerCase()] : [];
+  const primaryColumnNames = [primaryColumn, String(primaryColumn || '').toUpperCase(), String(primaryColumn || '').toLowerCase()].filter(Boolean);
 
   for (const row of rows || []) {
     const name = pickRowValue(row, primaryColumnNames);
@@ -2722,9 +2825,73 @@ function findMetadataColumnName(columns, requestedName) {
   const found = (columns || []).find((row) => {
     const name = normalizeText(row.NAME || row.name).toUpperCase();
     const flag = Number(row.FLAG || row.flag || 0);
-    return name === requested && (flag & FLAG_METADATA);
+    return name === requested && flag & FLAG_METADATA;
   });
   return found ? normalizeText(found.NAME || found.name) : '';
+}
+
+// A json path is spliced into SQL text, so the keys are the one place the client can reach the
+// query string. They are validated here rather than trusted from the browser.
+// 투영할 수 있는 payload 키 개수. Machbase 쪽 한계가 아니다 — 512개를 투영하는 SELECT 도 4ms 에
+// 돌아온다(실측). 실제 상한은 GET 쿼리스트링 길이다. jsonKeys 가 콤마로 이어져 URL 에 실리는데,
+// 8.4KB 는 통과하고 16.8KB 에서 HTTP 431 이 떨어졌다. 그래서 개수는 넉넉히 두고 길이로 막는다.
+//
+// 이전 값은 32 였다. 키 200자를 최악으로 가정한 수치인데, 실제 OPC UA 노드 이름은 그보다 훨씬
+// 짧아서 흔한 규모의 collector 가 이유 없이 걸렸다. 초과하면 잘린 결과가 아니라 요청 전체가
+// 실패하므로(그리드와 차트가 동시에 빈다) 넉넉한 편이 낫다.
+const TAG_CHART_MAX_JSON_KEYS = 128;
+const TAG_CHART_MAX_JSON_KEY_LENGTH = 200;
+// 콤마로 이어붙인 jsonKeys 전체 길이. 431 이 떨어지는 지점보다 충분히 아래로 잡아, 서버가
+// 읽을 수도 없는 요청 대신 무엇이 문제인지 말해주는 응답이 나가게 한다.
+const TAG_CHART_MAX_JSON_KEYS_TOTAL_LENGTH = 6000;
+
+/**
+ * Payload keys to project out of a JSON value column, e.g. VALUE->'$[Sine1]'.
+ *
+ * Verified on a live Machbase: bracket form addresses a LITERAL key while dot form traverses
+ * nesting — JSON_EXTRACT('{"a.b":11,"a":{"b":22}}', '$[a.b]') is 11 and '$.a.b' is 22. OPC UA node
+ * names routinely contain dots, so brackets are required, and a key that could terminate either the
+ * bracket or the surrounding SQL string literal is refused rather than escaped.
+ */
+function parseTagChartJsonKeys(params) {
+  const raw = params && params.jsonKeys;
+  const collected = [];
+  const push = (value) => {
+    const key = String(value === undefined || value === null ? '' : value).trim();
+    if (key) collected.push(key);
+  };
+
+  if (Array.isArray(raw)) {
+    raw.forEach(push);
+  } else if (raw !== undefined && raw !== null) {
+    String(raw).split(',').forEach(push);
+  }
+  if (collected.length === 0) return [];
+
+  const seen = new Set();
+  const keys = [];
+  for (const key of collected) {
+    if (seen.has(key)) continue;
+    seen.add(key);
+    if (key.length > TAG_CHART_MAX_JSON_KEY_LENGTH) {
+      throw new Error(`jsonKeys entry is too long (max ${TAG_CHART_MAX_JSON_KEY_LENGTH}): '${key.slice(0, 40)}...'`);
+    }
+    // 따옴표 형태가 정말로 담지 못하는 것만 막는다. `"` 는 따옴표를 닫아버리고 json 경로 문법에
+    // 이스케이프가 없어 어떤 형태로도 살릴 수 없다. 제어문자는 SQL 텍스트 자체를 깨뜨린다.
+    // 나머지 `]` `[` `\` `'` `.` 공백은 전부 통과한다.
+    if (/["\r\n\t\0]/.test(key)) {
+      throw new Error(`jsonKeys entry contains a character a json path cannot carry: '${key}'`);
+    }
+    keys.push(key);
+  }
+  const totalLength = keys.join(',').length;
+  if (totalLength > TAG_CHART_MAX_JSON_KEYS_TOTAL_LENGTH) {
+    throw new Error(`jsonKeys is too long for one request (${totalLength} of ${TAG_CHART_MAX_JSON_KEYS_TOTAL_LENGTH} characters); select fewer keys`);
+  }
+  if (keys.length > TAG_CHART_MAX_JSON_KEYS) {
+    throw new Error(`jsonKeys supports up to ${TAG_CHART_MAX_JSON_KEYS} keys, got ${keys.length}`);
+  }
+  return keys;
 }
 
 function parseTagDataNames(params) {
@@ -2849,6 +3016,19 @@ function buildTagChartTqlWhere(req) {
 
 function buildTagChartSelect(req) {
   const queryWhere = buildTagChartTqlWhere(req);
+
+  if (req.jsonKeys && req.jsonKeys.length > 0) {
+    // One scan with one projected column per key. A UNION ALL per key would re-read the table once
+    // per series, and returning the whole payload wastes the wire when only a few keys are charted.
+    // Columns are POSITIONAL on purpose: a payload key may contain characters that would need
+    // identifier quoting, so the caller maps column i+1 back to jsonKeys[i] instead of using aliases.
+    const projections = req.jsonKeys.map((key) => `${req.valueColumn}->'${tagDataJsonPath(key)}'`).join(', ');
+    return {
+      query: `SELECT ${req.timeColumn} AS TIME, ${projections} ` + `FROM ${req.tableRef} WHERE ${queryWhere} ORDER BY ${req.timeColumn} ASC`,
+      jsonKeys: req.jsonKeys,
+    };
+  }
+
   const query =
     `SELECT ${req.timeColumn} AS TIME, ${req.primaryColumn} AS NAME, ${req.valueColumn} AS VALUE ` +
     `FROM ${req.tableRef} WHERE ${queryWhere} ORDER BY ${req.timeColumn} ASC, ${req.primaryColumn} ASC`;
@@ -2887,10 +3067,7 @@ function buildTagChartSeries(rows) {
     if (!seriesByName.has(name)) {
       seriesByName.set(name, []);
     }
-    seriesByName.get(name).push([
-      time,
-      normalizeChartPointValue(pickRowValue(row || {}, ['VALUE', 'value'])),
-    ]);
+    seriesByName.get(name).push([time, normalizeChartPointValue(pickRowValue(row || {}, ['VALUE', 'value']))]);
   }
 
   return Array.from(seriesByName.entries()).map(([name, data]) => ({
@@ -2913,9 +3090,8 @@ function parseTagDataRequest(params) {
       ? normalizeIdentifier(params.timeColumn, 'timeColumn')
       : null,
     valueColumn: normalizeIdentifier((params && params.valueColumn) || 'VALUE', 'valueColumn'),
-    stringValueColumn: params && params.stringValueColumn
-      ? normalizeIdentifier(params.stringValueColumn, 'stringValueColumn')
-      : null,
+    jsonKeys: parseTagChartJsonKeys(params),
+    stringValueColumn: params && params.stringValueColumn ? normalizeIdentifier(params.stringValueColumn, 'stringValueColumn') : null,
     direction: params && params.direction === 'oldest' ? 'oldest' : 'latest',
     from: parseOptionalDate(params && params.from, 'from'),
     to: parseOptionalDate(params && params.to, 'to'),
@@ -3002,9 +3178,11 @@ function dbTableTags(db, params, reply) {
     );
     const assetHierarchy = findAssetHierarchy(hierarchyRows && hierarchyRows[0]);
     const assetColumn = assetHierarchy ? normalizeText(assetHierarchy.column) : '';
-    const rows = client.query(assetHierarchy
-      ? `SELECT * FROM ${tagMetaTable} ORDER BY ${primaryColumn}`
-      : `SELECT _ID, ${primaryColumn}${assetColumn ? `, ${assetColumn}` : ''} FROM ${tagMetaTable} ORDER BY ${primaryColumn}`);
+    const rows = client.query(
+      assetHierarchy
+        ? `SELECT * FROM ${tagMetaTable} ORDER BY ${primaryColumn}`
+        : `SELECT _ID, ${primaryColumn}${assetColumn ? `, ${assetColumn}` : ''} FROM ${tagMetaTable} ORDER BY ${primaryColumn}`,
+    );
     const tagMeta = mapTagMetaResponse(rows, assetColumn, assetHierarchy, primaryColumn);
     reply({
       ok: true,
@@ -3062,25 +3240,37 @@ function dbTableData(db, params, reply) {
     const where = buildTagDataWhere(req, req.primaryColumn, req.timeColumn);
     const cursor = buildTagDataCursor(req);
     const queryWhere = cursor ? `${where.sql} AND ${cursor.sql}` : where.sql;
-    const orderTime = cursor ? cursor.orderTime : (req.direction === 'oldest' ? 'ASC' : 'DESC');
+    const orderTime = cursor ? cursor.orderTime : req.direction === 'oldest' ? 'ASC' : 'DESC';
     const orderName = cursor ? cursor.orderName : 'ASC';
     const scan = orderTime === 'ASC' ? 'SCAN_FORWARD' : 'SCAN_BACKWARD';
-    const offset = cursor ? req.cursorOffset : (req.boundedRange ? 0 : (req.page - 1) * req.pageSize);
-    const limitSql = cursor ? ' LIMIT ?, ?' : (req.boundedRange ? '' : ' LIMIT ?');
-    const limitValues = cursor ? [offset, req.pageSize] : (req.boundedRange ? [] : [offset + req.pageSize]);
+    const offset = cursor ? req.cursorOffset : req.boundedRange ? 0 : (req.page - 1) * req.pageSize;
+    const limitSql = cursor ? ' LIMIT ?, ?' : req.boundedRange ? '' : ' LIMIT ?';
+    const limitValues = cursor ? [offset, req.pageSize] : req.boundedRange ? [] : [offset + req.pageSize];
+    // With jsonKeys the server extracts each payload key instead of shipping the whole document,
+    // so the wire carries only the values actually being charted. Still ONE row per cycle and one
+    // scan: pagination keeps counting cycles, and a UNION ALL per key would re-read the table.
+    // Values come back positionally under `values`, matching req.jsonKeys, because a payload key may
+    // contain characters that a column alias would have to quote.
+    const projectKeys = req.jsonKeys && req.jsonKeys.length > 0 ? req.jsonKeys : null;
+    // Alias each projection to a generated name. The alias is ours, not the payload key, so a key
+    // containing characters an identifier would have to quote costs nothing here.
+    const selectList = projectKeys
+      ? `${req.timeColumn} AS TIME, ${req.primaryColumn} AS NAME, ` +
+        projectKeys.map((key, index) => `${req.valueColumn}->'${tagDataJsonPath(key)}' AS ${TAG_DATA_PROJECTION_ALIAS}${index}`).join(', ')
+      : '*';
     const dataRows = client.query(
-      `SELECT /*+ ${scan}(${req.tableRef}) */ * ` +
-      `FROM ${req.tableRef} WHERE ${queryWhere} ORDER BY ${req.timeColumn} ${orderTime}, ${req.primaryColumn} ${orderName}${limitSql}`,
-      [
-        ...where.values,
-        ...(cursor ? cursor.values : []),
-        ...limitValues,
-      ]
+      `SELECT /*+ ${scan}(${req.tableRef}) */ ${selectList} ` +
+        `FROM ${req.tableRef} WHERE ${queryWhere} ORDER BY ${req.timeColumn} ${orderTime}, ${req.primaryColumn} ${orderName}${limitSql}`,
+      [...where.values, ...(cursor ? cursor.values : []), ...limitValues],
     );
     const pageRows = cursor
-      ? (cursor.reverseRows ? [...(dataRows || [])].reverse() : (dataRows || []))
-      : (req.boundedRange ? (dataRows || []) : (dataRows || []).slice(offset, offset + req.pageSize));
-    const rows = pageRows.map((row) => normalizeTagDataRow(row, req));
+      ? cursor.reverseRows
+        ? [...(dataRows || [])].reverse()
+        : dataRows || []
+      : req.boundedRange
+        ? dataRows || []
+        : (dataRows || []).slice(offset, offset + req.pageSize);
+    const rows = projectKeys ? pageRows.map((row) => projectedTagDataRow(row, req, projectKeys)) : pageRows.map((row) => normalizeTagDataRow(row, req));
 
     reply({
       ok: true,
@@ -3091,6 +3281,7 @@ function dbTableData(db, params, reply) {
         direction: req.direction,
         page: req.page,
         pageSize: req.pageSize,
+        ...(projectKeys ? { jsonKeys: projectKeys } : {}),
         rows,
       },
     });
@@ -3155,6 +3346,73 @@ function dbTableDataTotal(db, params, reply) {
   }
 }
 
+/**
+ * GET /cgi-bin/api/db/table/stat?server=xxx&table=xxx&names=a,b,c
+ *
+ * Boundary times for the selected tags, read from V$<TABLE>_STAT. Machbase already aggregates
+ * MIN_TIME/MAX_TIME per tag there, so anchoring a `last-*` range costs one lookup instead of a scan.
+ * Tags that were never written contribute nothing, so selecting only such tags yields nulls.
+ *
+ * @param {{ host: string, port: number, user: string, password: string }} db
+ * @param {{ table: string, name?: string, names?: string|string[] }} params
+ * @param {function} reply
+ */
+function dbTableStat(db, params, reply) {
+  let req;
+  try {
+    req = parseQualifiedTagTable(params && params.table);
+  } catch (err) {
+    reply({ ok: false, reason: errorMessage(err) });
+    return;
+  }
+
+  const names = parseTagDataNames(params);
+  if (names.length === 0) {
+    reply({ ok: false, reason: 'name is required' });
+    return;
+  }
+
+  const client = new MachbaseClient(db);
+  try {
+    client.connect();
+    const lookupUser = req.tableUser || db.user;
+    const userId = lookupUser ? findUserId(client, lookupUser) : null;
+    const meta = client.selectTableMeta(req.tableName, userId);
+    if (!meta) {
+      reply({ ok: false, reason: `table '${req.tableRef}' not found` });
+      return;
+    }
+    if (meta.TYPE !== 6) {
+      reply({ ok: false, reason: `table '${req.tableRef}' is not a TAG table` });
+      return;
+    }
+
+    // The stat view keys rows by NAME regardless of what the base table calls its PRIMARY KEY
+    // column (verified against a live V$..._STAT, whose columns are NAME, ROW_COUNT, MIN_TIME, ...).
+    const view = buildTagStatViewRef(req);
+    const placeholders = names.map(() => '?').join(', ');
+    const rows = client.query(`SELECT MIN(MIN_TIME) AS MIN_TIME, MAX(MAX_TIME) AS MAX_TIME FROM ${view} WHERE NAME IN (${placeholders})`, names);
+
+    // machcli rows are JSH raw objects: hasOwnProperty returns false on them, so pickRowValue only
+    // works after a JSON roundtrip. Object.keys and JSON.stringify do behave.
+    const row = JSON.parse(JSON.stringify((rows && rows[0]) || {}));
+
+    reply({
+      ok: true,
+      data: {
+        table: req.tableRef,
+        names,
+        minTime: statTimeToIso(pickRowValue(row, ['MIN_TIME', 'min_time'])),
+        maxTime: statTimeToIso(pickRowValue(row, ['MAX_TIME', 'max_time'])),
+      },
+    });
+  } catch (err) {
+    reply({ ok: false, reason: errorMessage(err) });
+  } finally {
+    client.close();
+  }
+}
+
 function dbTableChart(db, params, reply) {
   let req;
   try {
@@ -3182,6 +3440,7 @@ function dbTableChart(db, params, reply) {
           from: req.from ? req.from.toISOString() : '',
           to: req.to ? req.to.toISOString() : '',
         },
+        jsonKeys: query.jsonKeys || [],
         query: query.query,
       },
     });
@@ -3403,11 +3662,11 @@ function nodeDescendants(body, reply) {
     if (nodes.length > 0) {
       try {
         const attrResults = client.attributes({
-          requests: nodes.map(n => ({ node: n.nodeId, attributeId: AttributeID.DataType })),
+          requests: nodes.map((n) => ({ node: n.nodeId, attributeId: AttributeID.DataType })),
         });
         for (let i = 0; i < nodes.length; i++) {
           const result = JSON.parse(JSON.stringify(attrResults[i]));
-          nodes[i].dataType = (result && result.status === StatusCode.Good) ? result.value : '';
+          nodes[i].dataType = result && result.status === StatusCode.Good ? result.value : '';
         }
       } catch (_) {}
     }
@@ -3455,6 +3714,7 @@ module.exports = {
   dbTableData,
   dbTableDataTotal,
   dbTableChart,
+  dbTableStat,
   nodeDescendants,
   opcuaConnect,
   opcuaRead,

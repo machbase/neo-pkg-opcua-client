@@ -92,7 +92,23 @@ class MachbaseStream {
         return new Error('stringValueColumn is required when stringOnly is true');
       }
 
-      const cols = client.selectColumnsByTableName(table);
+      // Machbase 의 append 튜플에는 `_` 접두사 컬럼이 들어가지 않는다. METADATA 라고 해서 빠지는
+      // 게 아니라 접두사가 기준이다 — 같은 테이블에서 실측으로 갈랐다.
+      //
+      //   SJN, SJT, SJV, JSONKEYS             -> append 4개 요구, 성공   (METADATA 도 포함된다)
+      //   SJN, SJT, SJV, _JSONKEYS            -> append 3개 요구         (`_` 는 빠진다)
+      //   SJN, SJT, SJV, JSONKEYS, _JSONKEYS  -> append 4개 요구
+      //
+      // 이걸 거르지 않으면 값 개수가 어긋나 append 가 매 사이클 실패한다. 특히 neo-web 이
+      // JSON 키 카탈로그를 준비할 때 `ALTER TABLE ... METADATA ADD COLUMN (_JSONKEYS JSON)` 로
+      // 컬럼을 붙이므로, 잘 돌던 collector 가 사용자가 그 화면을 연 순간부터 멈춘다.
+      // 엔진 내부 컬럼(_ID, _RID, _LAST_UPDATE_TIME)도 같은 규약이다.
+      //
+      // 값/이름/시각 컬럼이 `_` 로 시작하면 여기서 걸러져 open() 이 "missing column" 으로 실패한다.
+      // 조용히 틀리는 것보다 낫고, append 가 그런 컬럼을 받지 못하는 것 자체는 그대로다.
+      const cols = client
+        .selectColumnsByTableName(table)
+        .filter((col) => !String((col && col.NAME) || '').startsWith('_'));
       this._colCount = cols.length;
       this._nameIdx = -1;
       this._timeIdx = -1;

@@ -9,7 +9,7 @@ const ROOT = _argv.slice(0, _argv.lastIndexOf('/cgi-bin/') + '/cgi-bin'.length);
 const { CGI } = require(path.join(ROOT, 'src', 'cgi', 'cgi_util.js'));
 const Handler = require(path.join(ROOT, 'src', 'cgi', 'handler.js'));
 
-const query = CGI.parseQuery({ arrayKeys: ['names'] });
+const query = CGI.parseQuery({ arrayKeys: ['names', 'jsonKeys'] });
 const reply = (r) => CGI.reply(r);
 
 const handlers = {
@@ -41,6 +41,8 @@ const handlers = {
       timeColumn: query.timeColumn,
       from: query.from,
       to: query.to,
+      // Payload keys to project out of a JSON value column; validated in the handler.
+      jsonKeys: query.jsonKeys,
     }, reply);
   },
 };

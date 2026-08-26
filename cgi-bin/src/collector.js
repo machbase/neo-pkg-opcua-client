@@ -141,6 +141,10 @@ class Collector {
         this._dbClient = db ? db.client : null;
         this._dbStream = db ? db.stream : null;
         this.collectorName = collectorName || config.name || "";
+        // JSON mode stores one row per cycle keyed by a single tag name. It defaults to the job name
+        // but is configurable, so renaming the job no longer splits the history, and several
+        // collectors can share one table by choosing distinct names.
+        this.tagName = String(config.tagName || "").trim() || this.collectorName;
         this._lastCollectedAtWriter = lastCollectedAtWriter || ((name, value, callback) => {
             Service.setValue(name, "lastCollectedAt", value, callback);
         });
@@ -902,7 +906,7 @@ class Collector {
             if (this._isJsonMode()) {
                 const rows = client.query(
                     `SELECT /*+ SCAN_BACKWARD(${this._table}) */ ${this._primaryColumnName}, ${this._valueColumn} FROM ${this._table} WHERE ${this._primaryColumnName} = ? LIMIT 1`,
-                    [this.collectorName]
+                    [this.tagName]
                 );
                 const first = rows && rows[0] ? rows[0] : null;
                 const payload = first ? this._parseStoredJson(first[this._valueColumn]) : null;
@@ -989,9 +993,10 @@ class Collector {
             client = new MachbaseClient(this._dbConf);
             client.connect();
             if (this._isJsonMode()) {
+                // Same key the JSON append writes under, or the restore reads someone else's row.
                 const rows = client.query(
                     `SELECT /*+ SCAN_BACKWARD(${this._table}) */ ${this._primaryColumnName}, ${this._valueColumn} FROM ${this._table} WHERE ${this._primaryColumnName} = ? LIMIT 1`,
-                    [this.collectorName]
+                    [this.tagName]
                 );
                 const first = rows && rows[0] ? rows[0] : null;
                 const payload = first ? this._parseStoredJson(first[this._valueColumn]) : null;
@@ -1175,7 +1180,7 @@ class Collector {
 
                 const payloadText = JSON.stringify(payload);
                 const row = {
-                    [this._primaryColumnName]: this.collectorName,
+                    [this._primaryColumnName]: this.tagName,
                     [this._baseTimeColumnName]: lastTs || requestTs,
                     [this._valueColumn]: payloadText,
                 };
