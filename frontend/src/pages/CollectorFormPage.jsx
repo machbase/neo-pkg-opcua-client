@@ -11,8 +11,12 @@ import DerivedTagsEditor from "../components/collectors/DerivedTagsEditor";
 import CollectionPolicyCard, { JSON_REQUIRES_REQUEST_TIME } from "../components/collectors/CollectionPolicyCard";
 import { normalizeCollectorNodes } from "../components/collectors/nodeTree";
 import { normalizeDerivedTags, serializeDerivedTags } from "../components/collectors/derivedTag.js";
+import { normalizeTagName, validateTagName } from "../components/collectors/tagName";
 import { isStringDataType } from "../components/collectors/nodeRangeSelection";
 import { koToEn } from "../utils/korean";
+
+// 한 번에 이름을 밝힐 개수. 넘치면 알림이 화면을 덮어 정작 어떤 이름을 고쳐야 하는지 안 보인다.
+const MAX_REPORTED_PAYLOAD_KEY_OFFENDERS = 5;
 
 const DEFAULTS = {
     name: "",
@@ -34,6 +38,7 @@ const DEFAULTS = {
         stringOnly: false,
         columnKind: "",
         columnSummarized: false,
+        tagName: "",
         autoCreateTable: false,
         tableStatus: "unknown",
     },
@@ -90,6 +95,9 @@ export default function CollectorFormPage({
                     stringOnly: Boolean(c.stringOnly),
                     columnKind: "",
                     columnSummarized: false,
+                    // Older configs have no tagName; the collector falls back to the job name, so
+                    // showing it here keeps the field honest about what is actually being written.
+                    tagName: c.tagName || detail.name || id || "",
                     autoCreateTable: false,
                     tableStatus: "existing",
                 },
@@ -151,6 +159,42 @@ export default function CollectorFormPage({
         if (timePolicyConflict) {
             notify(`Time Policy must be requestTime. ${JSON_REQUIRES_REQUEST_TIME}`, "error");
             return;
+        }
+
+        // 이름 검사는 노드 편집기와 파생 태그 편집기가 입력 시점에만 한다. 그래서 scalar 컬럼일
+        // 때 넣은 이름은 value column 이 JSON 으로 바뀌어도 다시 검사되는 경로가 없다 — 큰따옴표가
+        // 든 이름이 그대로 저장되고, 깨지는 건 조회 시점이다. jsonKeys 는 키 하나만 어긋나도 그
+        // 키가 아니라 요청 전체가 거부되므로 그리드와 모든 차트가 함께 빈다. 저장 직전이 payload
+        // 키가 될 이름 전부를 한 번에 다시 훑을 수 있는 유일한 지점이라 여기에 둔다.
+        if (jsonValueColumn) {
+            const payloadKeyNames = [...form.opcua.nodes, ...form.derivedTags].map((entry) => normalizeTagName(entry?.name));
+            const offenders = [];
+            for (const name of payloadKeyNames) {
+                // 빈 이름은 JSON 때문에 생긴 문제가 아니고, 사유 문구가 어느 항목인지 못 짚는다.
+                // 여기서 막으면 원인이 엉뚱하게 보이므로 각 편집기 쪽에 맡긴다.
+                if (!name) continue;
+                const verdict = validateTagName(name, { jsonPayloadKey: true });
+                if (!verdict.ok && !offenders.includes(verdict.reason)) offenders.push(verdict.reason);
+            }
+            if (offenders.length) {
+                // 하나씩 알리면 고칠 때마다 다시 막혀 폼이 고장난 것처럼 보인다. 전부 한 번에 낸다.
+                // 다만 목록이 길면 알림이 화면을 덮으므로 앞의 몇 개만 이름을 밝힌다.
+                const shown = offenders.slice(0, MAX_REPORTED_PAYLOAD_KEY_OFFENDERS);
+                const rest = offenders.length - shown.length;
+                const tail = rest > 0 ? ` And ${rest} more name${rest > 1 ? "s" : ""} to fix.` : "";
+                notify(`A JSON value column turns every tag name into a payload key. ${shown.join(" ")}${tail}`, "error");
+                return;
+            }
+
+            // Record Name 은 payload 키가 아니라 NAME 컬럼 값이라 위 목록에 없다. 그래서 따로 본다.
+            // 콤마가 들어가면 names 파라미터가 쪼개져 조회가 ok:true / 0행으로 조용히 비는데,
+            // DbSection 의 인라인 오류는 표시일 뿐 저장을 막지 않는다. 막는 건 여기다.
+            const effectiveTagName = normalizeTagName(form.db.tagName) || (isEdit ? id : form.name);
+            const tagNameVerdict = validateTagName(effectiveTagName);
+            if (!tagNameVerdict.ok) {
+                notify(`Record Name: ${tagNameVerdict.reason}`, "error");
+                return;
+            }
         }
 
         if (form.db.tableStatus === "unsupportedBase") {
@@ -231,6 +275,12 @@ export default function CollectorFormPage({
                 config.valueColumn = form.db.column;
                 if (form.db.stringColumn && form.db.columnKind !== "json") {
                     config.stringValueColumn = form.db.stringColumn;
+                }
+                // A JSON collector writes one row per cycle under a single tag name. In every other
+                // mode the node names fill that column, so there is nothing for the user to choose.
+                if (form.db.columnKind === "json") {
+                    const tagName = String(form.db.tagName || "").trim();
+                    config.tagName = tagName || (isEdit ? id : form.name);
                 }
             }
 
@@ -319,6 +369,7 @@ export default function CollectorFormPage({
                                 <DbSection
                                     form={form}
                                     update={update}
+                                    jobName={isEdit ? id : form.name}
                                     servers={servers}
                                     onOpenServerSettings={onOpenServerSettings}
                                     onRefreshServers={onRefreshServers}
@@ -362,8 +413,9 @@ export default function CollectorFormPage({
                                 />
                             </div>
 
-                            {/* Collection Policy — precedes the tag lists: timePolicy / badStatusPolicy
-                  govern how both source nodes and derived tags are stamped and stored. */}
+                            {/* Collection Policy — 노드 매핑과 파생 태그 다음에 온다. timePolicy /
+                                badStatusPolicy 는 소스 노드와 파생 태그 양쪽의 기록 시각과 저장
+                                여부를 함께 결정하므로, 둘을 다 정한 뒤에 놓았다. */}
                             <CollectionPolicyCard
                                 form={form}
                                 update={update}

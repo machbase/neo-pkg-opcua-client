@@ -23,7 +23,7 @@
 //     errorValue: string,                                 // UI string; Number() on serialize
 //   }
 
-import { TAG_NAME_PATTERN } from "./tagName.js";
+import { validateTagName } from "./tagName.js";
 
 // ── Backend-mirrored static metadata (values only, not grammar) ────────────────────
 // Kept in sync with cgi-bin/src/expression/evaluator.js + limits.js. Used for the palette
@@ -173,6 +173,9 @@ export function validateDerivedTagLocal(dt, ctx = {}) {
   const errors = {};
   const nodeNames = ctx.nodeNames || [];
   const derivedNames = ctx.derivedNames || [];
+  // JSON collector 는 파생 태그 값도 payload 안에 넣는다(collector.js 의 payload[derived.name]).
+  // 즉 이 이름도 노드 이름과 똑같이 json 경로에 실리므로 같은 문자 제약을 받는다.
+  const jsonPayloadKey = ctx.jsonPayloadKey === true;
   const name = String(dt && dt.name != null ? dt.name : "").trim();
   const expression = String(dt && dt.expression != null ? dt.expression : "");
   const variables = (dt && dt.variables) || [];
@@ -180,8 +183,8 @@ export function validateDerivedTagLocal(dt, ctx = {}) {
   // name
   if (!name) {
     errors.name = "Enter a tag name.";
-  } else if (!TAG_NAME_PATTERN.test(name)) {
-    errors.name = "Letters, digits, dots, and underscores only; cannot start with a digit or a dot.";
+  } else if (!validateTagName(name, { jsonPayloadKey }).ok) {
+    errors.name = validateTagName(name, { jsonPayloadKey }).reason;
   } else if (nodeNames.indexOf(name) >= 0) {
     errors.name = `'${name}' conflicts with a source node name.`;
   } else if (derivedNames.indexOf(name) >= 0) {

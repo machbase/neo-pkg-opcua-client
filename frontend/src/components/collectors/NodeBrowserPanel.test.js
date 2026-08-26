@@ -20,7 +20,7 @@ test("NodeBrowserPanel keeps selected and removedIds in one state object", () =>
 });
 
 test("NodeBrowserPanel normalizes tag names when building browse paths", () => {
-    assert.match(source, /import \{ normalizeTagNameInput \} from "\.\/tagName";/);
+    assert.match(source, /import \{ normalizeTagName \} from "\.\/tagName";/);
     assert.match(source, /const currentPath = parentPath \? `\$\{parentPath\}_\$\{tagPathPart\(label\)\}` : tagPathPart\(label\);/);
     assert.match(source, /treePath: pathLabels,/);
 });

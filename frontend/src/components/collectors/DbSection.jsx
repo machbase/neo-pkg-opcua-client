@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import Icon from "../common/Icon";
 import * as serversApi from "../../api/servers";
 import { baseAxisOfColumns, isDistanceBaseTable } from "./tableBaseAxis";
+import { validateTagName } from "./tagName";
 import { useApp } from "../../context/AppContext";
 
 const NUMERIC_TYPES = new Set(["SHORT", "INTEGER", "LONG", "FLOAT", "DOUBLE"]);
@@ -58,6 +59,7 @@ function isStringValueCandidate(col) {
 export default function DbSection({
     form,
     update,
+    jobName = "",
     servers = [],
     onOpenServerSettings,
     onRefreshServers,
@@ -71,6 +73,9 @@ export default function DbSection({
     const [loadingTables, setLoadingTables] = useState(false);
     const [loadingColumns, setLoadingColumns] = useState(false);
     const [tableDropdownOpen, setTableDropdownOpen] = useState(false);
+    const [tagNameError, setTagNameError] = useState(null);
+    // 사용자가 Tag Name 을 직접 건드렸는지. 건드린 뒤로는 job 이름을 따라가지 않는다.
+    const tagNameTouchedRef = useRef(false);
     const tableComboRef = useRef(null);
     const baseAxisCacheRef = useRef(new Map());
     const tablesRequestRef = useRef(0);
@@ -231,7 +236,17 @@ export default function DbSection({
     }, [columns]);
 
     const hasValueColCandidates = numericCols.length + jsonCols.length > 0;
-    const hasAnySummarized = useMemo(() => columns.some((c) => c.summarized), [columns]);
+
+    // The append stream refuses to open while the table still has a SUMMARIZED column other than
+    // the chosen value column: a row only carries NAME/TIME/value, so those columns would land as
+    // NULL (cgi-bin/src/db/stream.js). This is a property of the TABLE, not of the column kind, so
+    // it applies to numeric and JSON picks alike. It used to be enforced by disabling JSON options
+    // with a "needs SUMMARIZED" hint, which no JSON column can ever satisfy — SUMMARIZED is a
+    // numeric rollup flag. Warn with the real remedy instead of blocking the pick.
+    const conflictingSummarizedCols = useMemo(
+        () => columns.filter((c) => c.summarized && c.name !== db.column),
+        [columns, db.column]
+    );
 
     const selectedColumnKind = useMemo(() => {
         if (!db.column) return "";
@@ -245,6 +260,32 @@ export default function DbSection({
             update("db.columnKind", selectedColumnKind);
         }
     }, [selectedColumnKind, db.columnKind, update]);
+
+    // 값 컬럼이 JSON 이 아니게 되면 Tag Name 입력 자체가 사라진다. 오류 문구를 그대로 들고
+    // 있으면 나중에 다시 JSON 컬럼을 골랐을 때 손대지도 않은 필드가 빨갛게 뜬다.
+    useEffect(() => {
+        if (selectedColumnKind !== "json" && tagNameError) setTagNameError(null);
+    }, [selectedColumnKind, tagNameError]);
+
+    // Tag Name 은 job 이름을 따라간다 — 사용자가 그 칸을 직접 건드리기 전까지만.
+    //
+    // blur 에서만 채우면 만드는 내내 칸이 비어 보여서 저장한 뒤에야 이름이 정해지는 것처럼
+    // 읽힌다. 반대로 조건 없이 계속 덮어쓰면 지우고 다시 칠 수가 없다(빈 칸을 보는 순간 다시
+    // 채워진다). 그래서 "손댔는가" 를 기준으로 삼는다.
+    //
+    // 수정 화면에서 이미 저장된 이름이 job 이름과 다르면 그건 사용자가 정한 값이므로, 따라가기를
+    // 그 자리에서 끈다. config 가 늦게 도착해도 판정이 뒤집히지 않는다.
+    useEffect(() => {
+        if (selectedColumnKind !== "json" || tagNameTouchedRef.current) return;
+        const next = String(jobName || "").trim();
+        const current = String(db.tagName || "").trim();
+        if (!next || current === next) return;
+        if (current) {
+            tagNameTouchedRef.current = true;
+            return;
+        }
+        update("db.tagName", next);
+    }, [selectedColumnKind, jobName, db.tagName, update]);
 
     // Whether the selected VALUE column is SUMMARIZED — derived tags with onError:"null"
     // cannot target a SUMMARIZED column. Lifted so DerivedTagsEditor can disable that option.
@@ -378,6 +419,7 @@ export default function DbSection({
     const tableUnsupportedBase = db.tableStatus === "unsupportedBase";
     const tableReady = db.tableStatus === "existing";
     const isJsonMode = selectedColumnKind === "json";
+
     const stringOnly = !!db.stringOnly;
     const showValueColumn = !stringOnly;
     const stringColumnRequired = stringOnly;
@@ -543,6 +585,19 @@ export default function DbSection({
                     </div>
                 )}
 
+                {hasTable && !autoCreateMode && db.column && conflictingSummarizedCols.length > 0 && (
+                    <div className="text-xs flex items-start gap-6" style={{ color: "var(--color-warning)" }}>
+                        <Icon name="info" className="icon-sm shrink-0 mt-1" />
+                        <span>
+                            {`This table has SUMMARIZED column${conflictingSummarizedCols.length > 1 ? "s" : ""} `}
+                            <strong>{conflictingSummarizedCols.map((c) => c.name).join(", ")}</strong>
+                            {` outside the selected value column. A collector row only writes the name, time and value columns, so `}
+                            {conflictingSummarizedCols.length > 1 ? "those columns" : "that column"}
+                            {` would be NULL and the collector will fail to start. Use a table whose only SUMMARIZED column is the value column, or none at all.`}
+                        </span>
+                    </div>
+                )}
+
                 {hasTable && !autoCreateMode && stringOnly && !hasValueColCandidates && (
                     <div className="text-xs text-on-surface-tertiary flex items-start gap-6">
                         <Icon name="info" className="icon-sm shrink-0 mt-1" />
@@ -613,19 +668,11 @@ export default function DbSection({
                                 )}
                                 {jsonCols.length > 0 && (
                                     <optgroup label="JSON">
-                                        {jsonCols.map((c) => {
-                                            const disabled = hasAnySummarized && !c.summarized;
-                                            return (
-                                                <option
-                                                    key={c.name}
-                                                    value={c.name}
-                                                    disabled={disabled}
-                                                >
-                                                    {c.name} ({c.type})
-                                                    {disabled ? " — needs SUMMARIZED" : ""}
-                                                </option>
-                                            );
-                                        })}
+                                        {jsonCols.map((c) => (
+                                            <option key={c.name} value={c.name}>
+                                                {c.name} ({c.type})
+                                            </option>
+                                        ))}
                                     </optgroup>
                                 )}
                             </select>
@@ -681,6 +728,59 @@ export default function DbSection({
                         </div>
                     )}
                 </div>
+                {isJsonMode && (
+                    <div className="grid grid-cols-2 gap-12">
+                        <div>
+                            {/* JSON 모드에서는 이게 유일한 태그다. 아래 Node Mapping 의 "Tag Name" 은
+                                한 사이클을 한 row 로 합치는 순간 태그가 아니라 payload 키가 된다. */}
+                            <label className="form-label">Tag Name</label>
+                            <input
+                                value={db.tagName || ""}
+                                onChange={(e) => {
+                                    tagNameTouchedRef.current = true;
+                                    update("db.tagName", e.target.value);
+                                    setTagNameError(null);
+                                }}
+                                // The default lands on blur, not while typing: filling an empty field
+                                // from an effect makes the value impossible to clear and retype.
+                                onBlur={(e) => {
+                                    const typed = e.target.value.trim();
+                                    if (!typed && jobName) update("db.tagName", jobName);
+                                    // 기본값을 먼저 채우고 그 결과를 검사한다. job 이름에도 콤마가 들어갈 수
+                                    // 있어서, 폼이 자동으로 넣어 준 값이라고 검사를 건너뛰면 사용자가 직접
+                                    // 친 콤마만 걸리고 기본값으로 들어온 콤마는 그대로 저장된다.
+                                    const effective = typed || jobName || "";
+                                    // 비어 있으면 저장 시 job 이름으로 채워지므로 여기서 다그치지 않는다.
+                                    if (!effective) {
+                                        setTagNameError(null);
+                                        return;
+                                    }
+                                    // jsonPayloadKey 를 켜지 않는다. 이 이름은 payload 키가 아니라 NAME 컬럼
+                                    // 값이고, 조회는 `NAME IN (?)` 바인드 파라미터로 나간다 — 큰따옴표가 든
+                                    // 이름이 정상 저장·조회되는 것을 실서버로 확인했다. 켜면 DB 가 아무 문제
+                                    // 없이 다루는 이름을 UI 가 막게 되고, 그게 tagName.js 가 걷어낸 바로 그
+                                    // 종류의 근거 없는 제약이다. 여기서 걸러야 하는 건 콤마뿐이고 그건
+                                    // validateTagName 이 항상 본다.
+                                    const verdict = validateTagName(effective);
+                                    setTagNameError(verdict.ok ? null : verdict.reason);
+                                }}
+                                placeholder={jobName || "collector name"}
+                                className={`w-full ${tagNameError ? "!border-error" : ""}`}
+                                title={tagNameError || undefined}
+                            />
+                            {tagNameError && (
+                                <p className="text-error text-xs mt-4">{tagNameError}</p>
+                            )}
+                            <p className="text-xs text-on-surface-tertiary mt-4">
+                                The tag this job writes under, stored in the NAME column. A JSON value
+                                column packs one cycle into a single row, so the names below become keys
+                                inside that row's payload rather than tags of their own. Defaults to the
+                                job name and keeps its value if the job is renamed later.
+                            </p>
+                        </div>
+                    </div>
+                )}
+
                 <p className="text-xs text-on-surface-tertiary mt-4 text-right">
                     {footerHint}
                 </p>

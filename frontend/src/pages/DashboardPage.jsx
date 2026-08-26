@@ -2,7 +2,6 @@ import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useNavigate } from "react-router";
 import { useApp } from "../context/AppContext";
 import useJsonValueColumn from "../hooks/useJsonValueColumn";
-import { JSON_VALUE_COLUMN_BLOCK_REASON } from "./dataViewerModel";
 import { JSON_REQUIRES_REQUEST_TIME } from "../components/collectors/CollectionPolicyCard";
 import * as api from "../api/collectors";
 import StatusBadge from "../components/common/StatusBadge";
@@ -197,7 +196,12 @@ export default function DashboardPage({ collectors, detail, onDelete }) {
     const stringValueColumn = config?.stringValueColumn || "";
     const stringOnly = Boolean(config?.stringOnly);
     const activeValueColumn = stringOnly ? (stringValueColumn || valueColumn) : valueColumn;
+    // Only drives the Time Policy conflict badge below — a JSON value column can carry nothing but
+    // requestTime, and neither the form nor the API guarantees a stored config honours that.
     const { isJson: jsonValueColumn } = useJsonValueColumn({ server: dbServer, table: dbTable, valueColumn: activeValueColumn });
+    // collector.js 와 같은 규칙 — 비어 있으면 job 이름으로 떨어진다. 저장된 값만 보여주면
+    // 기본값으로 도는 collector 가 상세에서 "-" 로 보여, 이름이 없는 것처럼 읽힌다.
+    const recordTagName = String(config?.tagName || "").trim() || detail?.name || selectedCollectorId || "";
     const nodes = opcua?.nodes || [];
     const derivedTags = Array.isArray(config?.derivedTags) ? config.derivedTags : [];
     const policyValues = { timePolicy: config?.timePolicy, badStatusPolicy: config?.badStatusPolicy };
@@ -283,20 +287,14 @@ export default function DashboardPage({ collectors, detail, onDelete }) {
                             <Icon name="terminal" className="icon-sm" />
                             <span>Live Logs</span>
                         </button>
-                        <span
-                            className={jsonValueColumn ? "btn-blocked-hint" : undefined}
-                            title={jsonValueColumn ? JSON_VALUE_COLUMN_BLOCK_REASON : undefined}
+                        <button
+                            type="button"
+                            onClick={() => navigate(buildDataViewerPath(collector.id))}
+                            className="btn btn-primary-outline"
                         >
-                            <button
-                                type="button"
-                                disabled={jsonValueColumn}
-                                onClick={() => navigate(buildDataViewerPath(collector.id))}
-                                className="btn btn-primary-outline"
-                            >
-                                <Icon name="query_stats" className="icon-sm" />
-                                <span>Data Viewer</span>
-                            </button>
-                        </span>
+                            <Icon name="query_stats" className="icon-sm" />
+                            <span>Data Viewer</span>
+                        </button>
                         <button
                             disabled={collector.status === "running"}
                             onClick={() => navigate(`/collectors/${encodeURIComponent(collector.id)}/edit`)}
@@ -420,6 +418,21 @@ export default function DashboardPage({ collectors, detail, onDelete }) {
                                             </div>
                                         )}
                                     </div>
+                                    {/* JSON 이면 NAME 컬럼에 들어가는 값이 노드가 아니라 이 이름 하나다. 여기 없으면
+                                        어떤 태그로 쌓이는지 상세 화면에서 알 방법이 없다. 스칼라는 노드마다 이름이
+                                        달라 보여줄 단일 값이 없으므로 숨긴다.
+
+                                        위 3분할 행에 끼우지 않고 제 줄을 준다. 태그 이름은 대개 경로를 이은 값이라
+                                        Table·Value Column 보다 훨씬 길어서, 1/3 폭에서는 말줄임으로 앞부분만 남는다 —
+                                        구분하라고 있는 값이 구분이 안 되는 상태가 된다. 그래도 넘치면 자르지 않고 접는다. */}
+                                    {jsonValueColumn && (
+                                        <div className="min-w-0 mt-20">
+                                            <div className="form-label">Tag Name</div>
+                                            <div className="text-base font-mono font-semibold detail-tag-name" title={recordTagName}>
+                                                {recordTagName || "-"}
+                                            </div>
+                                        </div>
+                                    )}
                                 </div>
                             </div>
 
@@ -470,7 +483,7 @@ export default function DashboardPage({ collectors, detail, onDelete }) {
                                                     const transform = formatTransform(node);
                                                     return (
                                                         <tr key={`${node.nodeId}-${i}`}>
-                                                            <td className="truncate" title={node.name}>
+                                                            <td className="cell-tag-name" title={node.name}>
                                                                 {node.name}
                                                             </td>
                                                             <td title={node.nodeId}>
@@ -545,7 +558,7 @@ export default function DashboardPage({ collectors, detail, onDelete }) {
                                                     const variables = formatVariables(dt);
                                                     return (
                                                         <tr key={`${dt?.name || "derived"}-${i}`}>
-                                                            <td className="truncate" title={dt?.name}>
+                                                            <td className="cell-tag-name" title={dt?.name}>
                                                                 {dt?.name || "–"}
                                                             </td>
                                                             {/* Expression and variables are the two cells that outgrow their column,
@@ -572,8 +585,8 @@ export default function DashboardPage({ collectors, detail, onDelete }) {
                                 </div>
                             )}
 
-                            {/* Row 2: Collection Policy — collector-wide settings frame the tag
-                                lists below, same order as the editor form */}
+                            {/* Collection Policy — collector 전체에 걸리는 설정이라 위의 노드·파생
+                                태그 목록 다음에 둔다. 편집 폼과 같은 순서다. */}
                             <div className="form-card">
                                 <div className="detail-section-head">
                                     <div className="detail-section-title">Collection Policy</div>

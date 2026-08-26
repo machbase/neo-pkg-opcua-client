@@ -44,6 +44,10 @@
     --color-primary: #005fb8;
     --color-primary-hover: #0075e2;
     --color-primary-light: rgb(0, 108, 210);
+    /* Referenced by the chart tag chips and the server-type option. It was never declared,
+       so those backgrounds resolved to `unset` (transparent) and left dark-blue text sitting
+       straight on the panel. Same value .badge-primary already spells out literally. */
+    --color-primary-muted: rgba(0, 108, 210, 0.2);
     --color-primary-dark: rgb(0, 83, 160);
 
     /* ─── Semantic ─── */
@@ -3506,6 +3510,42 @@ label.switch input:checked + .switch-slider::before {
     background-color: var(--color-surface);
 }
 
+/* A JSON collector can carry dozens of keys, and with several records the flat list runs far past
+   the panel. Each record scrolls on its own: short lists size to their content, long ones stop at
+   half the panel so every record stays reachable without scrolling past the one above it. */
+.data-viewer-record-group {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+
+.data-viewer-record-group + .data-viewer-record-group {
+    border-top: 1px solid var(--color-border);
+}
+
+/* A folder header pins while its own subtree is on screen and is pushed out by the next one, the way
+   a collapsed section behaves. Each depth pins directly below the one above it, so scrolling into a
+   deep subtree leaves its ancestors stacked at the top as the path you are inside.
+
+   The offset MUST equal the folder row's own height. It is a folder stacking on a folder, not on a
+   tag row, and the two differ (30 vs 32) — a stale value leaves a gap per level that the scrolling
+   rows show through. Both are driven from this variable so they cannot drift apart again. */
+.data-viewer-tag-list .node-tree-row-folder {
+    --tree-header-height: 30px;
+    position: sticky;
+    top: calc(var(--tree-depth, 0) * var(--tree-header-height));
+    min-height: var(--tree-header-height);
+    z-index: calc(20 - var(--tree-depth, 0));
+    color: var(--color-on-surface);
+    font-weight: 600;
+}
+
+/* Bounds its folder's sticky header. Without it every header would pin against the scroller and
+   they would pile on top of each other instead of handing over. */
+.node-tree-branch {
+    display: flow-root;
+}
+
 .data-viewer-tag-row {
     display: flex;
     align-items: center;
@@ -3514,6 +3554,31 @@ label.switch input:checked + .switch-slider::before {
     padding: var(--spacing-6) var(--spacing-8);
     cursor: pointer;
     color: var(--color-on-surface-secondary);
+}
+
+/* 태그 이름은 자르지 않고 접는다.
+
+   이 목록은 조회 대상을 고르는 곳이고, 체크박스가 넣는 값은 노드 경로가 아니라 태그 이름이다.
+   그런데 태그 이름은 대개 경로를 "_" 로 이어붙인 값이라 형제 태그끼리 접두사가 길게 겹친다.
+   패널이 352px 라 앞부분만 남기는 말줄임은 그 겹치는 접두사만 남겨, 서로 다른 태그가 화면에서
+   똑같이 보이게 된다 — 고르는 화면에서 가장 하면 안 되는 일이다.
+
+   그래서 이름에 줄 전체를 주고 넘치면 다음 줄로 접는다. 이름을 바꾼 태그만 두 줄이 되고
+   (원래 노드 이름이 아래 줄로 내려간다), 나머지는 지금과 똑같이 한 줄이다. 행은 min-height 로만
+   잡혀 있어 늘어나도 되고, sticky 로 고정되는 건 폴더 행뿐이라 오프셋 계산에도 영향이 없다. */
+.data-viewer-tag-text {
+    display: flex;
+    flex: 1;
+    min-width: 0;
+    flex-direction: column;
+    gap: 1px;
+}
+
+.data-viewer-tag-row .node-tree-label {
+    display: block;
+    /* break-word 는 단어를 통째로 다음 줄로 넘긴 뒤에야 쪼갠다. 태그 이름은 공백 없는 한 단어라
+       그 경우 첫 줄이 통째로 비므로, 어디서든 끊을 수 있는 anywhere 를 쓴다. */
+    overflow-wrap: anywhere;
 }
 
 /* Depth indent adds to the row's own left padding instead of replacing it. Setting
@@ -4507,9 +4572,11 @@ label.switch input:checked + .switch-slider::before {
     background-color: var(--color-primary-muted);
 }
 
+/* The blue border already carries "this tag is split out", so the label is free to take the
+   normal surface foreground. Primary text on a primary tint was the unreadable combination. */
 .data-viewer-chart-tag-chip.is-split {
     border-color: var(--color-primary);
-    color: var(--color-primary);
+    color: var(--color-on-surface);
     background-color: var(--color-primary-muted);
 }
 
@@ -4888,13 +4955,21 @@ label.switch input:checked + .switch-slider::before {
     margin: 0;
     border: 0;
     border-radius: 0;
-    background: transparent;
+    /* Opaque, not transparent: these rows pin while their subtree scrolls, so anything see-through
+       lets the rows underneath run straight through the header. Declared here rather than in the
+       sticky rule above because this reset has equal specificity and comes later. */
+    background-color: var(--color-surface-alt);
     text-align: start;
     cursor: pointer;
 }
 
+/* 호버 틴트를 배경 위에 레이어로 올린다.
+   background-color 를 반투명 값으로 교체해버리면 고정된 헤더가 투명해져서, 그 아래를 지나가는
+   행들이 헤더를 뚫고 그대로 비친다. 불투명 바탕을 여기서 다시 못박아야 하는 이유는 덜 구체적인
+   `.node-tree-row:hover` 가 background-color 를 반투명으로 덮어쓰기 때문이다. */
 .data-viewer-tag-list .node-tree-row-folder:hover {
-    background-color: var(--color-surface-hover);
+    background-color: var(--color-surface-alt);
+    background-image: linear-gradient(var(--color-surface-hover), var(--color-surface-hover));
 }
 
 .data-viewer-tag-list .node-tree-row-folder:hover .node-tree-toggle {
@@ -5490,12 +5565,32 @@ label.switch input:checked + .switch-slider::before {
     overflow-y: auto;
 }
 
+/* 대시보드 DATABASE 카드의 Tag Name. 표의 신원 컬럼과 같은 이유로 자르지 않고 접는다. */
+.detail-tag-name {
+    white-space: normal;
+    overflow-wrap: anywhere;
+}
+
+/* 태그 이름은 이 표의 신원 컬럼이다. 자르지 않고 접는다.
+
+   이름은 대개 노드 경로를 "_" 로 이어붙인 값이라 형제 태그끼리 접두사가 길게 겹친다.
+   앞부분만 남기는 말줄임은 하필 그 겹치는 부분만 남겨서, 서로 다른 태그가 화면에서 전부
+   "Simulation Examples_…" 로 똑같이 보인다. Data Viewer 트리도 같은 이유로 접는다.
+
+   Node ID 셀이 이미 두 줄(id + path)이라 두 줄짜리 이름은 행 높이를 늘리지도 않는다.
+   폭도 다시 나눴다 — 고정 190px 이 남는 공간을 전부 Node ID 에 넘겨줬는데, 정작 Node ID 는
+   그 폭을 절반도 안 쓴다. % 로 잡아 좁은 창에서도 같은 비율로 줄어들게 한다. */
+.detail-table td.cell-tag-name {
+    white-space: normal;
+    overflow-wrap: anywhere;
+}
+
 /* Column widths — remaining space goes to the 1fr-ish column via table-layout. */
 .detail-table-nodes {
     table-layout: fixed;
 }
 .detail-table-nodes .col-tag {
-    width: 190px;
+    width: 32%;
 }
 /* Transform reads as one formula — "(value + 10) × 2" — so it must not wrap. */
 .detail-table-nodes .col-transform {
@@ -5506,7 +5601,7 @@ label.switch input:checked + .switch-slider::before {
     table-layout: fixed;
 }
 .detail-table-derived .col-tag {
-    width: 160px;
+    width: 20%;
 }
 /* Expression is the column worth reading, so it gets the widest fixed slot; anything past
    it falls back to the .cell-tooltip hover. */
@@ -5630,3 +5725,182 @@ label.switch input:checked + .switch-slider::before {
     font-size: var(--font-size-sm);
     color: var(--color-on-surface-tertiary);
 }
+
+
+/* 이름을 바꾼 태그에만 붙는다. 윗줄이 태그 이름(= 조회에 쓰이는 값)을 차지하므로, 원래 노드가
+   무엇이었는지를 아랫줄에 흐리게 남긴다. 둘 다 필요하다 — 위는 그리드·차트와 맞춰 보는 값이고,
+   아래는 트리의 폴더 경로와 맞춰 보는 값이다. */
+.node-tree-secondary {
+    font-size: var(--font-size-xs);
+    color: var(--color-on-surface-muted);
+    font-family: var(--font-family-mono, ui-monospace, monospace);
+    overflow-wrap: anywhere;
+}
+
+/* ─── Row inspector ───────────────────────────────────────────────────────────
+   읽기 전용 상세 보기는 폼이 아니라 값 검사다. 값을 input 껍데기에 넣으면 수정 가능한 것처럼
+   보이고, 박스 패딩이 네 필드로 화면을 다 채운다. 보더·배경을 걷어내고 헤어라인만 남긴다. */
+
+.data-viewer-raw-table tbody tr.raw-row-clickable {
+    cursor: pointer;
+}
+
+/* 지금 모달이 보고 있는 로우. 그리드에서 어디를 읽고 있는지 잃지 않게 표시한다. */
+.data-viewer-raw-table tbody tr.raw-row-clickable.is-inspected td {
+    background-color: rgba(0, 108, 210, 0.18);
+}
+.data-viewer-raw-table tbody tr.raw-row-clickable.is-inspected td:first-child {
+    box-shadow: inset 2px 0 0 var(--color-primary-light);
+}
+
+.row-inspector-scrim {
+    background-color: rgba(0, 0, 0, 0.62);
+}
+
+.row-inspector {
+    width: 560px;
+    max-width: calc(100vw - 32px);
+    max-height: calc(100vh - 64px);
+    display: flex;
+    flex-direction: column;
+    background-color: #2c2c2c;
+    border: 1px solid rgba(255, 255, 255, 0.13);
+    border-radius: 8px;
+    box-shadow: 0 18px 40px rgba(0, 0, 0, 0.55);
+}
+
+/* 열릴 때 상자 자체로 포커스를 옮겨 대화상자 이름을 읽히지만, 키보드가 아니라 코드가 옮긴
+   포커스라 링을 그릴 이유가 없다 — 테두리와 그림자가 이미 경계를 그리고 있다. */
+.row-inspector:focus { outline: none; }
+
+/* ── 헤더: 이 로우가 무엇인지 ─────────────────────────────────────────────── */
+.row-inspector-head {
+    flex-shrink: 0;
+    display: flex;
+    align-items: flex-start;
+    gap: var(--spacing-12);
+    padding: 14px 16px 12px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.row-inspector-ident { flex: 1; min-width: 0; }
+
+.row-inspector-meta {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-6);
+    font-size: 11px;
+    color: var(--color-on-surface-tertiary);
+}
+
+.row-inspector-table { text-transform: uppercase; letter-spacing: 0.04em; }
+.row-inspector-sep { opacity: 0.5; }
+.row-inspector-count { font-variant-numeric: tabular-nums; }
+
+/* 대표값은 한 줄로만. 전문은 아래 NAME 필드가 접어서 보여준다. */
+.row-inspector-title {
+    margin-top: 4px;
+    font-size: 15px;
+    color: var(--color-on-surface);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.row-inspector-actions { display: flex; align-items: center; gap: 2px; flex-shrink: 0; }
+
+.row-inspector-icon {
+    border: 0;
+    background: transparent;
+    padding: 4px;
+    border-radius: var(--radius-base);
+    color: var(--color-on-surface-tertiary);
+    cursor: pointer;
+}
+.row-inspector-icon:hover:not(:disabled) {
+    color: var(--color-on-surface);
+    background-color: var(--color-surface-hover);
+}
+.row-inspector-icon:disabled { opacity: 0.3; cursor: default; }
+
+.row-inspector-divider {
+    width: 1px;
+    height: 16px;
+    margin: 0 6px;
+    background-color: rgba(255, 255, 255, 0.13);
+}
+
+/* ── 본문: [라벨 | 값 | 복사] ─────────────────────────────────────────────── */
+/* min-height:0 이 없으면 플렉스 아이템의 기본 min-height:auto 때문에 내용만큼 늘어나서,
+   컬럼이 많은 테이블에서 본문이 스크롤되지 않고 모달이 화면 밖으로 밀려나며 푸터가 잘린다. */
+.row-inspector-body {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 4px 16px 8px;
+}
+
+.row-inspector-field {
+    display: grid;
+    grid-template-columns: 118px 1fr auto;
+    gap: var(--spacing-12);
+    align-items: start;
+    padding: 12px 0;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+.row-inspector-field:last-child { border-bottom: 0; }
+
+.row-inspector-label {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--color-on-surface-secondary);
+}
+
+.row-inspector-type {
+    font-size: 10px;
+    font-weight: 400;
+    color: var(--color-on-surface-muted);
+}
+
+/* 자르지 않는 것이 이 화면의 존재 이유다. 태그 이름엔 공백이 없을 수 있어 break-all 을 쓴다. */
+.row-inspector-value {
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--color-on-surface);
+    white-space: pre-wrap;
+    word-break: break-all;
+    user-select: text;
+}
+.row-inspector-value.is-empty { color: var(--color-on-surface-muted); }
+
+.row-inspector-copy {
+    border: 0;
+    background: transparent;
+    padding: 2px;
+    border-radius: var(--radius-base);
+    color: var(--color-on-surface-tertiary);
+    opacity: 0.6;
+    cursor: pointer;
+}
+.row-inspector-copy:hover { opacity: 1; color: var(--color-on-surface); background-color: var(--color-surface-hover); }
+
+/* 복사 직후 잠깐. 아이콘이 체크로 바뀌므로 색까지 성공색으로 맞춰 한눈에 읽히게 한다. */
+.row-inspector-copy.is-copied { opacity: 1; color: var(--color-success); }
+.row-inspector-copy.is-failed { opacity: 1; color: var(--color-error); }
+
+/* ── 푸터 ─────────────────────────────────────────────────────────────────── */
+.row-inspector-foot {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--spacing-12);
+    padding: 12px 16px;
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.row-inspector-hint { font-size: 11px; color: var(--color-on-surface-muted); }
+.row-inspector-foot-actions { display: flex; gap: var(--spacing-8); }

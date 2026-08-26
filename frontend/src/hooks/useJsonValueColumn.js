@@ -6,12 +6,13 @@ import { isJsonValueColumn } from "../pages/dataViewerModel";
  * Reports whether the collector's value column is a JSON column.
  *
  * The collector config only stores the column NAME, so the type has to come from the table
- * schema. Used to keep the Data Viewer away from JSON collectors, which it cannot render.
+ * schema. Used to flag the time-policy conflict on the dashboard: a JSON value column merges
+ * every node into one row per cycle, so it can only carry requestTime, and nothing on the
+ * backend rejects a config that says otherwise.
  *
- * `checked` stays false until the lookup settles, so callers can avoid flashing a blocked
- * state (or an enabled button) before the answer is known. A failed lookup reports not-JSON:
- * the viewer surfaces the real error on its own, and blocking on an unrelated failure would
- * be worse than letting it through.
+ * `checked` stays false until the lookup settles, so callers can avoid flashing a verdict
+ * before the answer is known. A failed lookup reports not-JSON, since warning on an unrelated
+ * failure would be worse than staying quiet.
  *
  * @param {{ server?: string, table?: string, valueColumn?: string }} params
  * @returns {{ isJson: boolean, checked: boolean }}

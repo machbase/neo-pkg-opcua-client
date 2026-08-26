@@ -12,6 +12,7 @@ export function queryTagData({
     server,
     table,
     names,
+    jsonKeys,
     valueColumn,
     stringValueColumn,
     direction,
@@ -29,6 +30,11 @@ export function queryTagData({
         server,
         table,
         names: Array.isArray(names) ? names.map((name) => String(name || "").trim()).filter(Boolean).join(",") : names,
+        // Payload keys the server extracts with the json operator. Comma-joined like `names`, which
+        // means a key containing a comma is not addressable — the same limitation `names` already has.
+        jsonKeys: Array.isArray(jsonKeys)
+            ? jsonKeys.map((key) => String(key || "").trim()).filter(Boolean).join(",")
+            : jsonKeys,
         valueColumn,
         stringValueColumn,
         direction,

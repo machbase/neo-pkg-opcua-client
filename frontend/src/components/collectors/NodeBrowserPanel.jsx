@@ -10,7 +10,7 @@ import {
     isSelectableNodeRow,
 } from "./nodeRangeSelection";
 import { buildNodeTree } from "./nodeTree";
-import { normalizeTagNameInput } from "./tagName";
+import { normalizeTagName } from "./tagName";
 
 const DEFAULT_ROOT = "ns=0;i=85";
 const NODE_CLASS_OBJECT = 1;
@@ -24,7 +24,7 @@ function getLabel(node) {
 }
 
 function tagPathPart(label) {
-    return normalizeTagNameInput(label);
+    return normalizeTagName(label);
 }
 
 function flattenTree(parentId, childrenMap, expandedIds, depth, parentPath, parentLabels, visitedIds) {

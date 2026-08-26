@@ -1,7 +1,6 @@
 import { useState, useEffect, useMemo } from 'react'
 import Icon from '../common/Icon'
-import { koToEn } from '../../utils/korean'
-import { NAME_PATTERN } from './tagName'
+import { normalizeTagName, validateTagName } from './tagName'
 import {
   maskLastSegment,
   maskCommonPrefix,
@@ -11,7 +10,6 @@ import {
   commonPrefixApplicable,
 } from './renameRules.js'
 
-const cleanTagName = (value) => koToEn(String(value || '')).replace(/[^a-zA-Z0-9_]/g, '')
 
 function pathOf(item) {
   return item.treePath && item.treePath.length ? item.treePath : [item.originalName || item.nodeId || '']
@@ -54,7 +52,7 @@ function RulePreview({ treePath, mask }) {
   )
 }
 
-export default function NodeRenameModal({ items = [], allNodeNames = [], derivedNames = [], onApply, onClose }) {
+export default function NodeRenameModal({ items = [], allNodeNames = [], derivedNames = [], jsonPayloadKey = false, onApply, onClose }) {
   const initialRows = useMemo(
     () =>
       items.map((it) => {
@@ -120,7 +118,7 @@ export default function NodeRenameModal({ items = [], allNodeNames = [], derived
     setRows((prev) => prev.map((r, i) => (i === idx ? { ...r, mask: r.treePath.map(() => false), name: r.originalName } : r)))
   }
   const editName = (idx, value) => {
-    setRows((prev) => prev.map((r, i) => (i === idx ? { ...r, name: cleanTagName(value) } : r)))
+    setRows((prev) => prev.map((r, i) => (i === idx ? { ...r, name: value } : r)))
   }
 
   const save = () => {
@@ -129,9 +127,9 @@ export default function NodeRenameModal({ items = [], allNodeNames = [], derived
     const derived = new Set(derivedNames)
     const withinBatch = new Set()
     rows.forEach((r, i) => {
-      const name = r.name
-      if (!name) nextErrors[i] = 'Enter a name.'
-      else if (!NAME_PATTERN.test(name)) nextErrors[i] = 'Letters, digits, underscores only; cannot start with a digit.'
+      const name = normalizeTagName(r.name)
+      const verdict = validateTagName(name, { jsonPayloadKey })
+      if (!verdict.ok) nextErrors[i] = verdict.reason
       else if (seen.has(name)) nextErrors[i] = `'${name}' conflicts with another node.`
       else if (derived.has(name)) nextErrors[i] = `'${name}' conflicts with a derived tag.`
       else if (withinBatch.has(name)) nextErrors[i] = `'${name}' is duplicated in this list.`
@@ -141,7 +139,7 @@ export default function NodeRenameModal({ items = [], allNodeNames = [], derived
       setErrors(nextErrors)
       return
     }
-    onApply(rows.map((r) => ({ nodeIdx: r.nodeIdx, name: r.name })))
+    onApply(rows.map((r) => ({ nodeIdx: r.nodeIdx, name: normalizeTagName(r.name) })))
     onClose()
   }
 
@@ -236,7 +234,7 @@ export default function NodeRenameModal({ items = [], allNodeNames = [], derived
             <div className="rename-panel flex items-center gap-8">
               <label className="flex items-center gap-6 text-sm">
                 <span className="text-on-surface-secondary">Prefix</span>
-                <input type="text" value={prefix} onChange={(e) => setPrefix(cleanTagName(e.target.value))} className="w-[140px]" />
+                <input type="text" value={prefix} onChange={(e) => setPrefix(e.target.value.replace(/,/g, ''))} className="w-[140px]" />
               </label>
               <button type="button" className="btn btn-sm btn-primary ml-auto" onClick={applyNumberingNow}>Apply</button>
             </div>

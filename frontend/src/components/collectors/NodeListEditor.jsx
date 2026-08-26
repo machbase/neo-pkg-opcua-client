@@ -3,7 +3,7 @@ import Icon from "../common/Icon";
 import NodeBrowserPanel from "./NodeBrowserPanel";
 import NodeRenameModal from "./NodeRenameModal";
 import { normalizeCollectorNode } from "./nodeTree";
-import { normalizeTagNameInput } from "./tagName";
+import { normalizeTagName, validateTagName } from "./tagName";
 
 // NODE PATH breadcrumb cell: OPC UA tree path with depth badge; falls back to nodeId.
 function NodePathCell({ node }) {
@@ -138,11 +138,17 @@ function CalcSteps({ node, onFieldChange, onOrderChange }) {
 }
 
 export default function NodeListEditor({ nodes, onChange, endpoint, endpointTarget, selectionMode = "numeric-only", storageMode = "default", derivedTags = [] }) {
+    const jsonPayloadKey = storageMode === "json";
     const [renameItems, setRenameItems] = useState(null);
     const [name, setName] = useState("");
     const [nodeId, setNodeId] = useState("");
     const [nodeIdError, setNodeIdError] = useState(null);
     const [dupError, setDupError] = useState(null);
+    const [nameError, setNameError] = useState(null);
+    // 인라인 이름 수정은 자기 오류 상태를 따로 쓴다. 예전에는 nameError 하나를 상단 추가 폼과
+    // 공유해서, 행에서 낸 오류가 엉뚱하게 상단 "Tag Name" 입력을 빨갛게 만들고 정작 값을 담고
+    // 있는 행에는 아무 표시도 남지 않았다. 오류는 그 값이 들어 있는 입력에 붙어야 한다.
+    const [editNameError, setEditNameError] = useState(null);
     const [editingNameIdx, setEditingNameIdx] = useState(null);
     const [editingNameValue, setEditingNameValue] = useState("");
 
@@ -152,9 +158,20 @@ export default function NodeListEditor({ nodes, onChange, endpoint, endpointTarg
 
     const [selectedRows, setSelectedRows] = useState(new Set());
     const [browserOpen, setBrowserOpen] = useState(false);
+    // 브라우저 sync 는 입력 하나가 아니라 여러 행을 한꺼번에 만든다. nameError 에 실어 보내면
+    // 아무 잘못 없는 상단 "Tag Name" 입력이 빨개지므로 상태를 따로 둔다.
+    const [syncError, setSyncError] = useState(null);
     const editingNameInputRef = useRef(null);
 
     const hasEndpoint = Boolean(endpointTarget?.server || endpointTarget?.endpoint || endpoint?.trim());
+
+    // 파생 태그는 노드와 같은 이름 공간을 쓴다. 중복 검사에서 빼 두면 파생 태그와 같은 이름을
+    // 붙여도 행에는 아무 표시가 없고, 저장할 때에야 사용자가 건드린 적 없는 파생 태그를 지목하는
+    // 토스트만 뜬다 — 어느 행이 문제인지 알 수 없다.
+    const derivedNames = useMemo(
+        () => derivedTags.map((c) => c && c.name).filter(Boolean),
+        [derivedTags]
+    );
 
     useEffect(() => {
         if (editingNameIdx === null) return;
@@ -167,8 +184,19 @@ export default function NodeListEditor({ nodes, onChange, endpoint, endpointTarg
 
     const addNode = () => {
         const trimmedId = nodeId.trim();
-        const trimmedName = normalizeTagNameInput(name).trim();
+        const trimmedName = normalizeTagName(name);
         if (!trimmedId || !trimmedName) return;
+
+        // 컬럼 폭은 테이블을 아는 백엔드에 맡긴다. 여기서 보는 건 백엔드가 알 수 없는 두 가지다 —
+        // 콤마는 전송 중 이름을 쪼개고, 256자를 넘으면 neo-web 이 말없이 자른다.
+        const verdict = validateTagName(trimmedName, {
+            taken: [...nodes.map((n) => n.name), ...derivedNames],
+            jsonPayloadKey,
+        });
+        if (!verdict.ok) {
+            setNameError(verdict.reason);
+            return;
+        }
 
         const err = validateNodeId(trimmedId);
         if (err) {
@@ -183,6 +211,9 @@ export default function NodeListEditor({ nodes, onChange, endpoint, endpointTarg
         onChange([...nodes, { nodeId: trimmedId, name: trimmedName, calcOrder: "bm", nodeTree: null }]);
         setNodeId("");
         setName("");
+        // setName("") 은 onChange 를 태우지 않으므로 직전 실패의 오류가 남는다. 입력은 비었는데
+        // 빨간 테두리만 남아 방금 성공한 추가가 실패한 것처럼 보인다.
+        setNameError(null);
         setNodeIdError(null);
         setDupError(null);
     };
@@ -236,6 +267,7 @@ export default function NodeListEditor({ nodes, onChange, endpoint, endpointTarg
             if (editingNameIdx === idx) {
                 setEditingNameIdx(null);
                 setEditingNameValue("");
+                setEditNameError(null);
             } else if (editingNameIdx > idx) {
                 setEditingNameIdx(editingNameIdx - 1);
             }
@@ -256,6 +288,7 @@ export default function NodeListEditor({ nodes, onChange, endpoint, endpointTarg
         if (editingNameIdx != null && toDelete.has(editingNameIdx)) {
             setEditingNameIdx(null);
             setEditingNameValue("");
+            setEditNameError(null);
         }
         setSelectedRows(new Set());
     };
@@ -312,27 +345,73 @@ export default function NodeListEditor({ nodes, onChange, endpoint, endpointTarg
     };
 
     const handleBrowseSync = ({ add, remove }) => {
+        // 오류 슬롯이 하나라, 상단 폼에서 낸 옛 오류가 남아 있으면 이번 sync 의 사유를 가린다.
+        setNameError(null);
         const removeSet = new Set(remove);
         const kept = removeSet.size > 0 ? nodes.filter((n) => !removeSet.has(n.nodeId)) : nodes;
-        const unique = add
-            .filter((n) => !isDuplicate(n.nodeId))
-            .map((n) => ({ ...normalizeCollectorNode(n), calcOrder: n.calcOrder || "bm" }));
+
+        // 서버 라벨이 그대로 이름이 되는 유일한 경로다. 손으로 치면 거부당하는 이름이 여기로는
+        // 검사 없이 들어와, 저장은 되는데 조회만 조용히 비는 설정이 만들어졌다.
+        // taken 에 이번 sync 에서 방금 받아들인 이름까지 누적하는 이유는, 트리의 서로 다른
+        // 노드가 같은 라벨을 가질 수 있어 들어오는 것들끼리도 부딪히기 때문이다.
+        const taken = [...kept.map((n) => n.name), ...derivedNames];
+        const unique = [];
+        const skipped = [];
+        for (const n of add) {
+            if (isDuplicate(n.nodeId)) continue;
+            const verdict = validateTagName(n.name, { taken, jsonPayloadKey });
+            if (!verdict.ok) {
+                skipped.push(verdict.reason);
+                continue;
+            }
+            taken.push(verdict.name);
+            unique.push({
+                ...normalizeCollectorNode(n),
+                name: verdict.name,
+                calcOrder: n.calcOrder || "bm",
+            });
+        }
+
+        // 통째로 거부하면 라벨 하나에 콤마가 들었다고 체크한 수십 개가 전부 날아간다.
+        // 받을 수 있는 건 받고, 빠진 것은 개수와 이유를 남긴다 — 조용히 버리면 사용자는
+        // 자기가 체크한 노드가 없어진 것을 눈치채지 못한다.
+        setSyncError(
+            skipped.length > 0
+                ? `Skipped ${skipped.length} browsed node${skipped.length === 1 ? "" : "s"}: ${skipped
+                      .slice(0, 3)
+                      .join(" ")}${skipped.length > 3 ? " …" : ""}`
+                : null
+        );
+
         if (unique.length > 0 || removeSet.size > 0) onChange([...kept, ...unique]);
     };
 
     const startNameEdit = (idx, currentName) => {
         setEditingNameIdx(idx);
-        setEditingNameValue(normalizeTagNameInput(currentName || ""));
+        setEditingNameValue(String(currentName || ""));
+        setEditNameError(null);
     };
 
     const cancelNameEdit = () => {
         setEditingNameIdx(null);
         setEditingNameValue("");
+        setEditNameError(null);
     };
 
     const saveNameEdit = (idx) => {
-        const trimmed = normalizeTagNameInput(editingNameValue).trim();
+        const trimmed = normalizeTagName(editingNameValue);
         if (trimmed && trimmed !== (nodes[idx]?.name || "")) {
+            const verdict = validateTagName(trimmed, {
+                taken: [
+                    ...nodes.filter((_, i) => i !== idx).map((n) => n.name),
+                    ...derivedNames,
+                ],
+                jsonPayloadKey,
+            });
+            if (!verdict.ok) {
+                setEditNameError(verdict.reason);
+                return;
+            }
             patchNode(idx, { name: trimmed });
         }
         cancelNameEdit();
@@ -347,9 +426,10 @@ export default function NodeListEditor({ nodes, onChange, endpoint, endpointTarg
                     <input
                         type="text"
                         value={name}
-                        onChange={(e) => setName(normalizeTagNameInput(e.target.value))}
+                        onChange={(e) => { setName(e.target.value); setNameError(null); }}
                         onKeyDown={handleKeyDown}
-                        className="w-full"
+                        className={`w-full ${nameError ? "!border-error" : ""}`}
+                        title={nameError || undefined}
                         placeholder="e.g. Tank_Temp_01"
                     />
                 </div>
@@ -388,8 +468,8 @@ export default function NodeListEditor({ nodes, onChange, endpoint, endpointTarg
                     </button>
                 </div>
             </div>
-            {(nodeIdError || dupError) && (
-                <p className="text-error text-xs mb-12">{nodeIdError || dupError}</p>
+            {(nameError || nodeIdError || dupError || syncError) && (
+                <p className="text-error text-xs mb-12">{nameError || nodeIdError || dupError || syncError}</p>
             )}
 
             {/* Filter */}
@@ -509,11 +589,15 @@ export default function NodeListEditor({ nodes, onChange, endpoint, endpointTarg
                                             </td>
                                             <td title={row.name}>
                                                 {editingNameIdx === idx ? (
+                                                    <>
                                                     <input
                                                         ref={editingNameInputRef}
                                                         type="text"
                                                         value={editingNameValue}
-                                                        onChange={(e) => setEditingNameValue(normalizeTagNameInput(e.target.value))}
+                                                        onChange={(e) => {
+                                                            setEditingNameValue(e.target.value);
+                                                            setEditNameError(null);
+                                                        }}
                                                         onBlur={() => saveNameEdit(idx)}
                                                         onKeyDown={(e) => {
                                                             if (e.key === "Enter") {
@@ -524,8 +608,15 @@ export default function NodeListEditor({ nodes, onChange, endpoint, endpointTarg
                                                                 cancelNameEdit();
                                                             }
                                                         }}
-                                                        className="w-full"
+                                                        className={`w-full ${editNameError ? "!border-error" : ""}`}
+                                                        title={editNameError || undefined}
+                                                        aria-invalid={editNameError ? "true" : undefined}
                                                     />
+                                                    {/* 툴팁만으로는 왜 안 되는지 알 수 없다. 이유를 값 바로 아래에 적는다. */}
+                                                    {editNameError && (
+                                                        <p className="text-error text-xs mt-2">{editNameError}</p>
+                                                    )}
+                                                    </>
                                                 ) : (
                                                     <button
                                                         type="button"
@@ -627,7 +718,8 @@ export default function NodeListEditor({ nodes, onChange, endpoint, endpointTarg
                     allNodeNames={nodes
                         .map((n, i) => (renameItems.some((it) => it.nodeIdx === i) ? null : n.name))
                         .filter(Boolean)}
-                    derivedNames={derivedTags.map((c) => c && c.name).filter(Boolean)}
+                    derivedNames={derivedNames}
+                    jsonPayloadKey={jsonPayloadKey}
                     onApply={applyRenames}
                     onClose={() => setRenameItems(null)}
                 />

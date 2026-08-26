@@ -3,6 +3,7 @@ import { useNavigate } from "react-router";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import * as echarts from "echarts";
 import Icon from "../components/common/Icon";
+import RawRowDetailModal from "../components/dataviewer/RawRowDetailModal";
 import { useApp } from "../context/AppContext";
 import { listTableTags, queryTagBoundaryTime, queryTagData, queryTagDataTotal } from "../api/dataViewer";
 import ZoomInTwo from "../assets/image/btn_zoom in x2@3x.png";
@@ -35,6 +36,7 @@ import {
     buildDataViewerWheelZoomRange,
     buildDataViewerZoomControlRange,
     buildDerivedTagRows,
+    buildPayloadKeyRows,
     buildNeoWebTagAnalyzerMessage,
     buildRawColumnWidths,
     buildRawResultColumns,
@@ -55,18 +57,21 @@ import {
     getTimeFormatLabel,
     getTimeZoneLabel,
     getVisibleTagRows,
+    buildTagRowTree,
     hasDataViewerRawNextPage,
     hasExplicitDataViewerDataZoomEventRange,
     hasAssetHierarchy,
     isJsonValueColumn,
     isSameDataViewerChartRange,
     normalizeSelectedTagNames,
+    expandProjectedRows,
+    splitPayloadKeySelection,
     resolveTagAnalyzerKeyColumns,
     resolveTimeRangeInput,
     resolveTagNodes,
+    TAG_ANALYZER_MAX_TAGS,
     sendNeoWebTagAnalyzerMessage,
     showsDataViewerTimeControls,
-    JSON_VALUE_COLUMN_BLOCK_REASON,
 } from "./dataViewerModel";
 import useTableColumns from "../hooks/useTableColumns";
 import useModalDismiss from "../hooks/useModalDismiss";
@@ -521,6 +526,10 @@ function TagEChart({ series, timeFormat, timeZone, timeRange, displayRange, seri
     const containerRef = useRef(null);
     const chartRef = useRef(null);
     const rangeRef = useRef({ currentRange: {}, navigatorRange: {}, onDisplayRangeChange });
+    // Which series the user switched off in the legend. setOption below runs with notMerge, which
+    // replaces legend.selected along with everything else, so every range change or refresh would
+    // otherwise switch every hidden series back on.
+    const legendSelectedRef = useRef({});
     const dragStateRef = useRef(null);
     const [dragPreview, setDragPreview] = useState(null);
     const allPoints = useMemo(() => series.flatMap((item) => item.data), [series]);
@@ -548,6 +557,9 @@ function TagEChart({ series, timeFormat, timeZone, timeRange, displayRange, seri
 
         const chart = echarts.init(container, null, { renderer: "canvas" });
         chartRef.current = chart;
+        chart.on("legendselectchanged", (params) => {
+            legendSelectedRef.current = { ...(params?.selected || {}) };
+        });
         const getDataZoomEventState = (params = {}) => {
             const eventState = Array.isArray(params.batch) ? params.batch[0] : params;
             const dataZoomOptions = chart.getOption?.()?.dataZoom || [];
@@ -806,6 +818,20 @@ function TagEChart({ series, timeFormat, timeZone, timeRange, displayRange, seri
     useEffect(() => {
         if (!chartRef.current) return;
         chartRef.current.setOption(options, true);
+        // Re-apply the toggles the full replacement just dropped. Only series that are still on the
+        // chart are carried over, so a key that was removed and picked again comes back visible
+        // instead of silently staying hidden.
+        const remembered = {};
+        for (const item of series) {
+            const name = item?.name;
+            if (name && Object.prototype.hasOwnProperty.call(legendSelectedRef.current, name)) {
+                remembered[name] = legendSelectedRef.current[name];
+            }
+        }
+        legendSelectedRef.current = remembered;
+        if (Object.keys(remembered).length > 0) {
+            chartRef.current.setOption({ legend: { selected: remembered } });
+        }
         if (Number.isFinite(currentRange.startTime) && Number.isFinite(currentRange.endTime)) {
             chartRef.current.dispatchAction?.({
                 type: "dataZoom",
@@ -821,7 +847,7 @@ function TagEChart({ series, timeFormat, timeZone, timeRange, displayRange, seri
             });
         }
         chartRef.current.resize();
-    }, [currentRange, options]);
+    }, [currentRange, options, series]);
 
     const applyZoomControl = useCallback((action, zoom) => {
         const nextRange = buildDataViewerZoomControlRange(action, currentRange, navigatorRange, zoom);
@@ -929,6 +955,13 @@ function TagEChart({ series, timeFormat, timeZone, timeRange, displayRange, seri
     );
 }
 
+// cgi-bin/src/cgi/handler.js 의 jsonKeys 상한 3개를 그대로 미러링한다. 셋 중 하나만 넘겨도 잘린
+// 결과가 아니라 요청 전체가 거절돼 그리드와 차트가 동시에 비고, 그 뒤로는 체크를 충분히 풀기
+// 전까지 모든 조회가 계속 실패한다. 값이 바뀌면 handler.js 와 함께 고쳐야 한다.
+const JSON_KEY_SELECTION_LIMIT = 128;              // TAG_CHART_MAX_JSON_KEYS
+const JSON_KEY_MAX_LENGTH = 200;                   // TAG_CHART_MAX_JSON_KEY_LENGTH
+const JSON_KEYS_TOTAL_LENGTH_LIMIT = 6000;         // TAG_CHART_MAX_JSON_KEYS_TOTAL_LENGTH
+
 export default function DataViewerPage({ collectors, detail, embedded = false }) {
     const navigate = useNavigate();
     const { selectedCollectorId, notify } = useApp();
@@ -941,9 +974,11 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
     const dbServer = typeof config.db === "string" ? config.db : "";
     const dbTable = config.dbTable || "";
     const valueColumn = selectedValueColumn(config);
-    // One columns lookup feeds both the JSON block and the Tag Analyzer key columns, since the
-    // collector config only stores column names — never which ones carry the TAG flags.
-    const { columns: tableColumns } = useTableColumns({ server: dbServer, table: dbTable });
+    // The collector config only stores column names — never which ones carry the TAG flags — so both
+    // the Tag Analyzer bridge and the JSON check below need the real schema.
+    const { columns: tableColumns, checked: tableColumnsChecked } = useTableColumns({ server: dbServer, table: dbTable });
+    // A JSON value column keys every row by the COLLECTOR name and hides the node names inside the
+    // payload, so the configured nodes are not tag names here — see resolveTagNodes.
     const jsonValueColumn = useMemo(() => isJsonValueColumn(tableColumns, valueColumn), [tableColumns, valueColumn]);
     const tagAnalyzerKeyColumns = useMemo(() => resolveTagAnalyzerKeyColumns(tableColumns), [tableColumns]);
     const stringValueColumn = config.stringOnly ? "" : (config.stringValueColumn || "");
@@ -953,11 +988,16 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
     const [assetHierarchyChecked, setAssetHierarchyChecked] = useState(false);
     const [tagsLoading, setTagsLoading] = useState(false);
     const [tagError, setTagError] = useState("");
-    const nodes = useMemo(() => resolveTagNodes(configuredNodes, tableTags), [configuredNodes, tableTags]);
+    const nodes = useMemo(
+        () => resolveTagNodes(configuredNodes, tableTags, { payloadKeyedNodes: jsonValueColumn }),
+        [configuredNodes, jsonValueColumn, tableTags]
+    );
     const tagRows = useMemo(() => buildTagRows(nodes), [nodes]);
+    // Derived tags are their own rows in a scalar table but only payload keys in a JSON one, so
+    // listing them there would offer more names that match no row.
     const derivedTagRows = useMemo(
-        () => buildDerivedTagRows(config?.derivedTags, nodes.map((node) => node?.name)),
-        [config, nodes]
+        () => (jsonValueColumn ? [] : buildDerivedTagRows(config?.derivedTags, nodes.map((node) => node?.name))),
+        [config, jsonValueColumn, nodes]
     );
     const showAssetTab = hasAssetHierarchy(assetHierarchy);
     const assetHierarchyPending = Boolean(dbServer && dbTable && !assetHierarchyChecked && tagsLoading);
@@ -994,6 +1034,60 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
     const [error, setError] = useState("");
     const [rawRowsPerTag, setRawRowsPerTag] = useState(DEFAULT_DATA_VIEWER_ROWS_PER_TAG);
     const [result, setResult] = useState({ rows: [], total: 0, page: 1, pageSize: getDataViewerRawPageSize([]) });
+    // Every JSON row is stored under one tag name. It is configurable (db.tagName) and only falls
+    // back to the job name for configs written before that field existed — the same fallback the
+    // collector applies, so the viewer asks for exactly what was written.
+    const collectorTagName = String(config?.tagName || "").trim() || collector?.id || "";
+    const payloadKeyRows = useMemo(
+        () => (jsonValueColumn
+            ? buildPayloadKeyRows({
+                collectorName: collectorTagName,
+                configuredNodes,
+                derivedTags: config?.derivedTags,
+            })
+            : []),
+        [collectorTagName, config, configuredNodes, jsonValueColumn]
+    );
+    // The keys half of a selection: the server extracts exactly these with the json operator, so the
+    // wire never carries a whole payload document and the client never parses one. Selections are
+    // (record, key) pairs, so the record has to come off first — sending the pair asks for a key that
+    // does not exist and the rows come back empty with no error anywhere.
+    const toProjectionKeys = useCallback(
+        (names) => (jsonValueColumn
+            ? splitPayloadKeySelection(names, [collectorTagName]).keys
+            : undefined),
+        [collectorTagName, jsonValueColumn]
+    );
+    const projectionKeys = toProjectionKeys(selectedTagNames);
+    // 200자를 넘는 키는 개수·총길이와 무관하게 그 하나만으로 요청이 거절된다. 세는 대상이 아니라
+    // 아예 고를 수 없는 값이라 판정이 따로 있어야 한다.
+    const isOverlongJsonKey = useCallback(
+        (tagName) => {
+            if (!jsonValueColumn) return false;
+            const [key] = toProjectionKeys([tagName]) || [];
+            return Boolean(key) && key.length > JSON_KEY_MAX_LENGTH;
+        },
+        [jsonValueColumn, toProjectionKeys]
+    );
+    // A JSON selection is a set of (record, key) pairs: the records become the NAME filter and the
+    // keys become the projection, and the query is their cross product.
+    const toQueryNames = useCallback(
+        (names) => (jsonValueColumn ? splitPayloadKeySelection(names, [collectorTagName]).records : names),
+        [collectorTagName, jsonValueColumn]
+    );
+
+    // 그리드가 폭에서 자르므로, 전문을 보고 복사할 자리가 행 클릭 모달이다. 인덱스로 들고 있는
+    // 이유는 모달을 닫지 않고 위아래 로우로 넘어가야 하기 때문이다.
+    const [detailIndex, setDetailIndex] = useState(-1);
+    // 행 상세는 서수(detailIndex)로 잡혀 있어서 행 목록이 통째로 갈리면 엉뚱한 행을 가리킨다.
+    // 마지막 페이지로 점프하는 중에는 "Loading..." 이 뜨지 않아(handleEndPage 가 endLoading 만
+    // 세운다) 행이 계속 클릭되고, 응답이 도착하는 순간 모달 내용이 조용히 바뀐다. 행 수가 줄면
+    // 아예 사라진다. setResult 호출부가 네 군데라 리셋을 흩뿌리면 다섯 번째가 생길 때 빠뜨리므로
+    // 둘을 한 함수로 묶어 둔다.
+    const applyResult = useCallback((next) => {
+        setResult(next);
+        setDetailIndex(-1);
+    }, []);
     const [rawPageBounds, setRawPageBounds] = useState(null);
     const [rawPageRequest, setRawPageRequest] = useState({ page: 1 });
     const rawScrollRef = useRef(null);
@@ -1002,7 +1096,11 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
     const endPageRequestRef = useRef(0);
     const splitRangeRequestRef = useRef(0);
     const selectedTagKey = selectedTagNames.join("\n");
-    const rawPageSize = useMemo(() => getDataViewerRawPageSize(selectedTagNames, rawRowsPerTag), [rawRowsPerTag, selectedTagNames]);
+    // One JSON row already carries every key, so the page size is rows-per-cycle, not per key.
+    const rawPageSize = useMemo(
+        () => getDataViewerRawPageSize(toQueryNames(selectedTagNames), rawRowsPerTag),
+        [rawRowsPerTag, selectedTagNames, toQueryNames]
+    );
 
     useEffect(() => {
         let alive = true;
@@ -1044,14 +1142,22 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
     }, [dbServer, dbTable, notify]);
 
     const selectableRows = useMemo(
-        () => [...tagRows, ...derivedTagRows, ...assetRows].filter((row) => row.type === "tag" && row.tag?.name),
-        [assetRows, derivedTagRows, tagRows]
+        () => (jsonValueColumn ? payloadKeyRows : [...tagRows, ...derivedTagRows, ...assetRows])
+            .filter((row) => row.type === "tag" && row.tag?.name)
+            // 고를 수 없는 키는 복원·자동 선택 대상에서도 빠져야 한다. 남겨 두면 아무것도 안 고른
+            // 상태에서 normalizeSelectedTagNames 가 첫 행을 집어 들어, 뷰어가 켜지자마자 영원히
+            // 실패하는 조회로 부팅한다.
+            .filter((row) => !isOverlongJsonKey(row.tag.name)),
+        [assetRows, derivedTagRows, isOverlongJsonKey, jsonValueColumn, payloadKeyRows, tagRows]
     );
     // The asset tab is built from the server's tag list, so derived tags already appear there
     // under whatever folder their asset metadata puts them in — only the Tags tab appends them.
     const activeTagRows = useMemo(
-        () => (activeTagTab === "asset" && showAssetTab ? assetRows : [...tagRows, ...derivedTagRows]),
-        [activeTagTab, assetRows, derivedTagRows, showAssetTab, tagRows]
+        () => {
+            if (jsonValueColumn) return payloadKeyRows;
+            return activeTagTab === "asset" && showAssetTab ? assetRows : [...tagRows, ...derivedTagRows];
+        },
+        [activeTagTab, assetRows, derivedTagRows, jsonValueColumn, payloadKeyRows, showAssetTab, tagRows]
     );
 
     useEffect(() => {
@@ -1070,7 +1176,7 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
             setRawPageRequest(buildDataViewerRawPageRequest({
                 currentPage: resultPage,
                 nextPage: resultPage,
-                pageSize: getDataViewerRawPageSize(next, rawRowsPerTag),
+                pageSize: getDataViewerRawPageSize(toQueryNames(next), rawRowsPerTag),
                 currentBounds: rawPageBounds,
                 reason: "tags",
             }));
@@ -1094,9 +1200,10 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
         });
     }, [selectedTagNames]);
 
+    const tagRowsSignature = useMemo(() => activeTagRows.map((row) => row.key).join("\u0000"), [activeTagRows]);
     useEffect(() => {
         setCollapsedTagFolders((prev) => (prev.size === 0 ? prev : new Set()));
-    }, [selectedCollectorId, activeTagRows]);
+    }, [selectedCollectorId, tagRowsSignature]);
 
     useEffect(() => {
         rowsRequestRef.current += 1;
@@ -1154,7 +1261,19 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
         () => getVisibleTagRows(filteredTagRows, collapsedTagFolders),
         [collapsedTagFolders, filteredTagRows]
     );
-    const canQuery = Boolean(dbServer && dbTable && selectedTagNames.length > 0);
+    // The JSON verdict comes from an async columns lookup, and it decides which names the query
+    // sends. Firing before it lands would ask for the wrong tag and come back empty.
+    // A JSON collector needs the collector name too: the query asks for that one tag and projects the
+    // selected keys out of it. The keys come from the collector config, so a selection exists before
+    // the first fetch and gating on it cannot deadlock.
+    // JSON 의 선택값은 (record, key) 쌍이다. toQueryNames 가 키를 떼고 record 만 남기는데, 그
+    // record 는 이 collector 자신의 이름(config.tagName 또는 collector.id)과 대조해서 얻는다.
+    // 대조에 실패하면 record 가 하나도 안 나오고, 그 상태로 조회하면 NAME 필터 없이 테이블의
+    // 모든 record 를 스캔하게 된다.
+    const canQuery = Boolean(
+        dbServer && dbTable && tableColumnsChecked && selectedTagNames.length > 0
+        && (!jsonValueColumn || toQueryNames(selectedTagNames).length > 0)
+    );
     const chartGroups = useMemo(
         () => buildDataViewerChartGroups({
             selectedTagNames,
@@ -1238,6 +1357,35 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
             return next;
         });
     }, []);
+    // 지금 선택이 실제로 전송할 목록. 선택한 이름이 아니라 toProjectionKeys 를 거친 키를 재는
+    // 이유는 서버가 세는 것이 그쪽이기 때문이다 — record 접두사를 떼고 중복도 접힌다.
+    const jsonKeyUsage = useMemo(() => {
+        const keys = jsonValueColumn ? (projectionKeys || []) : [];
+        return { count: keys.length, totalLength: keys.join(",").length, keys: new Set(keys) };
+    }, [jsonValueColumn, projectionKeys]);
+
+    // 서버가 거절하기 전에 "넘길 키" 를 막는다. 해제는 언제나 가능해야 한다 — 막힌 상태에서
+    // 빠져나올 길이 그것뿐이다. 사유에 숫자를 같이 적는 이유는 길이 상한이 화면에 보이지 않는
+    // 값이라, 숫자가 없으면 무엇을 몇 개나 풀어야 하는지 알 수 없기 때문이다.
+    const jsonKeyBlockReason = useCallback((tagName) => {
+        if (!jsonValueColumn) return "";
+        const [key] = toProjectionKeys([tagName]) || [];
+        if (!key) return "";
+        if (key.length > JSON_KEY_MAX_LENGTH) {
+            return `This key name is ${key.length} characters; the server rejects any key over ${JSON_KEY_MAX_LENGTH}.`;
+        }
+        // 이미 고른 키와 이름이 같으면 전송 목록이 늘지 않는다 (서버가 중복을 접는다).
+        if (jsonKeyUsage.keys.has(key)) return "";
+        if (jsonKeyUsage.count >= JSON_KEY_SELECTION_LIMIT) {
+            return `${jsonKeyUsage.count} of ${JSON_KEY_SELECTION_LIMIT} keys selected; unselect one to pick another.`;
+        }
+        const nextTotal = jsonKeyUsage.totalLength + (jsonKeyUsage.count > 0 ? 1 : 0) + key.length;
+        if (nextTotal > JSON_KEYS_TOTAL_LENGTH_LIMIT) {
+            return `Adding this key makes the key list ${nextTotal} characters, over the ${JSON_KEYS_TOTAL_LENGTH_LIMIT} the server accepts in one request (${jsonKeyUsage.totalLength} used by ${jsonKeyUsage.count} keys).`;
+        }
+        return "";
+    }, [jsonKeyUsage, jsonValueColumn, toProjectionKeys]);
+
     const handleTagSelectionChange = useCallback((tagName) => {
         rowsRequestRef.current += 1;
         chartRequestRef.current += 1;
@@ -1334,7 +1482,7 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
                 const latestTime = await queryTagBoundaryTime({
                     server: dbServer,
                     table: dbTable,
-                    names: tagNames,
+                    names: toQueryNames(tagNames),
                     valueColumn,
                     stringValueColumn,
                     direction: "latest",
@@ -1349,7 +1497,7 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
         const from = await resolveQueryRange(targetRange.from, "from");
         const to = await resolveQueryRange(targetRange.to, "to");
         return { from, to };
-    }, [dbServer, dbTable, stringValueColumn, valueColumn]);
+    }, [dbServer, dbTable, stringValueColumn, toQueryNames, valueColumn]);
 
     const selectedTagNamesRef = useRef(selectedTagNames);
     useEffect(() => {
@@ -1361,7 +1509,7 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
     // the window has to follow the selection: a window still anchored to another tag's era
     // queries an empty range and the table shows no data even though the tag has plenty of it
     // (two tags whose latest rows are years apart reproduce this every time).
-    const lastAnchorTagKey = usesLastDataAnchor(range) ? selectedTagNames.join("\u0000") : "";
+    const lastAnchorTagKey = usesLastDataAnchor(range) ? toQueryNames(selectedTagNames).join("\u0000") : "";
 
     // Identifies the inputs a pinned window was resolved from. fetchRows compares it with
     // pinnedRange.key so it never queries using a window that belongs to an earlier selection,
@@ -1420,7 +1568,7 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
         const requestId = rowsRequestRef.current + 1;
         rowsRequestRef.current = requestId;
         if (!canQuery) {
-            setResult({ rows: [], total: 0, page: 1, pageSize: rawPageSize });
+            applyResult({ rows: [], total: 0, page: 1, pageSize: rawPageSize });
             setRawPageBounds(null);
             setLoading(false);
             return;
@@ -1439,7 +1587,7 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
             if (!queryFrom || !queryTo) {
                 if (rowsRequestRef.current !== requestId) return;
                 setError("Please check the entered time.");
-                setResult({ rows: [], total: 0, page: resultPage, pageSize: rawPageSize });
+                applyResult({ rows: [], total: 0, page: resultPage, pageSize: rawPageSize });
                 setRawPageBounds(null);
                 return;
             }
@@ -1447,7 +1595,8 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
             const data = await queryTagData({
                 server: dbServer,
                 table: dbTable,
-                names: selectedTagNames,
+                names: toQueryNames(selectedTagNames),
+                jsonKeys: projectionKeys,
                 valueColumn,
                 stringValueColumn,
                 direction: backwardScan ? "latest" : "oldest",
@@ -1464,25 +1613,51 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
             if (rowsRequestRef.current !== requestId) return;
             const nextRows = data?.rows || [];
             const nextBounds = buildDataViewerRawPageBounds(nextRows);
-            setResult(data || { rows: [], total: 0, page: resultPage, pageSize: rawPageSize });
+            applyResult(data || { rows: [], total: 0, page: resultPage, pageSize: rawPageSize });
             setRawPageBounds(nextBounds);
         } catch (e) {
             if (rowsRequestRef.current !== requestId) return;
             const message = e.reason || e.message || "Failed to load data";
             setError(message);
             notify(message, "error");
-            setResult({ rows: [], total: 0, page: resultPage, pageSize: rawPageSize });
+            applyResult({ rows: [], total: 0, page: resultPage, pageSize: rawPageSize });
             setRawPageBounds(null);
         } finally {
             if (rowsRequestRef.current === requestId) {
                 setLoading(false);
             }
         }
-    }, [backwardScan, canQuery, dbServer, dbTable, notify, pinKey, pinnedRange, rawPageRequest, rawPageSize, resultPage, selectedTagNames, stringValueColumn, valueColumn]);
+    }, [applyResult, backwardScan, canQuery, dbServer, dbTable, notify, pinKey, pinnedRange, rawPageRequest, rawPageSize, resultPage, selectedTagNames, stringValueColumn, valueColumn]);
 
     useEffect(() => {
         fetchRows();
     }, [fetchRows]);
+
+    // 서버가 키를 뽑아 보내지만 행은 여전히 사이클당 하나이고, 값은 jsonKeys 순서대로 values
+    // 배열에 담겨 온다. 여기서 그 배열을 키별 행으로 펼친다 — payload 원문을 파싱하지는 않는다.
+    const displayRows = useMemo(
+        () => (result.jsonKeys && result.jsonKeys.length > 0
+            ? expandProjectedRows(result.rows, result.jsonKeys, selectedTagNames)
+            : result.rows),
+        [result.jsonKeys, result.rows, selectedTagNames]
+    );
+
+    const splitGroupTagNames = useMemo(
+        () => Object.fromEntries(splitChartGroups.map((group) => [group.id, group.tagNames || []])),
+        [splitChartGroups]
+    );
+    // 분할 차트는 자기 행을 따로 캐시하고, 차트 빌더는 NAME 으로 거르기 전에 그 캐시를 main 행보다
+    // 먼저 쓴다. 캐시된 행은 아직 collector 로 키잉돼 있으므로 여기서 같은 투영을 거치지 않으면
+    // 첫 갱신에서 분할 차트가 통째로 빈다.
+    const projectedSplitChartRows = useMemo(() => {
+        const projected = {};
+        for (const [groupId, entry] of Object.entries(splitChartRows || {})) {
+            const rows = Array.isArray(entry) ? entry : (entry?.rows || []);
+            const keys = Array.isArray(entry) ? [] : (entry?.jsonKeys || []);
+            projected[groupId] = keys.length > 0 ? expandProjectedRows(rows, keys, splitGroupTagNames[groupId]) : rows;
+        }
+        return projected;
+    }, [splitChartRows, splitGroupTagNames]);
 
     useEffect(() => {
         const requestId = chartRequestRef.current + 1;
@@ -1498,8 +1673,8 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
         setChartLoading(true);
         setChartError("");
         const nextResults = buildDataViewerChartResultsFromRawRows({
-            rows: result.rows,
-            rowsByGroup: splitChartRows,
+            rows: displayRows,
+            rowsByGroup: projectedSplitChartRows,
             chartGroups,
         });
         if (chartRequestRef.current !== requestId) return undefined;
@@ -1515,7 +1690,7 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
         return () => {
             chartRequestRef.current += 1;
         };
-    }, [canQuery, chartGroups, mode, result.rows, splitChartRows]);
+    }, [canQuery, chartGroups, displayRows, mode, projectedSplitChartRows]);
 
     const handleModeChange = useCallback((nextMode) => {
         if (nextMode === mode) return;
@@ -1529,19 +1704,51 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
     }, [activeRange, rangeEditor, splitChartRanges]);
 
     const assetColumnKey = assetHierarchy?.column || "asset";
+    // A JSON collector's grid shows the projection, not the stored row. `result` keeps the raw rows
+    // so paging and totals stay counted in cycles, which is what the backend paginates by.
     const rawColumns = useMemo(
-        () => buildRawResultColumns(result.rows, { hiddenKeys: showAssetTab ? [assetColumnKey] : [] }),
-        [assetColumnKey, result.rows, showAssetTab]
+        () => buildRawResultColumns(displayRows, { hiddenKeys: showAssetTab ? [assetColumnKey] : [] }),
+        [assetColumnKey, displayRows, showAssetTab]
     );
-    const rawColumnWidths = useMemo(() => buildRawColumnWidths(result.rows, rawColumns, {
-        timeSample: result.rows.length ? formatDataViewerTime(result.rows[0].time, timeFormat, timeZone) : "",
+    const rawColumnWidths = useMemo(() => buildRawColumnWidths(displayRows, rawColumns, {
+        timeSample: displayRows.length ? formatDataViewerTime(displayRows[0].time, timeFormat, timeZone) : "",
         extra: { name: RAW_NAME_DOT_SPACE },
-    }), [rawColumns, result.rows, timeFormat, timeZone]);
+    }), [displayRows, rawColumns, timeFormat, timeZone]);
     const rawTableMinWidth = useMemo(
         () => Object.values(rawColumnWidths).reduce((total, width) => total + width, 0),
         [rawColumnWidths]
     );
-    const rawNameColors = useMemo(() => buildRawRowNameColors(result.rows), [result.rows]);
+    const rawNameColors = useMemo(() => buildRawRowNameColors(displayRows), [displayRows]);
+    // 상세 모달이 라벨 아래에 컬럼 타입을 적는다. 스키마는 이미 받아둔 tableColumns 에 있다.
+    //
+    // 두 키 공간을 맞춰야 한다. 행은 서버가 정규화한 name/time/value 로 오지만(normalizeTagDataRow)
+    // 스키마는 테이블의 진짜 컬럼명이다. 컬럼이 NAME/TIME/VALUE 인 테이블은 우연히 맞아떨어져
+    // 여태 안 보였는데, JSON 테이블은 보통 JN/JT/JV 라 전 필드의 타입이 빈다 — 하필 이 기능이
+    // 겨냥한 테이블만 안 나오는 셈이었다. 원래 이름도 함께 남겨야 STR_VALUE 처럼 정규화되지
+    // 않는 컬럼이 계속 잡힌다.
+    const rawColumnTypes = useMemo(() => {
+        // JSON collector 는 NAME 과 VALUE 를 alias 하면 안 된다. 서버가 payload 를 투영하므로
+        // 그리드의 value 는 JV 컬럼(JSON)이 아니라 `JV->'$["key"]'` 가 돌려준 VARCHAR 스칼라이고,
+        // name 은 JN 값이 아니라 expandProjectedRows 가 만든 `record / key` 합성 문자열이다.
+        // 선언 타입을 그대로 붙이면 "JSON"·"VARCHAR(100)" 이라고 자신 있게 틀린 값을 적게 된다.
+        // TIME 은 여전히 진짜 basetime 컬럼이라 그대로 둔다.
+        const alias = {
+            [String(tagAnalyzerKeyColumns.timeColumn || "TIME").toUpperCase()]: "TIME",
+        };
+        if (!jsonValueColumn) {
+            alias[String(tagAnalyzerKeyColumns.nameColumn || "NAME").toUpperCase()] = "NAME";
+            alias[String(valueColumn || "VALUE").toUpperCase()] = "VALUE";
+        }
+        const map = {};
+        for (const column of tableColumns || []) {
+            if (!column?.name) continue;
+            const key = String(column.name).toUpperCase();
+            const type = String(column.type || "");
+            map[key] = type;
+            if (alias[key]) map[alias[key]] = type;
+        }
+        return map;
+    }, [jsonValueColumn, tableColumns, tagAnalyzerKeyColumns, valueColumn]);
     // One colour per tag for every panel. Taken from the "default" group — it always holds all
     // selected tags — so splitting a tag into its own chart keeps the colour it had in the main
     // one instead of restarting the palette. Falls back to the raw row order before any chart
@@ -1555,12 +1762,78 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
     // render grows with every tag added. Rows are a fixed 25px (.data-viewer-raw-table td), so the
     // size never has to be measured. Spacer rows above and below stand in for the rest.
     const rowVirtualizer = useVirtualizer({
-        count: result.rows.length,
+        count: displayRows.length,
         getScrollElement: () => rawScrollRef.current,
         estimateSize: () => RAW_ROW_HEIGHT,
         overscan: 16,
     });
     const virtualRows = rowVirtualizer.getVirtualItems();
+    // Rendered as a real tree, not a flat list: a sticky header is bounded by its own parent, so a
+    // folder can only slide away once its subtree has. Each header pins at its depth, which makes the
+    // ancestors stack into the path you are inside while scrolling a deep subtree.
+    const renderTagNodes = (nodes) => nodes.map(({ row, children }) => {
+        if (row.type === "folder") {
+            const collapsed = collapsedTagFolders.has(row.key);
+            return (
+                <div key={row.key} className="node-tree-branch">
+                    {/* The whole row toggles, not just the chevron — the label is the bigger target
+                        and reads as part of the same control. */}
+                    <button
+                        type="button"
+                        className="node-tree-row node-tree-row-folder"
+                        style={{ "--tree-indent": `${row.depth * 16}px`, "--tree-depth": row.depth }}
+                        onClick={() => toggleTagFolder(row.key)}
+                        aria-expanded={!collapsed}
+                        aria-label={`${row.label} ${collapsed ? "expand" : "collapse"}`}
+                    >
+                        <span className="node-tree-toggle">
+                            <Icon name={collapsed ? "chevron_right" : "expand_more"} className="icon-sm" />
+                        </span>
+                        <span className="node-tree-label truncate">{row.label}</span>
+                    </button>
+                    {children.length > 0 && renderTagNodes(children)}
+                </div>
+            );
+        }
+
+        const checked = selectedTagNames.includes(row.tag.name);
+        const blockReason = checked ? "" : jsonKeyBlockReason(row.tag.name);
+        return (
+            <label
+                key={row.key}
+                className={`data-viewer-tag-row ${checked ? "is-active" : ""}`}
+                style={{ "--tree-indent": `${row.depth * 16}px` }}
+                // 잘려도 전문을 볼 수 있어야 한다. 바뀐 이름이면 원래 노드 이름까지 같이 적는다.
+                // 사유를 체크박스의 title 로 달면 안 뜬다 — 진짜 disabled 컨트롤은 hover 이벤트를
+                // 내지 않아 브라우저가 툴팁을 그리지 않는다. 감싸는 label 은 비활성이 아니므로
+                // 여기로 올려야 보인다. (같은 함정을 .policy-option 에서 한 번 밟았다.)
+                title={blockReason || [row.tag.name, row.secondaryLabel && `node: ${row.secondaryLabel}`, row.tag.nodeId]
+                    .filter(Boolean).join("\n")}
+            >
+                <span className="node-tree-toggle">
+                    <input
+                        type="checkbox"
+                        checked={checked}
+                        disabled={Boolean(blockReason)}
+                        title={blockReason || undefined}
+                        onChange={() => handleTagSelectionChange(row.tag.name)}
+                        aria-label={`${row.tag.name} select`}
+                    />
+                </span>
+                {/* 자르지 않고 접는다. 태그 이름은 대개 경로를 이어붙인 값이라 접두사가 같고,
+                    앞부분만 남기는 말줄임은 서로 다른 태그를 똑같이 보이게 만든다. */}
+                <span className="data-viewer-tag-text">
+                    <span className="node-tree-label">{row.label}</span>
+                    {row.secondaryLabel && (
+                        <span className="node-tree-secondary">{row.secondaryLabel}</span>
+                    )}
+                </span>
+                {row.derived && <span className="badge badge-primary badge-xs shrink-0">derived</span>}
+                {row.tag.dataType && <span className="badge badge-success">{row.tag.dataType}</span>}
+            </label>
+        );
+    });
+
     const rawTableBody = useMemo(() => {
         const first = virtualRows[0];
         const last = virtualRows[virtualRows.length - 1];
@@ -1570,10 +1843,15 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
             <tbody>
                 {padTop > 0 && <tr aria-hidden="true" style={{ height: padTop }} />}
                 {virtualRows.map((virtualRow) => {
-                    const row = result.rows[virtualRow.index];
+                    const row = displayRows[virtualRow.index];
                     if (!row) return null;
                     return (
-                        <tr key={virtualRow.key}>
+                        <tr
+                            key={virtualRow.key}
+                            className={`raw-row-clickable${detailIndex === virtualRow.index ? " is-inspected" : ""}`}
+                            onClick={() => setDetailIndex(virtualRow.index)}
+                            title="Click to inspect the full row"
+                        >
                             {rawColumns.map((column) => {
                                 const value = column.key === "time"
                                     ? formatDataViewerTime(row[column.key], timeFormat, timeZone)
@@ -1597,7 +1875,7 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
                 {padBottom > 0 && <tr aria-hidden="true" style={{ height: padBottom }} />}
             </tbody>
         );
-    }, [rawColumns, rawNameColors, result.rows, rowVirtualizer, timeFormat, timeZone, virtualRows]);
+    }, [detailIndex, displayRows, rawColumns, rawNameColors, rowVirtualizer, timeFormat, timeZone, virtualRows]);
 
     if (!collector) {
         return (
@@ -1608,21 +1886,10 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
         );
     }
 
-    // The dashboard disables the entry button, but the route can still be reached by URL.
-    if (jsonValueColumn) {
-        return (
-            <div className="empty-state flex flex-col items-center justify-center h-full">
-                <Icon name="data_object" className="icon-lg opacity-30 mb-12" />
-                <p className="text-md font-medium text-on-surface-tertiary">{JSON_VALUE_COLUMN_BLOCK_REASON}</p>
-                <p className="text-sm text-on-surface-tertiary mt-8">{`${dbTable} · ${valueColumn}`}</p>
-            </div>
-        );
-    }
-
-    // The button keeps showing what the user chose (now-1h, last-5m, ...); the absolute window
-    // those expressions were pinned to is shown underneath, since that is what queries and
-    // pagination actually run against.
+    // 버튼에는 사용자가 고른 표현(now-1h, last-5m …)을 그대로 보여준다.
     const timeRangeButtonText = formatTimeRangeLabel(activeRange.from, activeRange.to, timeZone);
+    // 그 표현이 고정된 절대 구간. 조회와 페이지네이션이 실제로 이 구간을 쓴다. 별도 줄로
+    // 표시하던 것은 제거했고, 지금은 새로고침 버튼 툴팁으로만 노출한다.
     const pinnedRangeText = pinnedRange ? formatTimeRangeLabel(pinnedRange.from, pinnedRange.to, timeZone) : "";
     const timeFormatButtonText = `${getTimeFormatLabel(timeFormat)} / ${getTimeZoneLabel(timeZone)}`;
     const headerLabels = buildDataViewerHeaderLabels(collector.id, dbTable);
@@ -1664,17 +1931,18 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
                     const data = await queryTagData({
                         server: dbServer,
                         table: dbTable,
-                        names: group.tagNames,
+                        names: toQueryNames(group.tagNames),
+                        jsonKeys: toProjectionKeys(group.tagNames),
                         valueColumn,
                         stringValueColumn,
                         direction: backwardScan ? "latest" : "oldest",
                         from: queryFrom,
                         to: queryTo,
-                        pageSize: getDataViewerRawPageSize(group.tagNames, rawRowsPerTag),
+                        pageSize: getDataViewerRawPageSize(toQueryNames(group.tagNames), rawRowsPerTag),
                         boundedRange: true,
                     });
                     if (splitRangeRequestRef.current !== splitRequestId) return;
-                    nextRows = data?.rows || [];
+                    nextRows = { rows: data?.rows || [], jsonKeys: data?.jsonKeys || [] };
                     nextResolvedRange = { from: queryFrom, to: queryTo };
                 } catch (e) {
                     if (splitRangeRequestRef.current !== splitRequestId) return;
@@ -1754,13 +2022,14 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
                 const data = await queryTagData({
                     server: dbServer,
                     table: dbTable,
-                    names: group.tagNames,
+                    names: toQueryNames(group.tagNames),
+                    jsonKeys: toProjectionKeys(group.tagNames),
                     valueColumn,
                     stringValueColumn,
                     direction: backwardScan ? "latest" : "oldest",
                     from: queryFrom,
                     to: queryTo,
-                    pageSize: getDataViewerRawPageSize(group.tagNames, rawRowsPerTag),
+                    pageSize: getDataViewerRawPageSize(toQueryNames(group.tagNames), rawRowsPerTag),
                     boundedRange: true,
                 });
                 if (splitRangeRequestRef.current !== splitRequestId) return;
@@ -1770,7 +2039,7 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
                 }));
                 setSplitChartRows((current) => ({
                     ...current,
-                    [group.id]: data?.rows || [],
+                    [group.id]: { rows: data?.rows || [], jsonKeys: data?.jsonKeys || [] },
                 }));
             } catch (e) {
                 if (splitRangeRequestRef.current !== splitRequestId) return;
@@ -1797,7 +2066,7 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
             const data = await queryTagDataTotal({
                 server: dbServer,
                 table: dbTable,
-                names: selectedTagNames,
+                names: toQueryNames(selectedTagNames),
                 valueColumn,
                 stringValueColumn,
                 direction: backwardScan ? "latest" : "oldest",
@@ -1840,6 +2109,10 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
             nameColumn: tagAnalyzerKeyColumns.nameColumn,
             timeColumn: tagAnalyzerKeyColumns.timeColumn,
             stringOnly: Boolean(config.stringOnly),
+            // For a JSON collector the selected names are payload keys, not tags; the builder turns
+            // them into one series per key under the collector's own tag name.
+            jsonValueColumn,
+            collectorName: collectorTagName,
         });
         if (!built.ok) {
             notify(built.reason || "Cannot open Tag Analyzer.", "error");
@@ -1883,7 +2156,7 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
         setSplitChartRanges(update.splitRanges);
         setResolvedSplitChartRanges(update.splitRanges);
         const splitGroupsToFetch = chartGroups.filter((group) => group.id !== "default" && update.splitRanges[group.id]);
-        setSplitChartRows(Object.fromEntries(splitGroupsToFetch.map((group) => [group.id, []])));
+        setSplitChartRows(Object.fromEntries(splitGroupsToFetch.map((group) => [group.id, { rows: [], jsonKeys: [] }])));
 
         if (!canQuery || splitGroupsToFetch.length === 0) return;
 
@@ -1893,16 +2166,17 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
                 const data = await queryTagData({
                     server: dbServer,
                     table: dbTable,
-                    names: group.tagNames,
+                    names: toQueryNames(group.tagNames),
+                    jsonKeys: toProjectionKeys(group.tagNames),
                     valueColumn,
                     stringValueColumn,
                     direction: backwardScan ? "latest" : "oldest",
                     from: groupRange.from,
                     to: groupRange.to,
-                    pageSize: getDataViewerRawPageSize(group.tagNames, rawRowsPerTag),
+                    pageSize: getDataViewerRawPageSize(toQueryNames(group.tagNames), rawRowsPerTag),
                     boundedRange: true,
                 });
-                return [group.id, data?.rows || []];
+                return [group.id, { rows: data?.rows || [], jsonKeys: data?.jsonKeys || [] }];
             }));
             if (splitRangeRequestRef.current !== splitRequestId) return;
             chartRequestRef.current += 1;
@@ -1975,17 +2249,18 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
             const data = await queryTagData({
                 server: dbServer,
                 table: dbTable,
-                names: group.tagNames,
+                names: toQueryNames(group.tagNames),
+                jsonKeys: toProjectionKeys(group.tagNames),
                 valueColumn,
                 stringValueColumn,
                 direction: backwardScan ? "latest" : "oldest",
                 from: update.navigatorRange.from,
                 to: update.navigatorRange.to,
-                pageSize: getDataViewerRawPageSize(group.tagNames, rawRowsPerTag),
+                pageSize: getDataViewerRawPageSize(toQueryNames(group.tagNames), rawRowsPerTag),
                 boundedRange: true,
             });
             if (splitRangeRequestRef.current !== splitRequestId) return;
-            const nextRows = data?.rows || [];
+            const nextRows = { rows: data?.rows || [], jsonKeys: data?.jsonKeys || [] };
             chartRequestRef.current += 1;
             setSplitChartRows((current) => ({
                 ...current,
@@ -2059,60 +2334,17 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
                                     type="text"
                                     value={tagFilter}
                                     onChange={(e) => setTagFilter(e.target.value)}
-                                    placeholder="Filter tags..."
+                                    placeholder={jsonValueColumn ? "Filter keys..." : "Filter tags..."}
                                     className="w-full"
                                     disabled={assetHierarchyPending}
                                 />
                             </div>
                             {tagError && <div className="error-box">{tagError}</div>}
                             <div className="data-viewer-tag-list">
-                                {!assetHierarchyPending && visibleTagRows.map((row) => {
-                                    if (row.type === "folder") {
-                                        const collapsed = collapsedTagFolders.has(row.key);
-                                        return (
-                                            // The whole row toggles, not just the chevron — the label is
-                                            // the bigger target and reads as part of the same control.
-                                            <button
-                                                key={row.key}
-                                                type="button"
-                                                className="node-tree-row node-tree-row-folder"
-                                                style={{ "--tree-indent": `${row.depth * 16}px` }}
-                                                onClick={() => toggleTagFolder(row.key)}
-                                                aria-expanded={!collapsed}
-                                                aria-label={`${row.label} ${collapsed ? "expand" : "collapse"}`}
-                                            >
-                                                <span className="node-tree-toggle">
-                                                    <Icon name={collapsed ? "chevron_right" : "expand_more"} className="icon-sm" />
-                                                </span>
-                                                <span className="node-tree-label truncate">{row.label}</span>
-                                            </button>
-                                        );
-                                    }
-                                    const checked = selectedTagNames.includes(row.tag.name);
-                                    return (
-                                        <label
-                                            key={row.key}
-                                            className={`data-viewer-tag-row ${checked ? "is-active" : ""}`}
-                                            style={{ "--tree-indent": `${row.depth * 16}px` }}
-                                            title={row.tag.nodeId || row.tag.name}
-                                        >
-                                            <span className="node-tree-toggle">
-                                                <input
-                                                    type="checkbox"
-                                                    checked={checked}
-                                                    onChange={() => handleTagSelectionChange(row.tag.name)}
-                                                    aria-label={`${row.tag.name} select`}
-                                                />
-                                            </span>
-                                            <span className="node-tree-label truncate">{row.label}</span>
-                                            {row.derived && <span className="badge badge-primary badge-xs shrink-0">derived</span>}
-                                            {row.tag.dataType && <span className="badge badge-success">{row.tag.dataType}</span>}
-                                        </label>
-                                    );
-                                })}
+                                {!assetHierarchyPending && renderTagNodes(buildTagRowTree(visibleTagRows))}
                                 {(tagsLoading || assetHierarchyPending) && <div className="empty-state">Loading tags...</div>}
                                 {!tagsLoading && !assetHierarchyPending && visibleTagRows.length === 0 && <div className="empty-state">No tags</div>}
-                            </div>
+                                </div>
                         </aside>
 
                         <section className="form-card data-viewer-results">
@@ -2129,18 +2361,13 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
                                             <button
                                                 type="button"
                                                 aria-label="Refresh time range"
-                                                title="Re-pin the time range and reload"
+                                                title={pinnedRangeText ? `${pinnedRangeText} — re-pin and reload` : "Re-pin the time range and reload"}
                                                 className="btn btn-ghost btn-icon"
                                                 disabled={loading || endLoading}
                                                 onClick={handleRefreshRange}
                                             >
                                                 <Icon name="refresh" className="icon-sm" />
                                             </button>
-                                            {pinnedRangeText && (
-                                                <div className="data-viewer-pinned-range" title={pinnedRangeText}>
-                                                    {pinnedRangeText}
-                                                </div>
-                                            )}
                                         </div>
                                     )}
                                     <div className="data-viewer-title-actions">
@@ -2216,7 +2443,7 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
                                             {rawTableBody}
                                         </table>
                                         {loading && <div className="empty-state">Loading...</div>}
-                                        {!loading && result.rows.length === 0 && <div className="empty-state">No data</div>}
+                                        {!loading && displayRows.length === 0 && <div className="empty-state">No data</div>}
                                     </div>
                                     <ResultPagination page={resultPage} pageSize={rawPageSize} rowCount={result.rows.length} loading={loading} endLoading={endLoading} forceNextPage={Boolean(rawPageRequest?.boundedRange)} rowsPerTag={rawRowsPerTag} onRowsPerTagChange={handleRowsPerTagChange} onPage={moveRawPage} onEndPage={handleEndPage} />
                                 </div>
@@ -2292,10 +2519,15 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
                                                             </button>
                                                             {chartMenuOpen && (
                                                                 <div className="data-viewer-chart-menu" role="menu">
+                                                                    {/* neo-web rejects the whole payload past its tag limit, so the reason is
+                                                                        shown before the trip rather than as a failure afterwards. */}
                                                                     <button
                                                                         type="button"
                                                                         className="data-viewer-chart-menu-item"
                                                                         role="menuitem"
+                                                                        title={(group.tagNames || []).length > TAG_ANALYZER_MAX_TAGS
+                                                                            ? `Tag Analyzer supports up to ${TAG_ANALYZER_MAX_TAGS} ${jsonValueColumn ? "keys" : "tags"} — ${(group.tagNames || []).length} selected.`
+                                                                            : undefined}
                                                                         onClick={() => {
                                                                             setOpenChartMenuId(null);
                                                                             handleOpenTagAnalyzer(group, chartData);
@@ -2396,6 +2628,19 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
                         setTimeZone(next.timeZone);
                         setFormatOpen(false);
                     }}
+                />
+            )}
+
+            {detailIndex >= 0 && displayRows[detailIndex] && (
+                <RawRowDetailModal
+                    rows={displayRows}
+                    index={detailIndex}
+                    onIndexChange={setDetailIndex}
+                    columns={rawColumns}
+                    columnTypes={rawColumnTypes}
+                    tableName={dbTable}
+                    total={result.total || displayRows.length}
+                    onClose={() => setDetailIndex(-1)}
                 />
             )}
         </div>

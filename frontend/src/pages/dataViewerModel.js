@@ -119,6 +119,52 @@ export function resolveTagAnalyzerKeyColumns(columns) {
     };
 }
 
+// neo-web rejects the WHOLE payload when it carries more than this many tags — it does not
+// truncate — so the viewer has to stop before sending. (tagAnalyzer PANEL_TAG_LIMIT)
+export const TAG_ANALYZER_MAX_TAGS = 12;
+// neo-web 의 Tag Analyzer 브리지 어댑터가 받는 모든 텍스트 필드를 이 길이에서 말없이 자른다
+// (neo-web src/components/tagAnalyzer/integration/adapters.ts 의 MAX_TEXT_LENGTH — tagName,
+// jsonKey, table, alias 가 모두 optionalText/requiredText 를 지난다). 잘린 이름이나 경로는 다른
+// 태그를 가리키므로 자르는 대신 보내지 않는다.
+//
+// 이 제한은 여기에만 있다. 저장·조회는 영향을 받지 않는다 — Machbase 는 NAME 컬럼을
+// VARCHAR(1000) 으로도 만들 수 있고 300자 태그가 정상 저장·조회되는 것을 실측으로 확인했다.
+// 그래서 이름을 만드는 시점(tagName.js)이 아니라 넘기는 시점에서 본다.
+const TAG_ANALYZER_MAX_TEXT = 256;
+
+/**
+ * Wraps a payload key as a Machbase json path for neo-web's Tag Analyzer.
+ *
+ * Bracket form is required, not cosmetic. Verified against a live Machbase with a payload holding
+ * BOTH a literal dotted key and a nested object:
+ *     JSON_EXTRACT('{"a.b":11,"a":{"b":22}}', '$[a.b]') -> 11   (literal key)
+ *     JSON_EXTRACT('{"a.b":11,"a":{"b":22}}', '$.a.b')  -> 22   (nested traversal)
+ * OPC UA node names routinely contain dots (Plant1.Line1.Temperature), so the dot form would send
+ * neo-web looking for a nested path that does not exist and the series would come back silently
+ * empty. 이건 핸드오프 전용 경로다 — Data Viewer 의 자체 조회는 handler.js 의 tagDataJsonPath 가
+ * 서버측에서 만들고, `]` 를 담을 수 있는 따옴표 형태($["key"])를 쓴다. neo-web 은 그 형태를 못
+ * 읽으므로 둘은 의도적으로 다르다. 아래 대괄호 검사 참고.
+ *
+ * @param {string} key
+ * @returns {{ ok: true, path: string } | { ok: false, reason: string }}
+ */
+export function toTagAnalyzerJsonKey(key) {
+    const name = String(key ?? "").trim();
+    if (!name) return { ok: false, reason: "A payload key is required." };
+    // Machbase 자체는 따옴표 형태($["a]b"])로 `]` 를 담을 수 있고 Data Viewer 의 자체 조회도
+    // 그 형태를 쓴다. neo-web 은 못 받는다 — dashboardJsonValue.ts 의 normalizeBracketPath 가
+    // /\[([^\]]+)\]/g 로 경로를 다시 파싱해서 첫 대괄호에서 키가 잘리고, 시리즈가 엉뚱한 곳을
+    // 가리키게 된다. 이 제약은 DB 가 아니라 받는 쪽의 것이다.
+    if (name.includes("]")) {
+        return { ok: false, reason: `Payload key '${name}' contains ']', which Tag Analyzer cannot address.` };
+    }
+    const path = `[${name}]`;
+    if (path.length > TAG_ANALYZER_MAX_TEXT) {
+        return { ok: false, reason: `Payload key '${name}' is too long for Tag Analyzer (max ${TAG_ANALYZER_MAX_TEXT - 2} characters).` };
+    }
+    return { ok: true, path };
+}
+
 export function buildNeoWebTagAnalyzerMessage({
     appName = NEO_WEB_TAG_ANALYZER_APP_NAME,
     title = "OPC UA Data Viewer",
@@ -129,6 +175,8 @@ export function buildNeoWebTagAnalyzerMessage({
     nameColumn = "NAME",
     timeColumn = "TIME",
     stringOnly = false,
+    jsonValueColumn = false,
+    collectorName = "",
 } = {}) {
     const tableName = String(table || "").trim();
     if (!tableName) return { ok: false, reason: "Database table is required." };
@@ -139,17 +187,49 @@ export function buildNeoWebTagAnalyzerMessage({
     const time = String(timeColumn || "TIME").trim();
     if (!value || !name || !time) return { ok: false, reason: "Tag Analyzer column mapping is incomplete." };
 
+    // A JSON collector stores every cycle under one tag, so the series differ only by json path.
+    // Deduping by tagName the way a scalar table does would collapse them all into one.
+    const collector = String(collectorName || "").trim();
+    if (jsonValueColumn && !collector) {
+        return { ok: false, reason: "Tag Analyzer needs the collector name for a JSON value column." };
+    }
+
     const seen = new Set();
     const tags = [];
     for (const rawName of tagNames || []) {
-        const tagName = String(rawName || "").trim();
-        if (!tagName || seen.has(tagName)) continue;
-        seen.add(tagName);
+        const entryName = String(rawName || "").trim();
+        if (!entryName || seen.has(entryName)) continue;
+        seen.add(entryName);
+
+        let jsonKey = "";
+        let alias = "";
+        if (jsonValueColumn) {
+            // The selection identifies a (record, key) pair, so the record has to come off before the
+            // key is turned into a json path — wrapping the whole pair asks for a key that does not
+            // exist and the series comes back silently empty.
+            const { keys } = splitPayloadKeySelection([entryName], [collector]);
+            const payloadKey = keys[0] || entryName;
+            const built = toTagAnalyzerJsonKey(payloadKey);
+            if (!built.ok) return { ok: false, reason: built.reason };
+            jsonKey = built.path;
+            alias = payloadKey;
+        }
+
+        // tagName 도 어댑터의 절단 대상이다. jsonKey 는 toTagAnalyzerJsonKey 가 이미 보지만
+        // 이름 쪽은 여기서만 볼 수 있다 — 잘린 이름은 다른 태그를 조회한다.
+        const outboundTagName = jsonValueColumn ? collector : entryName;
+        if (outboundTagName.length > TAG_ANALYZER_MAX_TEXT) {
+            return {
+                ok: false,
+                reason: `Tag '${outboundTagName.slice(0, 24)}…' is too long for Tag Analyzer (max ${TAG_ANALYZER_MAX_TEXT} characters).`,
+            };
+        }
+
         tags.push({
-            tagName,
+            tagName: outboundTagName,
             table: tableName,
             calculationMode: "avg",
-            alias: "",
+            alias,
             weight: 1,
             colName: {
                 name,
@@ -157,12 +237,18 @@ export function buildNeoWebTagAnalyzerMessage({
                 value,
                 timeType: TAG_ANALYZER_DATETIME_COLUMN_TYPE,
                 timeBaseTime: true,
-                jsonKey: "",
+                jsonKey,
             },
         });
     }
 
     if (tags.length === 0) return { ok: false, reason: "Cannot open Tag Analyzer because there is no tag." };
+    if (tags.length > TAG_ANALYZER_MAX_TAGS) {
+        return {
+            ok: false,
+            reason: `Tag Analyzer supports up to ${TAG_ANALYZER_MAX_TAGS} ${jsonValueColumn ? "keys" : "tags"} — ${tags.length} selected.`,
+        };
+    }
 
     const normalizedRange = buildNeoWebTagAnalyzerRange(range);
     return {
@@ -258,6 +344,22 @@ export function buildRawRowNameColors(rows = []) {
 
 // Measured for the raw table's fonts: D2Coding 14px cells, bold 14px sans headers.
 const RAW_MONO_CHAR_WIDTH = 8.401;
+// 한글·전각 문장부호는 모노스페이스에서도 두 칸을 차지한다. 글자 수로만 재면 실제 렌더 폭의
+// 절반으로 잡혀서, 폭주 값만 막으려던 RAW_COLUMN_MAX_WIDTH 에 닿기 한참 전에 평범한 이름이
+// 잘린다. 범위는 유니코드 East Asian Wide/Fullwidth 구간이다.
+const WIDE_CHAR = /[\u1100-\u115F\u2E80-\uA4CF\uAC00-\uD7A3\uF900-\uFAFF\uFE30-\uFE6F\uFF00-\uFF60\uFFE0-\uFFE6]/;
+
+/**
+ * 모노스페이스 기준 표시 칸 수. 전각 문자는 2칸으로 센다.
+ *
+ * @param {string} value
+ * @returns {number}
+ */
+export function monoDisplayWidth(value) {
+    let cells = 0;
+    for (const ch of String(value ?? "")) cells += WIDE_CHAR.test(ch) ? 2 : 1;
+    return cells;
+}
 const RAW_HEADER_CHAR_WIDTH = 7;
 // .data-viewer-raw-table td { padding: 0 16px }
 const RAW_CELL_PADDING = 32;
@@ -284,10 +386,10 @@ export function buildRawColumnWidths(rows = [], columns = [], options = {}) {
         let chars = 0;
         if (column.key === "time") {
             // Timestamps render at a fixed width, so one formatted sample stands for all rows.
-            chars = String(timeSample).length;
+            chars = monoDisplayWidth(timeSample);
         } else {
             for (const row of safeRows) {
-                const length = String(row?.[column.key] ?? "").length;
+                const length = monoDisplayWidth(row?.[column.key]);
                 if (length > chars) chars = length;
             }
         }
@@ -667,12 +769,6 @@ export function buildDataViewerGlobalTimeUpdate({
 // Default query window. Leaving the range empty means there is no bounded window to query, so pagination has no fixed basis either.
 export const DEFAULT_DATA_VIEWER_TIME_RANGE = { from: "now-1h", to: "now" };
 
-// The Data Viewer renders a JSON value column as a raw payload string: the chart cannot plot it,
-// the grid cannot size it, and none of the numeric paths apply. Until that is handled properly
-// the viewer is blocked for these collectors rather than showing something misleading.
-export const JSON_VALUE_COLUMN_BLOCK_REASON =
-    "This collector stores values in a JSON column, which the Data Viewer cannot display yet.";
-
 /**
  * Whether the collector's value column is a JSON column.
  *
@@ -818,10 +914,19 @@ export function buildTagRows(nodes = []) {
             }
             parent = folder;
         }
+        // 라벨은 보통 경로의 마지막 조각이다 — 폴더가 앞을 설명하므로 짧게 읽힌다. 다만 이름을
+        // 바꾼 노드까지 그러면 화면(노드 이름)과 DB(태그 이름)가 달라 어느 행인지 알 수 없다.
+        // 노드를 담을 때 붙는 기본 이름은 경로를 "_" 로 이은 값이므로, 그와 다르면 바뀐 것이다.
+        const leaf = path[path.length - 1];
+        // tagName.js 의 normalizeTagName 과 같은 규칙(trim). 이 모델은 컴포넌트를 import 하지 않는다.
+        const defaultName = path.map((segment) => String(segment ?? "").trim()).join("_");
+        const renamed = Boolean(node.name) && node.name !== defaultName;
         parent.children.push({
             type: "tag",
             key: `tag:${node.name || path.join("/")}`,
-            label: path[path.length - 1],
+            label: renamed ? node.name : leaf,
+            // 바뀐 이름을 보여줄 때만 원래 노드가 무엇이었는지 흐리게 덧붙인다.
+            secondaryLabel: renamed ? leaf : "",
             tag: node,
         });
     }
@@ -834,7 +939,10 @@ export function buildTagRows(nodes = []) {
                 walk(entry.children, depth + 1, [...ancestorKeys, entry.key]);
                 continue;
             }
-            rows.push({ type: "tag", key: entry.key, ancestorKeys, depth, label: entry.label, tag: entry.tag });
+            rows.push({
+                type: "tag", key: entry.key, ancestorKeys, depth,
+                label: entry.label, secondaryLabel: entry.secondaryLabel || "", tag: entry.tag,
+            });
         }
     };
     walk(root.children, 0, []);
@@ -959,6 +1067,207 @@ export function getVisibleTagRows(rows = [], collapsedKeys = new Set()) {
     return rows.filter((row) => !(row.ancestorKeys || []).some((key) => collapsed.has(key)));
 }
 
+// A payload key only means something together with the record it sits in: the same key name can
+// exist under several NAME values in one table. One readable string carries both, and it is used as
+// the identity everywhere — selection, chart series, grid Name cell — so nothing has to translate
+// between an internal id and a label.
+export const PAYLOAD_KEY_SEP = " / ";
+
+export function encodePayloadKeyId(record, key) {
+    return `${String(record ?? "").trim()}${PAYLOAD_KEY_SEP}${String(key ?? "").trim()}`;
+}
+
+/**
+ * The distinct records and keys a selection spans — exactly what the query needs.
+ *
+ * The record is recovered by matching against the records the table actually has rather than by
+ * splitting on the separator, because a payload key is free to contain it too.
+ */
+export function splitPayloadKeySelection(selectedIds = [], knownRecords = []) {
+    const records = [];
+    const keys = [];
+    const seenRecord = new Set();
+    const seenKey = new Set();
+    // Longest first, so a record named "a" cannot claim a label belonging to "a / b".
+    const candidates = (Array.isArray(knownRecords) ? knownRecords : [])
+        .map((name) => String(name ?? "").trim())
+        .filter(Boolean)
+        .sort((a, b) => b.length - a.length);
+
+    for (const id of Array.isArray(selectedIds) ? selectedIds : []) {
+        const text = String(id ?? "");
+        const record = candidates.find((name) => text.startsWith(name + PAYLOAD_KEY_SEP)) || "";
+        const key = record ? text.slice(record.length + PAYLOAD_KEY_SEP.length).trim() : text.trim();
+        if (record && !seenRecord.has(record)) { seenRecord.add(record); records.push(record); }
+        if (key && !seenKey.has(key)) { seenKey.add(key); keys.push(key); }
+    }
+    return { records, keys };
+}
+
+/**
+ * Long-format rows from a server-projected response.
+ *
+ * The backend extracted each key with the json operator and returned the values positionally under
+ * `values`, in jsonKeys order — no payload document is sent and the client parses nothing. Each row
+ * still carries its record in `name`, which is what lets several records be charted at once without
+ * their shared key names colliding.
+ *
+ * Only the selected pairs are emitted: the query asks for the cross product of the selected records
+ * and keys, which is a superset of what the user actually ticked.
+ */
+export function expandProjectedRows(rows = [], jsonKeys = [], selectedIds = null) {
+    const keys = (Array.isArray(jsonKeys) ? jsonKeys : [])
+        .map((key) => String(key ?? "").trim())
+        .filter(Boolean);
+    if (keys.length === 0) return [];
+
+    const wanted = Array.isArray(selectedIds) && selectedIds.length > 0 ? new Set(selectedIds) : null;
+
+    const out = [];
+    for (const row of Array.isArray(rows) ? rows : []) {
+        // `values` is the transport, not a column. The raw grid derives its columns from the row's
+        // own keys, so leaving it in adds a "Values" column holding the whole projection array.
+        const { values: projected, ...rest } = row || {};
+        const values = Array.isArray(projected) ? projected : [];
+        const record = String(rest.name ?? "").trim();
+        keys.forEach((key, index) => {
+            const id = encodePayloadKeyId(record, key);
+            if (wanted && !wanted.has(id)) return;
+            out.push({ ...rest, name: id, value: index < values.length ? values[index] : null });
+        });
+    }
+    return out;
+}
+
+/**
+ * 보이는 행을 소속 record 별로 묶는다. record 마다 키 목록을 따로 스크롤시키려던 함수다.
+ *
+ * ⚠️ 현재 호출부가 없다. 패널은 visibleTagRows 를 buildTagRowTree 로 중첩해 렌더하므로 이 결과를
+ * 쓰지 않는다. 삭제하거나, record 별 스크롤을 다시 도입할 때 연결해야 한다.
+ *
+ * record 가 없는 행(스칼라 collector 의 트리)은 폴더 없는 선두 그룹 하나로 나온다.
+ *
+ * @param {Array<{type?: string, record?: string}>} rows
+ * @returns {Array<{ folder: object|null, keys: object[] }>}
+ */
+export function groupTagRowsByRecord(rows = []) {
+    const groups = [];
+    let current = null;
+    for (const row of Array.isArray(rows) ? rows : []) {
+        if (row?.type === "folder" && row?.record) {
+            current = { folder: row, keys: [] };
+            groups.push(current);
+            continue;
+        }
+        if (!current) {
+            current = { folder: null, keys: [] };
+            groups.push(current);
+        }
+        current.keys.push(row);
+    }
+    return groups;
+}
+
+/**
+ * Nests the flat visible rows back into the tree their depth describes.
+ *
+ * The rows arrive flat because collapse and filtering are easier to reason about that way, but a
+ * flat list cannot produce stacked sticky headers: a sticky element is bounded by its own parent, so
+ * a folder only slides away when its subtree does. Nesting restores that boundary, and each header
+ * pins at its depth so the ancestors stack up and read as a path while scrolling a deep subtree.
+ *
+ * @param {Array<{type?: string, depth?: number}>} rows in tree order
+ * @returns {Array<{row: object, children: Array}>}
+ */
+export function buildTagRowTree(rows = []) {
+    const roots = [];
+    const openFolders = [];
+
+    for (const row of Array.isArray(rows) ? rows : []) {
+        const depth = Number(row?.depth) || 0;
+        while (openFolders.length > depth) openFolders.pop();
+
+        const node = { row, children: [] };
+        const parent = openFolders[openFolders.length - 1];
+        (parent ? parent.children : roots).push(node);
+
+        if (row?.type === "folder") openFolders.push(node);
+    }
+
+    return roots;
+}
+
+// A JSON collector stores one row per cycle under the COLLECTOR's name, with the node values inside
+// the payload. So the tag the table holds and the things a user wants to plot sit at different
+// levels, and the panel shows both: the collector as the parent row, its payload keys beneath it.
+// Selecting a child means "project this key", never "filter NAME by it".
+/**
+ * The left panel's rows for a JSON collector: its own record, with the payload keys beneath it.
+ *
+ * Only this collector's record is listed. The table may well hold others — a record this job wrote
+ * under a previous name, or one written by a different job — but the keys can only come from THIS
+ * collector's config, so listing another record would put this job's key list under someone else's
+ * data. That is not a display quirk: for a record written by a different job the keys would simply
+ * be wrong. A viewer opened on job A shows job A's stream.
+ *
+ * Two levels, deliberately: record then key. The OPC UA node path is not drawn even though the
+ * config carries it — the payload is a flat map, so a path would assert a structure the data does
+ * not have, and the path's one real job elsewhere (telling apart two nodes with the same short name)
+ * cannot arise here, because such nodes collapse onto one payload key before the viewer sees them.
+ * The nodeId travels on the row instead, as provenance rather than as structure.
+ *
+ * Keys are deduplicated by name for that same reason: two configured nodes sharing a name are one
+ * key, and a row each would put two rows on one identity.
+ */
+export function buildPayloadKeyRows({
+    collectorName = "",
+    configuredNodes = [],
+    derivedTags = [],
+} = {}) {
+    const record = String(collectorName ?? "").trim() || "-";
+    const parentKey = `payload:${record}`;
+    const rows = [{
+        type: "folder",
+        key: parentKey,
+        ancestorKeys: [],
+        depth: 0,
+        label: record,
+        record,
+    }];
+
+    const seenKey = new Set();
+    const addKey = (name, extra) => {
+        const key = String(name ?? "").trim();
+        if (!key || seenKey.has(key)) return;
+        seenKey.add(key);
+        rows.push({
+            type: "tag",
+            key: `key:${record}:${key}`,
+            ancestorKeys: [parentKey],
+            depth: 1,
+            label: key,
+            tag: {
+                name: encodePayloadKeyId(record, key),
+                ...(extra?.dataType ? { dataType: extra.dataType } : {}),
+                ...(extra?.nodeId ? { nodeId: extra.nodeId } : {}),
+            },
+            ...(extra?.derived ? { derived: true } : {}),
+            record,
+        });
+    };
+
+    for (const node of Array.isArray(configuredNodes) ? configuredNodes : []) {
+        if (!node) continue;
+        addKey(node.name, { dataType: node.dataType, nodeId: node.nodeId });
+    }
+    for (const item of Array.isArray(derivedTags) ? derivedTags : []) {
+        addKey(typeof item === "string" ? item : item?.name, { derived: true });
+    }
+
+    return rows;
+}
+
+
 // Derived tags live in `config.derivedTags`, never in `config.opcua.nodes`, so buildTagRows
 // never sees them. They also have no OPC UA tree path, so they cannot sit in the node tree —
 // they are appended as flat rows below it, each marked so the list can badge them.
@@ -991,10 +1300,25 @@ export function buildDerivedTagRows(derivedTags = [], takenNames = []) {
     return rows;
 }
 
-export function resolveTagNodes(configuredNodes = [], tableTags = []) {
-    const nodes = Array.isArray(configuredNodes)
-        ? configuredNodes.filter((node) => node && (node.name || node.nodeId))
-        : [];
+/**
+ * 스칼라 테이블의 태그 이름. 태그 패널의 행이자 조회 IN 필터에 들어가는 값이다.
+ *
+ * 보통은 collector 에 설정된 노드가 곧 태그 이름이라 그쪽을 우선한다. 테이블 메타데이터에는 없는
+ * nodeId 와 dataType 을 갖고 있기 때문이다. JSON value column 은 그 등식을 깬다 — collector 가 한
+ * 사이클을 collector 이름으로 키잉된 한 행에 합치고, 노드 이름은 payload 안으로 들어간다
+ * (cgi-bin/src/collector.js). 그 상태로 노드를 제시하면 어느 행과도 안 맞아 수집이 없었던 것처럼
+ * 빈 결과가 나온다. 그래서 JSON 일 때는 `payloadKeyedNodes` 를 넘겨 설정 노드를 태그 이름으로
+ * 내놓지 않게 한다. JSON 패널 자체는 buildPayloadKeyRows 가 따로 만들고, 이 함수의 결과는 쓰이지
+ * 않는다.
+ *
+ * @param {Array<{name?: string, nodeId?: string}>} configuredNodes
+ * @param {Array<{name?: string, dataType?: string}|string>} tableTags
+ * @param {{ payloadKeyedNodes?: boolean }} [options]
+ */
+export function resolveTagNodes(configuredNodes = [], tableTags = [], options = {}) {
+    const nodes = options.payloadKeyedNodes || !Array.isArray(configuredNodes)
+        ? []
+        : configuredNodes.filter((node) => node && (node.name || node.nodeId));
     if (nodes.length > 0) return nodes;
 
     if (!Array.isArray(tableTags)) return [];
@@ -1027,6 +1351,15 @@ function toEpochMs(value) {
     return Date.parse(text);
 }
 
+/**
+ * 차트에 쓸 y 값 하나. boolean 문자열만 1/0 으로 바꾸고 나머지는 Number 에 맡긴다.
+ *
+ * 서버는 payload 키 값을 VARCHAR 그대로 내려준다 — 저장된 문자열 "3" 과 숫자 3 을 구분할 수 없어
+ * 숫자로 강제 변환하면 그리드가 저장된 값을 보여주지 못하기 때문이다(handler.js 의 projectedValue).
+ * 그 대가로 boolean 이 "true"/"false" 문자열로 오는데, Number("true") 는 NaN 이고 아래에서 유한
+ * 숫자가 아닌 점을 버리므로 그냥 두면 boolean 키의 시리즈가 통째로 사라진다. 숫자가 필요한 곳은
+ * 차트뿐이라 변환도 여기서만 한다.
+ */
 export function buildTagChartSeries(rows = []) {
     const seriesByName = new Map();
 

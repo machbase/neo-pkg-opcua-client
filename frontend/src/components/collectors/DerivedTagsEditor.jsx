@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import Icon from '../common/Icon'
-import { koToEn } from '../../utils/korean'
 import VariablesEditor from './VariablesEditor'
 import ExpressionInput from './ExpressionInput'
 import {
@@ -11,9 +10,8 @@ import {
   EXPRESSION_LIMITS,
   validateDerivedTagLocal,
 } from './derivedTag.js'
+import { normalizeTagName } from './tagName.js'
 
-// Dots are allowed so dotted TAG names ("line1.power") can be authored — same as source nodes.
-const cleanTagName = (value) => koToEn(String(value || '')).replace(/[^a-zA-Z0-9_.]/g, '')
 
 // Deep-clone a form-shape derived tag so draft edits never mutate the saved entry.
 // Missing fields fall back to emptyDerivedTag() defaults (legacy / partial configs).
@@ -47,6 +45,8 @@ export default function DerivedTagsEditor({
   summarizedValueColumn = false,
   tableName = '',
 }) {
+  // 파생 태그 값도 JSON payload 에 들어가므로 노드 이름과 같은 문자 제약을 받는다.
+  const jsonPayloadKey = storageMode === 'json';
   const [mode, setMode] = useState('list') // 'list' | 'form'
   const [editingIndex, setEditingIndex] = useState(null) // null = add
   const [draft, setDraft] = useState(emptyDerivedTag())
@@ -61,7 +61,7 @@ export default function DerivedTagsEditor({
   )
 
   const local = useMemo(
-    () => validateDerivedTagLocal(draft, { nodeNames, derivedNames, summarizedValueColumn }),
+    () => validateDerivedTagLocal(draft, { nodeNames, derivedNames, summarizedValueColumn, jsonPayloadKey }),
     [draft, nodeNames, derivedNames, summarizedValueColumn]
   )
 
@@ -131,7 +131,7 @@ export default function DerivedTagsEditor({
 
   const submit = () => {
     if (!canSave) return
-    const next = { ...draft, name: cleanTagName(draft.name) }
+    const next = { ...draft, name: normalizeTagName(draft.name) }
     if (editingIndex === null) onChange([...derivedTags, next])
     else onChange(derivedTags.map((c, i) => (i === editingIndex ? next : c)))
     closeForm()
@@ -242,7 +242,7 @@ export default function DerivedTagsEditor({
                 <input
                   type="text"
                   value={draft.name}
-                  onChange={(e) => patch({ name: cleanTagName(e.target.value) })}
+                  onChange={(e) => patch({ name: e.target.value })}
                   className={`w-full ${touched && local.errors.name ? '!border-error' : ''}`}
                   style={{ maxWidth: 340 }}
                   placeholder="e.g. line1.power"

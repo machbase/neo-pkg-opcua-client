@@ -13,6 +13,7 @@ import {
     applyNumbering,
     applyTrim,
 } from "./renameRules.js";
+import { normalizeTagName } from "./tagName.js";
 
 const PATHS = [
     ["Simulation", "Examples", "Functions", "Tank_Pressure_Sensor_01"],
@@ -105,4 +106,30 @@ test("maskTrimChained never removes the last kept segment", () => {
     const m = maskTrimChained(path, null, { fromStart: 1, countStart: 5, fromEnd: 1, countEnd: 5 });
     assert.equal(m[m.length - 1], false);
     assert.equal(nameFromMask(path, m), "B");
+});
+
+// Segments are trimmed and joined; characters are left alone. tagName.js explains why the old
+// alphanumeric rewriting had no basis, so the point here is that nothing is rewritten.
+test("nameFromMask keeps segment characters as the server gave them", () => {
+    assert.equal(
+        nameFromMask(["Simulation Examples", "Functions", "Random8"], [false, false, false]),
+        "Simulation Examples_Functions_Random8"
+    );
+    assert.equal(nameFromMask(["Plant1.Line1", "Temp"], [false, false]), "Plant1.Line1_Temp");
+    assert.equal(nameFromMask(["Tank_Pressure_01", "Raw"], [false, false]), "Tank_Pressure_01_Raw");
+});
+
+test("nameFromMask trims each segment and drops the empty ones", () => {
+    // An empty segment would otherwise leave a bare separator behind.
+    assert.equal(nameFromMask(["Area", "", "Pump"], [false, false, false]), "Area_Pump");
+    assert.equal(nameFromMask(["  Area  ", " Pump "], [false, false]), "Area_Pump");
+    assert.equal(nameFromMask(["Area 1", " ", "Pump"], [false, false, false]), "Area 1_Pump");
+});
+
+test("nameFromMask matches what picking the same node produces", () => {
+    const path = ["Simulation Examples", "Functions", "Random8"];
+    assert.equal(
+        nameFromMask(path, [false, false, false]),
+        path.map(normalizeTagName).join("_")
+    );
 });

@@ -136,12 +136,20 @@ test("validateDerivedTagLocal accepts a dotted tag name", () => {
     assert.deepEqual(r.errors, {});
 });
 
-test("validateDerivedTagLocal rejects a name that starts with a dot or a digit", () => {
-    for (const name of [".power", "1power"]) {
+// A derived tag name lands in the same NAME column as a source tag, and the backend puts no
+// character rule on either -- verified against a live Machbase. Only what the request format
+// cannot carry is refused, which is the comma.
+test("validateDerivedTagLocal accepts names the database accepts", () => {
+    for (const name of [".power", "1power", "line1.power", "Line-1", "펌프_유량"]) {
         const r = validateDerivedTagLocal({ ...OK_DT, name }, OK_CTX);
-        assert.equal(r.ok, false);
-        assert.deepEqual(Object.keys(r.errors), ["name"]);
+        assert.equal(r.ok, true, `${name} should pass`);
     }
+});
+
+test("validateDerivedTagLocal rejects a name holding the request separator", () => {
+    const r = validateDerivedTagLocal({ ...OK_DT, name: "a,b" }, OK_CTX);
+    assert.equal(r.ok, false);
+    assert.deepEqual(Object.keys(r.errors), ["name"]);
 });
 
 test("validateDerivedTagLocal flags a name that conflicts with a source node", () => {
@@ -190,4 +198,20 @@ test("validateDerivedTagLocal rejects onError:null against a SUMMARIZED value co
     );
     assert.equal(r.ok, false);
     assert.deepEqual(Object.keys(r.errors), ["errorValue"]);
+});
+
+// JSON collector 는 파생 태그 값도 payload 에 넣으므로(collector.js 의 payload[derived.name])
+// 그 이름이 json 경로에 실린다. 노드 이름과 같은 문자 제약을 받아야 한다.
+test("validateDerivedTagLocal rejects a json-unsafe name only for a JSON collector", () => {
+    const dt = { ...OK_DT, name: 'say "hi"' };
+    assert.equal(validateDerivedTagLocal(dt, OK_CTX).ok, true, "스칼라 컬럼에서는 문제없다");
+    const json = validateDerivedTagLocal(dt, { ...OK_CTX, jsonPayloadKey: true });
+    assert.equal(json.ok, false);
+    assert.deepEqual(Object.keys(json.errors), ["name"]);
+});
+
+test("validateDerivedTagLocal still accepts ] in a JSON collector", () => {
+    // 따옴표 형태 json 경로가 ] 를 담을 수 있으므로 거부 대상이 아니다.
+    const dt = { ...OK_DT, name: "a]b" };
+    assert.equal(validateDerivedTagLocal(dt, { ...OK_CTX, jsonPayloadKey: true }).ok, true);
 });

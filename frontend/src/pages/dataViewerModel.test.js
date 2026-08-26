@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+    monoDisplayWidth,
     DATA_VIEWER_BACK_PATH,
     buildAssetRows,
     buildDataViewerChartXAxis,
@@ -22,6 +23,8 @@ import {
     buildDataViewerWheelZoomRange,
     buildDataViewerZoomControlRange,
     buildNeoWebTagAnalyzerMessage,
+    toTagAnalyzerJsonKey,
+    TAG_ANALYZER_MAX_TAGS,
     buildNeoWebTagAnalyzerRange,
     buildTagRows,
     buildTagChartSeries,
@@ -47,6 +50,7 @@ import {
     getResultHeading,
     getScanDirectionLabel,
     getVisibleTagRows,
+    buildTagRowTree,
     hasDataViewerRawNextPage,
     hasExplicitDataViewerDataZoomEventRange,
     hasAssetHierarchy,
@@ -56,6 +60,10 @@ import {
     resolveTagAnalyzerKeyColumns,
     resolveTimeRangeInput,
     resolveTagNodes,
+    expandProjectedRows,
+    encodePayloadKeyId,
+    splitPayloadKeySelection,
+    buildPayloadKeyRows,
     sendNeoWebTagAnalyzerMessage,
     shouldFetchDataViewerRowsForMode,
     showsDataViewerTimeControls,
@@ -814,6 +822,363 @@ test("resolveTagNodes falls back to DB tag names when collector nodes are empty"
     ]);
 });
 
+test("resolveTagNodes prefers DB tag names over collector nodes when the payload is JSON keyed", () => {
+    // A JSON value column stores one row per cycle keyed by the collector name, so the configured
+    // node names match no row and would make the query come back empty.
+    const configuredNodes = [
+        { name: "Temperature", nodeId: "ns=1;s=Plant1.Line1.Temperature" },
+        { name: "Pressure", nodeId: "ns=1;s=Plant1.Line1.Pressure" },
+    ];
+    const tableTags = [{ name: "collector-a" }];
+
+    assert.deepEqual(
+        resolveTagNodes(configuredNodes, tableTags, { payloadKeyedNodes: true }),
+        [{ name: "collector-a" }]
+    );
+});
+
+test("resolveTagNodes keeps collector nodes when the payload is not JSON keyed", () => {
+    const configuredNodes = [{ name: "Temperature", nodeId: "ns=1;s=Plant1.Line1.Temperature" }];
+    const tableTags = [{ name: "Temperature" }, { name: "Pressure" }];
+
+    assert.deepEqual(resolveTagNodes(configuredNodes, tableTags), configuredNodes);
+    assert.deepEqual(
+        resolveTagNodes(configuredNodes, tableTags, { payloadKeyedNodes: false }),
+        configuredNodes,
+        "an explicit false behaves like the default"
+    );
+});
+
+test("resolveTagNodes still falls back to DB tag names when JSON keyed and nodes are empty", () => {
+    assert.deepEqual(
+        resolveTagNodes([], [{ name: "collector-a", dataType: "JSON" }], { payloadKeyedNodes: true }),
+        [{ name: "collector-a", dataType: "JSON" }]
+    );
+});
+
+
+
+
+
+
+
+
+
+
+test("buildPayloadKeyRows nests configured keys under the collector row", () => {
+    const rows = buildPayloadKeyRows({
+        collectorName: "collector-a",
+        configuredNodes: [
+            { name: "Plant1.Line1.Temperature", dataType: "Double" },
+            { name: "power" },
+        ],
+        derivedTags: [{ name: "derived1" }],
+    });
+
+    assert.equal(rows[0].type, "folder");
+    assert.equal(rows[0].label, "collector-a");
+    assert.equal(rows[0].depth, 0);
+
+    assert.deepEqual(rows.slice(1).map((row) => row.label), [
+        "Plant1.Line1.Temperature",
+        "power",
+        "derived1",
+    ], "config order is preserved");
+
+    assert.ok(rows.slice(1).every((row) => row.depth === 1 && row.ancestorKeys[0] === rows[0].key));
+    assert.equal(rows[1].tag.dataType, "Double");
+    assert.equal(rows[3].derived, true);
+    assert.equal(rows[1].tag.name, "collector-a / Plant1.Line1.Temperature",
+        "a dotted key survives inside the pair identity");
+});
+
+
+
+
+
+test("buildPayloadKeyRows dedupes a name that is both a node and a derived tag", () => {
+    const rows = buildPayloadKeyRows({
+        collectorName: "c",
+        configuredNodes: [{ name: "dup" }],
+        derivedTags: [{ name: "dup" }],
+    });
+
+    assert.equal(rows.filter((row) => row.type === "tag").length, 1);
+});
+
+test("buildPayloadKeyRows still renders the collector row with no keys at all", () => {
+    const rows = buildPayloadKeyRows({ collectorName: "collector-a" });
+
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].type, "folder");
+});
+
+
+
+
+
+
+
+
+test("toTagAnalyzerJsonKey wraps keys in brackets so dots stay literal", () => {
+    // Verified against a live Machbase: $[a.b] reads the literal key, $.a.b traverses nesting.
+    assert.deepEqual(toTagAnalyzerJsonKey("Plant1.Line1.Temperature"), {
+        ok: true,
+        path: "[Plant1.Line1.Temperature]",
+    });
+    assert.deepEqual(toTagAnalyzerJsonKey("  power  "), { ok: true, path: "[power]" });
+});
+
+test("toTagAnalyzerJsonKey refuses keys it cannot address", () => {
+    assert.equal(toTagAnalyzerJsonKey("").ok, false);
+    assert.equal(toTagAnalyzerJsonKey(undefined).ok, false);
+
+    const bracket = toTagAnalyzerJsonKey("we]rd");
+    assert.equal(bracket.ok, false, "a closing bracket cannot be escaped in a json path");
+    assert.match(bracket.reason, /\]/);
+
+    const long = toTagAnalyzerJsonKey("x".repeat(255));
+    assert.equal(long.ok, false, "neo-web silently truncates over 256 chars, which would repoint the path");
+});
+
+test("buildNeoWebTagAnalyzerMessage maps each payload key to its own series", () => {
+    const built = buildNeoWebTagAnalyzerMessage({
+        table: "JSONTEST",
+        // The viewer selects (record, key) pairs, which is what reaches the builder.
+        tagNames: [
+            encodePayloadKeyId("collector-a", "Plant1.Line1.Temperature"),
+            encodePayloadKeyId("collector-a", "power"),
+        ],
+        valueColumn: "PAYLOAD",
+        jsonValueColumn: true,
+        collectorName: "collector-a",
+    });
+
+    assert.equal(built.ok, true);
+    const tags = built.message.payload.tags;
+    assert.equal(tags.length, 2, "two keys must not collapse into one tag");
+    assert.deepEqual(tags.map((tag) => tag.tagName), ["collector-a", "collector-a"]);
+    assert.deepEqual(tags.map((tag) => tag.colName.jsonKey), ["[Plant1.Line1.Temperature]", "[power]"]);
+    assert.deepEqual(tags.map((tag) => tag.alias), ["Plant1.Line1.Temperature", "power"],
+        "without an alias every series would be labelled PAYLOAD -> ...");
+    assert.equal(tags[0].colName.value, "PAYLOAD");
+});
+
+test("buildNeoWebTagAnalyzerMessage strips the record before building the json path", () => {
+    // Wrapping the whole "record / key" pair asks for a key that does not exist, and the series comes
+    // back empty with no error anywhere — the one place this bridge can fail silently.
+    const built = buildNeoWebTagAnalyzerMessage({
+        table: "JSON_TEST",
+        tagNames: [encodePayloadKeyId("LINE_01", "Simulation_Examples_Functions_Random1")],
+        valueColumn: "JV",
+        jsonValueColumn: true,
+        collectorName: "LINE_01",
+    });
+
+    const tag = built.message.payload.tags[0];
+    assert.equal(tag.colName.jsonKey, "[Simulation_Examples_Functions_Random1]",
+        "the record must not appear inside the json path");
+    assert.equal(tag.tagName, "LINE_01", "the record is the tag name instead");
+    assert.equal(tag.alias, "Simulation_Examples_Functions_Random1",
+        "the legend reads as the key, not the pair");
+});
+
+test("buildNeoWebTagAnalyzerMessage keeps scalar behaviour untouched", () => {
+    const built = buildNeoWebTagAnalyzerMessage({
+        table: "TAGDATA",
+        tagNames: ["sensor.a", "sensor.b"],
+    });
+
+    assert.equal(built.ok, true);
+    const tags = built.message.payload.tags;
+    assert.deepEqual(tags.map((tag) => tag.tagName), ["sensor.a", "sensor.b"]);
+    assert.deepEqual(tags.map((tag) => tag.colName.jsonKey), ["", ""]);
+    assert.deepEqual(tags.map((tag) => tag.alias), ["", ""]);
+});
+
+test("buildNeoWebTagAnalyzerMessage refuses more keys than neo-web accepts", () => {
+    const keys = Array.from({ length: TAG_ANALYZER_MAX_TAGS + 1 }, (_, i) => `k${i}`);
+    const built = buildNeoWebTagAnalyzerMessage({
+        table: "JSONTEST",
+        tagNames: keys,
+        jsonValueColumn: true,
+        collectorName: "collector-a",
+    });
+
+    // neo-web rejects the entire payload past the limit, so sending it would just fail silently.
+    assert.equal(built.ok, false);
+    assert.match(built.reason, /up to 12 keys/);
+
+    const atLimit = buildNeoWebTagAnalyzerMessage({
+        table: "JSONTEST",
+        tagNames: keys.slice(0, TAG_ANALYZER_MAX_TAGS),
+        jsonValueColumn: true,
+        collectorName: "collector-a",
+    });
+    assert.equal(atLimit.ok, true, "exactly at the limit is fine");
+});
+
+test("buildNeoWebTagAnalyzerMessage needs the collector name and rejects unaddressable keys", () => {
+    assert.equal(buildNeoWebTagAnalyzerMessage({
+        table: "JSONTEST", tagNames: ["a"], jsonValueColumn: true, collectorName: "",
+    }).ok, false);
+
+    const bad = buildNeoWebTagAnalyzerMessage({
+        table: "JSONTEST", tagNames: ["ok", "we]rd"], jsonValueColumn: true, collectorName: "c",
+    });
+    assert.equal(bad.ok, false, "one unaddressable key fails the whole handoff rather than dropping it");
+});
+
+
+
+
+test("splitPayloadKeySelection recovers records by matching, not by splitting", () => {
+    const records = ["a", "a / b"];
+    // "a / b / k" is ambiguous when split naively; the longer record wins.
+    assert.deepEqual(
+        splitPayloadKeySelection(["a / b / k"], records),
+        { records: ["a / b"], keys: ["k"] }
+    );
+    // A key containing the separator survives too.
+    assert.deepEqual(
+        splitPayloadKeySelection(["a / x / y"], ["a"]),
+        { records: ["a"], keys: ["x / y"] }
+    );
+    assert.deepEqual(
+        splitPayloadKeySelection(["r1 / k1", "r2 / k1", "r1 / k2"], ["r1", "r2"]),
+        { records: ["r1", "r2"], keys: ["k1", "k2"] },
+        "the query asks for every selected record and key"
+    );
+    assert.deepEqual(splitPayloadKeySelection([], ["r"]), { records: [], keys: [] });
+});
+
+test("expandProjectedRows emits only the selected pairs, keyed by record and key", () => {
+    // The query returns the cross product of the selected records and keys, which is a superset.
+    const rows = [
+        { time: "t1", name: "r1", values: [1, 2] },
+        { time: "t1", name: "r2", values: [3, 4] },
+    ];
+    const selected = ["r1 / a", "r2 / b"];
+
+    assert.deepEqual(expandProjectedRows(rows, ["a", "b"], selected), [
+        { time: "t1", name: "r1 / a", value: 1 },
+        { time: "t1", name: "r2 / b", value: 4 },
+    ], "the unticked pairs r1/b and r2/a are dropped");
+
+    // The raw grid builds its columns from the row's own keys, so the transport array must not ride
+    // along or every row grows a "Values" column holding the whole projection.
+    assert.ok(
+        expandProjectedRows(rows, ["a", "b"], selected).every((row) => !("values" in row)),
+        "the projection array is consumed, not forwarded"
+    );
+});
+
+test("expandProjectedRows keeps falsy values and pads a short projection", () => {
+    const rows = [{ time: "t1", name: "r", values: [0, false, null] }];
+    const out = expandProjectedRows(rows, ["zero", "off", "nil", "missing"]);
+
+    assert.deepEqual(out.map((row) => [row.name, row.value]), [
+        ["r / zero", 0], ["r / off", false], ["r / nil", null], ["r / missing", null],
+    ]);
+    assert.deepEqual(expandProjectedRows(rows, []), [], "no keys means no rows");
+    assert.deepEqual(expandProjectedRows(undefined, ["a"]), []);
+});
+
+test("encodePayloadKeyId matches what the tree and the expander both produce", () => {
+    assert.equal(encodePayloadKeyId("rec", "key"), "rec / key");
+    assert.equal(encodePayloadKeyId("  rec  ", "  key  "), "rec / key");
+});
+
+
+
+test("buildTagRowTree nests rows so each folder bounds its own subtree", () => {
+    // A sticky header is bounded by its parent, so the nesting is what makes a folder slide away
+    // only when its subtree does.
+    const rows = [
+        { type: "folder", key: "f:a", label: "Plant1", depth: 0 },
+        { type: "folder", key: "f:a/b", label: "Line1", depth: 1 },
+        { type: "tag", key: "t:temp", label: "Temperature", depth: 2 },
+        { type: "tag", key: "t:pres", label: "Pressure", depth: 2 },
+        { type: "folder", key: "f:c", label: "Plant2", depth: 0 },
+        { type: "tag", key: "t:flow", label: "Flow", depth: 1 },
+    ];
+
+    const tree = buildTagRowTree(rows);
+    assert.deepEqual(tree.map((n) => n.row.label), ["Plant1", "Plant2"]);
+    assert.deepEqual(tree[0].children.map((n) => n.row.label), ["Line1"]);
+    assert.deepEqual(tree[0].children[0].children.map((n) => n.row.label), ["Temperature", "Pressure"]);
+    assert.deepEqual(tree[1].children.map((n) => n.row.label), ["Flow"]);
+});
+
+test("buildTagRowTree keeps a flat list flat and tolerates bad input", () => {
+    const flat = [
+        { type: "tag", key: "a", depth: 0 },
+        { type: "tag", key: "b", depth: 0 },
+    ];
+    assert.equal(buildTagRowTree(flat).length, 2);
+    assert.equal(buildTagRowTree(flat)[0].children.length, 0);
+
+    assert.deepEqual(buildTagRowTree([]), []);
+    assert.deepEqual(buildTagRowTree(undefined), []);
+
+    // A depth that jumps past its parent still lands somewhere rather than being dropped.
+    const jumped = buildTagRowTree([
+        { type: "folder", key: "f", depth: 0 },
+        { type: "tag", key: "t", depth: 5 },
+    ]);
+    assert.equal(jumped.length, 1);
+    assert.equal(jumped[0].children.length, 1);
+});
+
+test("buildPayloadKeyRows lists only this collector's own record", () => {
+    // The keys can only come from THIS collector's config, so putting them under another job's
+    // record would show that job's data with the wrong key list.
+    const rows = buildPayloadKeyRows({
+        collectorName: "line2",
+        configuredNodes: [
+            { name: "Random1", nodeId: "ns=2;s=Simulation Examples.Functions.Random1", treePath: ["Simulation Examples", "Functions", "Random1"] },
+            { name: "Sine1", nodeId: "ns=2;s=Simulation Examples.Functions.Sine1" },
+        ],
+        derivedTags: [{ name: "derived1" }],
+    });
+
+    assert.deepEqual(rows.map((row) => `${"  ".repeat(row.depth)}${row.label}`), [
+        "line2",
+        "  Random1",
+        "  Sine1",
+        "  derived1",
+    ], "one record, then its keys — no other record and no path folders");
+
+    assert.equal(rows.filter((row) => row.type === "folder").length, 1);
+    assert.ok(rows.every((row) => row.depth <= 1), "never deeper than two levels");
+    assert.ok(!rows.some((row) => row.label === "Functions"), "the node path contributes no rows");
+
+    // The nodeId travels as provenance on the row rather than as structure.
+    assert.equal(rows[1].tag.nodeId, "ns=2;s=Simulation Examples.Functions.Random1");
+    assert.deepEqual(rows.slice(1).map((row) => row.tag.name), [
+        "line2 / Random1", "line2 / Sine1", "line2 / derived1",
+    ]);
+    assert.equal(rows[3].derived, true);
+});
+
+test("buildPayloadKeyRows gives two same-named nodes a single leaf", () => {
+    // The payload is a flat map, so nodes sharing a name are one key. Two leaves would put two rows
+    // on one identity and ticking either would tick both.
+    const rows = buildPayloadKeyRows({
+        collectorName: "r",
+        configuredNodes: [
+            { name: "Random1", treePath: ["Plant", "Functions", "Random1"] },
+            { name: "Random1", treePath: ["Plant", "System", "Random1"] },
+        ],
+        records: ["r"],
+    });
+
+    const leaves = rows.filter((row) => row.type === "tag");
+    assert.equal(leaves.length, 1);
+    assert.equal(leaves[0].tag.name, "r / Random1");
+    assert.ok(!rows.some((row) => row.label === "System"), "the losing path contributes no folder");
+});
+
 test("buildTagChartSeries uses real time values and sorts points by time", () => {
     const series = buildTagChartSeries([
         { time: "2026-06-04T10:02:00Z", name: "sensor.a", value: "12.5" },
@@ -833,6 +1198,37 @@ test("buildTagChartSeries uses real time values and sorts points by time", () =>
     assert.deepEqual(series[1].data, [
         [Date.parse("2026-06-04T10:03:00Z"), 20.5],
     ]);
+});
+
+test("buildTagChartSeries charts booleans as 1/0 but drops non-numeric text", () => {
+    // boolean 복원은 서버(projectedValue)가 한다 — 여기서 "true"/"false" 문자열을 숫자로 바꾸면
+    // 이 함수를 공유하는 스칼라 collector 까지 영향을 받는다. STR_VALUE 에 "false" 를 담는
+    // stringOnly collector 가 시리즈 없음에서 0 을 그리는 쪽으로 조용히 바뀌기 때문이다.
+    const series = buildTagChartSeries([
+        { time: "2026-06-04T10:00:00Z", name: "c1 / flag", value: true },
+        { time: "2026-06-04T10:01:00Z", name: "c1 / flag", value: false },
+        { time: "2026-06-04T10:02:00Z", name: "c1 / note", value: "false" },
+    ]);
+
+    assert.equal(series.length, 1);
+    assert.equal(series[0].name, "c1 / flag");
+    assert.deepEqual(series[0].data, [
+        [Date.parse("2026-06-04T10:00:00Z"), 1],
+        [Date.parse("2026-06-04T10:01:00Z"), 0],
+    ]);
+});
+
+test("buildTagChartSeries still charts numeric strings and drops non-numeric ones", () => {
+    // 그리드가 "007" 을 그대로 보여줘야 해서 서버가 변환을 안 한다. 숫자로 만드는 건 여기뿐이고,
+    // 진짜 문자열 값은 예전처럼 차트에서 빠진다.
+    const series = buildTagChartSeries([
+        { time: "2026-06-04T10:00:00Z", name: "c1 / serial", value: "007" },
+        { time: "2026-06-04T10:01:00Z", name: "c1 / label", value: "hi" },
+        { time: "2026-06-04T10:02:00Z", name: "c1 / gap", value: null },
+    ]);
+
+    assert.deepEqual(series.map((one) => one.name), ["c1 / serial"]);
+    assert.deepEqual(series[0].data, [[Date.parse("2026-06-04T10:00:00Z"), 7]]);
 });
 
 test("buildDataViewerChartResultsFromRawRows builds chart groups from visible raw rows", () => {
@@ -1778,4 +2174,61 @@ test("isJsonValueColumn is false for ordinary value columns and unknown input", 
     assert.equal(isJsonValueColumn(columns, ""), false);
     assert.equal(isJsonValueColumn(undefined, "VALUE"), false);
     assert.equal(isJsonValueColumn([{ name: "VALUE" }], "VALUE"), false, "a column with no type is not JSON");
+});
+
+// 256자 제한의 출처는 neo-web Tag Analyzer 어댑터 한 곳뿐이라, 이름을 만들 때가 아니라
+// 넘길 때 본다. jsonKey 는 toTagAnalyzerJsonKey 가 보고, tagName 은 빌더가 직접 본다.
+test("buildNeoWebTagAnalyzerMessage refuses a tag name neo-web would truncate", () => {
+    const long = "T".repeat(257);
+    const r = buildNeoWebTagAnalyzerMessage({
+        table: "TAG",
+        tagNames: [long],
+        range: { from: "2026-01-01T00:00:00Z", to: "2026-01-01T01:00:00Z" },
+    });
+    assert.equal(r.ok, false);
+    assert.match(r.reason, /too long for Tag Analyzer/);
+});
+
+test("buildNeoWebTagAnalyzerMessage accepts a name at the limit", () => {
+    const atLimit = "T".repeat(256);
+    const r = buildNeoWebTagAnalyzerMessage({
+        table: "TAG",
+        tagNames: [atLimit],
+        range: { from: "2026-01-01T00:00:00Z", to: "2026-01-01T01:00:00Z" },
+    });
+    assert.equal(r.ok, true);
+    assert.equal(r.message.payload.tags[0].tagName, atLimit);
+});
+
+// 이름을 바꾼 태그는 화면(노드 이름)과 DB(태그 이름)가 달라 어느 행인지 알 수 없었다.
+// 기본 이름이면 leaf 를 유지하고(계층이 짧게 읽힌다), 바꿨을 때만 태그 이름을 앞세운다.
+test("buildTagRows keeps the leaf label when the name is the path default", () => {
+    const rows = buildTagRows([
+        { name: "Simulation Examples_Functions_Ramp1", nodeId: "ns=2;s=x",
+          treePath: ["Simulation Examples", "Functions", "Ramp1"] },
+    ]);
+    const tag = rows.find((r) => r.type === "tag");
+    assert.equal(tag.label, "Ramp1");
+    assert.equal(tag.secondaryLabel, "");
+});
+
+test("buildTagRows shows the tag name once it differs from the path default", () => {
+    const renamed = "Simulation Examples~!@#";
+    const rows = buildTagRows([
+        { name: renamed, nodeId: "ns=2;s=x", treePath: ["Simulation Examples", "Functions", "Ramp3"] },
+    ]);
+    const tag = rows.find((r) => r.type === "tag");
+    assert.equal(tag.label, renamed, "바꾼 이름이 라벨이어야 한다");
+    assert.equal(tag.secondaryLabel, "Ramp3", "원래 노드는 흐린 보조 라벨로 남는다");
+});
+
+// 컬럼 폭을 글자 수로 재면 한글이 절반으로 잡혀, 폭주 값만 막으려던 상한에 닿기 전에 잘렸다.
+test("monoDisplayWidth counts full-width characters as two cells", () => {
+    assert.equal(monoDisplayWidth("abc"), 3);
+    assert.equal(monoDisplayWidth("펌프"), 4);
+    assert.equal(monoDisplayWidth("a ㄷㄷ"), 6);
+    // U+20A9 WON SIGN 은 유니코드 East Asian Width 로 Narrow 다. 전각은 U+FFE6.
+    assert.equal(monoDisplayWidth("\u20A9"), 1);
+    assert.equal(monoDisplayWidth("\uFFE6"), 2);
+    assert.equal(monoDisplayWidth(null), 0);
 });

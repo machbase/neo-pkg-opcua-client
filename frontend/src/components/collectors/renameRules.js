@@ -1,18 +1,32 @@
 // Pure helpers for the bulk node-rename modal.
 //
+// 세그먼트는 trim 후 이어붙이기만 한다. 노드 브라우저에서 노드를 고를 때와 같은 처리라
+// 규칙 버튼과 직접 선택이 같은 이름을 만든다. 문자는 손대지 않는다 — 이전의 영숫자 전용
+// 치환에 근거가 없었던 이유는 tagName.js 참고.
+//
 // A `treePath` is an array of OPC UA path segment labels; the LAST segment is the
 // node's unique identifier and is ALWAYS preserved by every rule. Each rule maps a
 // list of treePaths (+ params) to proposed name strings. Masks (boolean[] where
 // true = removed/struck-through) drive the breadcrumb preview in the modal.
+
+import { normalizeTagName } from './tagName.js';
 
 export function lastSegment(treePath) {
   const p = treePath || [];
   return p.length ? String(p[p.length - 1]) : '';
 }
 
-// Name built from the kept (non-removed) segments, joined with underscores.
+// 남긴(제거되지 않은) 세그먼트를 밑줄로 이어 만든 이름.
+//
+// 비었거나 공백뿐인 세그먼트는 구분자만 남기지 않도록 빠진다 ("Area" + "" + "Pump" 가
+// "Area__Pump" 가 되는 것을 막는다). 세그먼트가 원래 갖고 있던 밑줄은 그대로 둔다 —
+// "Tank_Pressure_01" 은 서버가 준 라벨 그 자체다.
 export function nameFromMask(treePath, mask) {
-  return (treePath || []).filter((_, i) => !mask[i]).join('_');
+  return (treePath || [])
+    .filter((_, i) => !mask[i])
+    .map((segment) => normalizeTagName(segment))
+    .filter(Boolean)
+    .join('_');
 }
 
 // Number of leading segments shared by ALL paths, capped so the last (unique)
