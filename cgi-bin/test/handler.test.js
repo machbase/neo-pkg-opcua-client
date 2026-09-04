@@ -1228,6 +1228,7 @@ runner.run('Handler: server CRUD', {
         t.assert(result.ok, 'should be ok');
         t.assertEqual(result.data.name, 'db1');
         t.assertNotNull(mockCGI._servers['db1']);
+        t.assertEqual(mockCGI._servers['db1'].database, 'MACHBASEDB');
     },
 
     'serverPost returns error when server already exists': (t) => {
@@ -1247,6 +1248,7 @@ runner.run('Handler: server CRUD', {
         t.assert(result.ok, 'should be ok');
         t.assertEqual(result.data.config.password, undefined, 'password should be removed');
         t.assertEqual(result.data.config.host, 'h');
+        t.assertEqual(result.data.config.database, 'MACHBASEDB');
     },
 
     'serverGet returns error when not found': (t) => {
@@ -1258,12 +1260,13 @@ runner.run('Handler: server CRUD', {
 
     'serverPut preserves password when omitted': (t) => {
         const H = makeHandler();
-        mockCGI._servers['db1'] = { host: 'h', password: 'secret' };
+        mockCGI._servers['db1'] = { host: 'h', database: 'OTHERDB', password: 'secret' };
         let result;
         H.serverPut('db1', { host: 'h2' }, (r) => { result = r; });
         t.assert(result.ok, 'should be ok');
         t.assertEqual(mockCGI._servers['db1'].password, 'secret', 'password should be preserved');
         t.assertEqual(mockCGI._servers['db1'].host, 'h2');
+        t.assertEqual(mockCGI._servers['db1'].database, 'OTHERDB');
     },
 
     'serverPut replaces password when provided': (t) => {
@@ -1626,6 +1629,7 @@ runner.run('Handler: dbConnect', {
         t.assert(result.ok, 'should be ok');
         t.assert(result.data.connected);
         t.assertEqual(result.data.host, 'localhost');
+        t.assertEqual(result.data.database, 'MACHBASEDB');
         t.assert(mockMachbaseClient.closed, 'client should be closed');
     },
 

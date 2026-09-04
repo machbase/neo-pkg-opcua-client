@@ -179,7 +179,7 @@ machbase-neo jsh -v /app=/path/to/neo-tools /app/cgi-bin/neo-collector.js /app/c
 | POST | `/cgi-bin/api/collector/start?name=xxx` | 등록된 service 시작 |
 | POST | `/cgi-bin/api/collector/stop?name=xxx` | 등록된 service 종료 |
 | POST | `/cgi-bin/api/expression/validate` | derived tag 수식 단독 검증 |
-| POST | `/cgi-bin/api/db/server` | DB 서버 접속 정보 등록 (body: `{ name, host, port, user, password }`) |
+| POST | `/cgi-bin/api/db/server` | DB 서버 접속 정보 등록 (body: `{ name, host, port, database, user, password }`, database 기본값 `MACHBASEDB`) |
 | GET | `/cgi-bin/api/db/server?name=xxx` | DB 서버 단건 조회 |
 | PUT | `/cgi-bin/api/db/server?name=xxx` | DB 서버 접속 정보 수정 |
 | DELETE | `/cgi-bin/api/db/server?name=xxx` | DB 서버 삭제 |
