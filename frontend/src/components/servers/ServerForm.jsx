@@ -9,6 +9,7 @@ const DEFAULT_FORM = {
     name: "",
     host: "127.0.0.1",
     port: 5656,
+    database: "MACHBASEDB",
     user: "SYS",
     password: "",
 };
@@ -19,6 +20,7 @@ function initialForm(server) {
         name: server.name || "",
         host: server.host || DEFAULT_FORM.host,
         port: server.port || DEFAULT_FORM.port,
+        database: server.database || DEFAULT_FORM.database,
         user: server.user || DEFAULT_FORM.user,
         password: "",
     };
@@ -104,6 +106,18 @@ export default function ServerForm({ server, onSave, onClose }) {
                                     className={inputClass}
                                 />
                             </div>
+                        </div>
+
+                        <div>
+                            <label className={labelClass}>Database</label>
+                            <input
+                                type="text"
+                                required
+                                value={form.database}
+                                onChange={(e) => update({ database: e.target.value })}
+                                className={inputClass}
+                                placeholder="MACHBASEDB"
+                            />
                         </div>
 
                         <div className="grid grid-cols-2 gap-8">

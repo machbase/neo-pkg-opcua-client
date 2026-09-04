@@ -394,7 +394,7 @@ Derived 오류 정책:
 
 #### 자동 테이블 생성
 
-`config.autoCreateTable`이 `true`이면 backend가 현재 DB 접속 사용자 소유의 live table만 확인합니다. `M$SYS_TABLES.DATABASE_ID = -1`인 테이블만 대상으로 하며, mounted backup table은 read-only이므로 기존 테이블로 간주하지 않습니다.
+`config.autoCreateTable`이 `true`이면 backend가 server profile의 `database`로 연결한 현재 database에서 접속 사용자 소유의 live table만 확인합니다. `database`를 생략하면 `MACHBASEDB`를 사용합니다. mounted backup database는 collector의 쓰기 대상으로 사용하지 않습니다.
 
 자동 생성되는 스키마는 다음과 같습니다.
 
@@ -686,6 +686,7 @@ DB 서버 접속 정보를 등록합니다. `password`는 저장 파일에서 �
   "name": "my-server",
   "host": "127.0.0.1",
   "port": 5656,
+  "database": "MACHBASEDB",
   "user": "sys",
   "password": "manager"
 }
@@ -696,6 +697,7 @@ DB 서버 접속 정보를 등록합니다. `password`는 저장 파일에서 �
 | `name` | Y | 서버 식별 이름 |
 | `host` | Y | Machbase 서버 주소 |
 | `port` | Y | 포트 (기본값 `5656`) |
+| `database` | N | 접속할 logical database. 생략 시 `MACHBASEDB` |
 | `user` | Y | 사용자명 |
 | `password` | Y | 비밀번호 |
 
@@ -733,6 +735,7 @@ DB 서버 접속 정보를 조회합니다. `password`는 반환하지 않습니
     "config": {
       "host": "127.0.0.1",
       "port": 5656,
+      "database": "MACHBASEDB",
       "user": "sys"
     }
   }
@@ -751,6 +754,7 @@ DB 서버 접속 정보를 수정합니다. `password`가 없거나 `""` 이면 
 {
   "host": "127.0.0.1",
   "port": 5656,
+  "database": "MACHBASEDB",
   "user": "sys",
   "password": "manager"
 }
@@ -798,6 +802,7 @@ DB 서버 접속 정보를 삭제합니다.
       "config": {
         "host": "127.0.0.1",
         "port": 5656,
+        "database": "MACHBASEDB",
         "user": "sys"
       }
     }
@@ -820,6 +825,7 @@ DB 서버 접속 정보를 삭제합니다.
     "connected": true,
     "host": "127.0.0.1",
     "port": 5656,
+    "database": "MACHBASEDB",
     "user": "sys"
   }
 }
@@ -881,7 +887,7 @@ CREATE TAG TABLE {table} (
 ### GET /db/table/list?server=
 
 지정한 서버의 TAG 테이블 목록을 조회합니다. 각 테이블의 소유 유저명을 함께 반환합니다.
-Mounted backup database의 테이블은 쓰기 대상이 아니므로 목록에서 제외됩니다.
+server profile에서 선택한 active database의 테이블만 반환하며, 다른 logical database와 mounted backup database의 테이블은 제외됩니다.
 
 **응답 (성공)**
 

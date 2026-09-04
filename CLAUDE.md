@@ -166,7 +166,8 @@ cgi-bin/
 ### GET `/cgi-bin/api/db/connect?server=xxx`
 
 - 등록된 server 이름으로 연결 확인
-- 성공 시 `{ connected: true, host, port, user }`
+- DB server profile의 `database`를 사용하고, 생략된 기존 profile은 `MACHBASEDB`로 연결
+- 성공 시 `{ connected: true, host, port, database, user }`
 
 ### POST `/cgi-bin/api/db/table/create`
 
@@ -205,7 +206,7 @@ CREATE TAG TABLE ${table} (
 - `M$SYS_USERS` 로 user 유효성 검사 → user not found 시 에러
 - `selectTableMeta(tableName, userId)` → table not found / not TAG table 시 에러
 - `selectColumnsByTableId(tableId)` 로 컬럼 조회
-- TODO: `database.user.table` 3단계 형식은 미지원 — Machbase가 지원할 경우 추가 필요
+- database 선택은 DB server profile의 `database` 필드로 수행하며, `database.user.table` 3단계 table 입력은 받지 않음
 
 ## Collector 값 정규화 메모
 

@@ -390,6 +390,7 @@ const OPCUA_CAPABILITY_SOURCES = {
   server: true,
   default: true,
 };
+const DEFAULT_DATABASE = 'MACHBASEDB';
 
 function hasOwn(obj, key) {
   return Object.prototype.hasOwnProperty.call(obj || {}, key);
@@ -397,6 +398,13 @@ function hasOwn(obj, key) {
 
 function normalizeText(value) {
   return value === undefined || value === null ? '' : String(value).trim();
+}
+
+function normalizeDbServerConfig(config) {
+  const normalized = { ...(config || {}) };
+  normalized.database = normalizeText(normalized.database || normalized.db) || DEFAULT_DATABASE;
+  delete normalized.db;
+  return normalized;
 }
 
 function normalizeChoice(value, choices, label) {
@@ -2084,7 +2092,10 @@ function _mergeServerConfig(current, next) {
       (merged.password === undefined || merged.password === '')) {
     merged.password = current.password;
   }
-  return merged;
+  if (current && merged.database === undefined && merged.db === undefined) {
+    merged.database = current.database || current.db || DEFAULT_DATABASE;
+  }
+  return normalizeDbServerConfig(merged);
 }
 
 /**
@@ -2101,7 +2112,7 @@ function serverPost(name, config, reply) {
     });
     return;
   }
-  CGI.writeServerConfig(name, config);
+  CGI.writeServerConfig(name, normalizeDbServerConfig(config));
   reply({
     ok: true,
     data: { name },
@@ -2123,6 +2134,8 @@ function serverGet(name, reply) {
     return;
   }
   const safeConfig = { ...config };
+  safeConfig.database = normalizeText(config.database || config.db) || DEFAULT_DATABASE;
+  delete safeConfig.db;
   delete safeConfig.password;
   reply({
     ok: true,
@@ -2185,6 +2198,8 @@ function serverList(reply) {
   const data = names.map((name) => {
     const config = CGI.getServerConfig(name);
     const safeConfig = { ...config };
+    safeConfig.database = normalizeText(config.database || config.db) || DEFAULT_DATABASE;
+    delete safeConfig.db;
     delete safeConfig.password;
     return { name, config: safeConfig };
   });
@@ -2387,6 +2402,7 @@ function dbConnect(db, reply) {
         connected: true,
         host: db.host,
         port: db.port,
+        database: db.database || db.db || DEFAULT_DATABASE,
         user: db.user,
       },
     });
@@ -2485,9 +2501,7 @@ function dbTableList(db, reply) {
 function dbTableColumns(db, table, reply) {
   // README: "SYS.TAG" 형식으로 들어올 수 있으므로 user명과 테이블명을 분리한다.
   // user명이 있으면 해당 USER_ID 소유 테이블만 조회해 동명 테이블 간 충돌을 방지한다.
-  // TODO: 현재는 "user.table" 2단계만 파싱한다.
-  //       Machbase가 "database.user.table" 3단계 형식을 지원할 경우
-  //       database 단위 구분 및 연결 대상 분기 로직 추가 필요.
+  // database는 server profile 연결 옵션으로 고정하고 여기서는 "user.table"만 파싱한다.
   const dotIdx = table.indexOf('.');
   const tableUser = dotIdx >= 0 ? table.slice(0, dotIdx) : null;
   const tableName = dotIdx >= 0 ? table.slice(dotIdx + 1) : table;

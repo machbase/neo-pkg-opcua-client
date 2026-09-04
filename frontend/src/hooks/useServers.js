@@ -9,6 +9,7 @@ function toServer(item) {
         type: "machbase",
         host: config.host || "",
         port: config.port ?? "",
+        database: config.database || "MACHBASEDB",
         user: config.user || "",
     };
 }
@@ -40,6 +41,7 @@ export default function useServers() {
                     name: data.name,
                     host: data.host,
                     port: Number(data.port),
+                    database: data.database || "MACHBASEDB",
                     user: data.user,
                     password: data.password ?? "",
                 });
@@ -59,6 +61,7 @@ export default function useServers() {
                 await serversApi.updateServer(name, {
                     host: data.host,
                     port: Number(data.port),
+                    database: data.database || "MACHBASEDB",
                     user: data.user,
                     password: data.password ?? "",
                 });

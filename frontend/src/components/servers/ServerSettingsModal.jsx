@@ -25,7 +25,7 @@ const STATUS_BADGE = {
 };
 
 function describeServer(srv) {
-    return `${srv.host || ""}:${srv.port || ""} · ${srv.user || ""}`;
+    return `${srv.host || ""}:${srv.port || ""} · ${srv.database || "MACHBASEDB"} · ${srv.user || ""}`;
 }
 
 export default function ServerSettingsModal({

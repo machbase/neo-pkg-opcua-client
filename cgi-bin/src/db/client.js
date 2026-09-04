@@ -19,6 +19,8 @@ const {
   findTagKeyColumnName,
 } = require('./types.js');
 
+const DEFAULT_DATABASE = 'MACHBASEDB';
+
 function _rowColumnValue(row, columnName) {
   if (!row) return undefined;
   const names = [
@@ -50,7 +52,10 @@ class MachbaseClient {
    * @param {{ clientFactory?: function }} [options]
    */
   constructor(config, { clientFactory } = {}) {
-    this._config = config;
+    this._config = { ...config };
+    if (!this._config.database && !this._config.db) {
+      this._config.database = DEFAULT_DATABASE;
+    }
     this._db = null;
     this._conn = null;
     this._clientFactory = clientFactory || ((conf) => new Client(conf));
@@ -136,7 +141,7 @@ class MachbaseClient {
    */
   selectTableType(tableName) {
     const rows = this.query(
-      'SELECT TYPE FROM M$SYS_TABLES WHERE NAME = ? AND DATABASE_ID = -1',
+      'SELECT TYPE FROM M$SYS_TABLES WHERE NAME = ? AND DATABASE_NAME = CURRENT_DATABASE()',
       [tableName]
     );
     if (!rows || rows.length === 0) return { type: 'UNSUPPORTED' };
@@ -158,7 +163,7 @@ class MachbaseClient {
       SELECT m.NAME AS data_table
       FROM V$STORAGE_TAG_TABLES v, M$SYS_TABLES m
       WHERE v.ID = m.ID AND m.NAME LIKE ?
-        AND m.DATABASE_ID = -1
+        AND m.DATABASE_NAME = CURRENT_DATABASE()
       ORDER BY m.NAME
     `.trim();
     return this.query(sql, [pattern]);
@@ -181,7 +186,7 @@ class MachbaseClient {
       SELECT NAME, TYPE, ID, USER_ID
       FROM M$SYS_TABLES
       WHERE TYPE IN (0, 6)
-        AND DATABASE_ID = -1
+        AND DATABASE_NAME = CURRENT_DATABASE()
     `.trim();
     return this.query(sql);
   }
@@ -197,7 +202,8 @@ class MachbaseClient {
       FROM M$SYS_COLUMNS c, M$SYS_TABLES t
       WHERE c.TABLE_ID = t.ID AND t.NAME = ?
         AND c.DATABASE_ID = t.DATABASE_ID
-        AND t.DATABASE_ID = -1
+        AND c.TABLESPACE_ID = t.TABLESPACE_ID
+        AND t.DATABASE_NAME = CURRENT_DATABASE()
         AND c.ID < 65534
       ORDER BY c.ID ASC
     `.trim();
@@ -213,13 +219,13 @@ class MachbaseClient {
   selectTableMeta(tableName, userId) {
     if (userId != null) {
       const rows = this.query(
-        'SELECT ID, TYPE, NAME FROM M$SYS_TABLES WHERE NAME = ? AND USER_ID = ? AND DATABASE_ID = -1',
+        'SELECT ID, TYPE, NAME FROM M$SYS_TABLES WHERE NAME = ? AND USER_ID = ? AND DATABASE_NAME = CURRENT_DATABASE()',
         [tableName, userId]
       );
       return rows.length > 0 ? rows[0] : null;
     }
     const rows = this.query(
-      'SELECT ID, TYPE, NAME FROM M$SYS_TABLES WHERE NAME = ? AND DATABASE_ID = -1',
+      'SELECT ID, TYPE, NAME FROM M$SYS_TABLES WHERE NAME = ? AND DATABASE_NAME = CURRENT_DATABASE()',
       [tableName]
     );
     return rows.length > 0 ? rows[0] : null;
@@ -236,8 +242,9 @@ class MachbaseClient {
       FROM M$SYS_COLUMNS c, M$SYS_TABLES t
       WHERE c.TABLE_ID = t.ID
         AND c.DATABASE_ID = t.DATABASE_ID
+        AND c.TABLESPACE_ID = t.TABLESPACE_ID
         AND t.ID = ?
-        AND t.DATABASE_ID = -1
+        AND t.DATABASE_NAME = CURRENT_DATABASE()
         AND c.ID < 65534
       ORDER BY c.ID ASC
     `.trim();
