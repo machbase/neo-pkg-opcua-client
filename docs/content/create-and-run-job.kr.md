@@ -17,7 +17,7 @@ weight: 30
 - Node Mapping
 - Logging Controls
 
-![Job 생성 화면](./images/opcua-job-form.png)
+![Job 생성 화면]({{< asset "images/opcua-job-form.png" >}})
 
 ## Job 섹션
 
@@ -80,7 +80,7 @@ Job 이름은 영문, 숫자, `_`, `-` 중심으로 짓는 것이 좋습니다.
 
 OPC UA Endpoint가 입력되어 있으면 **Browse** 버튼으로 서버의 Node를 탐색할 수 있습니다.
 
-![Node Browser 화면](./images/opcua-node-browser.png)
+![Node Browser 화면]({{< asset "images/opcua-node-browser.png" >}})
 
 Browse로 추가된 Node는 목록에 자동 이름으로 들어갈 수 있습니다.  
 목록의 `Tag Name`을 클릭하면 이름을 바로 수정할 수 있고, `Enter`를 누르거나 입력창 밖을 클릭하면 저장됩니다.
@@ -121,6 +121,6 @@ Node 목록에서는 각 항목에 대해 Transform을 줄 수 있습니다.
 
 ## 문서 이동
 
-- [이전: Server 설정](./server-settings.kr.md)
-- [목차로 돌아가기](./index.kr.md)
-- [다음: 모니터링과 로그](./monitoring-and-logs.kr.md)
+- [이전: Server 설정]({{< relref "server-settings" >}})
+- [목차로 돌아가기]({{< relref "/" >}})
+- [다음: 모니터링과 로그]({{< relref "monitoring-and-logs" >}})

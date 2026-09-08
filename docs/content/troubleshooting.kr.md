@@ -56,5 +56,5 @@ weight: 50
 
 ## 문서 이동
 
-- [이전: 모니터링과 로그](./monitoring-and-logs.kr.md)
-- [목차로 돌아가기](./index.kr.md)
+- [이전: 모니터링과 로그]({{< relref "monitoring-and-logs" >}})
+- [목차로 돌아가기]({{< relref "/" >}})

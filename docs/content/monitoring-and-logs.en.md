@@ -19,7 +19,7 @@ When you select a job, the detail area on the right shows the following informat
 - Logging Controls
 - Live Logs
 
-![Job detail screen](./images/opcua-job-detail.png)
+![Job detail screen]({{< asset "images/opcua-job-detail.png" >}})
 
 ## Status Meanings
 
@@ -105,7 +105,7 @@ Typical items to check:
 
 If older rotated log files remain, they may also appear in the list.
 
-![Log file viewer screen](./images/opcua-log-viewer.png)
+![Log file viewer screen]({{< asset "images/opcua-log-viewer.png" >}})
 
 ## View Log File Contents
 
@@ -122,6 +122,6 @@ After selecting a file, you can view its log content.
 
 ## Navigation
 
-- [Previous: Create and Run Jobs](./create-and-run-job.en.md)
-- [Back to Index](./index.en.md)
-- [Next: Troubleshooting](./troubleshooting.en.md)
+- [Previous: Create and Run Jobs]({{< relref "create-and-run-job" >}})
+- [Back to Index]({{< relref "/" >}})
+- [Next: Troubleshooting]({{< relref "troubleshooting" >}})

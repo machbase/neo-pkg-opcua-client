@@ -19,7 +19,7 @@ Job을 선택하면 우측 상세 화면에 다음 정보가 표시됩니다.
 - Logging Controls
 - 실시간 로그
 
-![Job 상세 화면](./images/opcua-job-detail.png)
+![Job 상세 화면]({{< asset "images/opcua-job-detail.png" >}})
 
 ## 상태 해석
 
@@ -105,7 +105,7 @@ Logging Controls 영역의 **View Logs** 버튼을 누르면 현재 Job의 로�
 
 과거의 로그 파일이 남아 있다면 목록에서 함께 보일 수 있습니다.
 
-![로그 파일 조회 화면](./images/opcua-log-viewer.png)
+![로그 파일 조회 화면]({{< asset "images/opcua-log-viewer.png" >}})
 
 ## 로그 파일 내용 보기
 
@@ -122,6 +122,6 @@ Logging Controls 영역의 **View Logs** 버튼을 누르면 현재 Job의 로�
 
 ## 문서 이동
 
-- [이전: Job 생성과 실행](./create-and-run-job.kr.md)
-- [목차로 돌아가기](./index.kr.md)
-- [다음: 문제 해결](./troubleshooting.kr.md)
+- [이전: Job 생성과 실행]({{< relref "create-and-run-job" >}})
+- [목차로 돌아가기]({{< relref "/" >}})
+- [다음: 문제 해결]({{< relref "troubleshooting" >}})

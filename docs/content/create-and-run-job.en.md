@@ -17,7 +17,7 @@ The screen is usually organized in this order:
 - Node Mapping
 - Logging Controls
 
-![Job creation screen](./images/opcua-job-form.png)
+![Job creation screen]({{< asset "images/opcua-job-form.png" >}})
 
 ## Job Section
 
@@ -80,7 +80,7 @@ After entering the values, click **Add** to add them to the list.
 
 If the OPC UA Endpoint is already entered, you can click **Browse** to explore nodes from the server.
 
-![Node Browser screen](./images/opcua-node-browser.png)
+![Node Browser screen]({{< asset "images/opcua-node-browser.png" >}})
 
 Nodes added through Browse may appear in the list with automatically generated names.  
 You can click `Tag Name` in the mapped list to edit it directly, and press `Enter` or click outside the input to save it.
@@ -121,6 +121,6 @@ After creation, select the job from the sidebar and check its status.
 
 ## Navigation
 
-- [Previous: Server Settings](./server-settings.en.md)
-- [Back to Index](./index.en.md)
-- [Next: Monitoring and Logs](./monitoring-and-logs.en.md)
+- [Previous: Server Settings]({{< relref "server-settings" >}})
+- [Back to Index]({{< relref "/" >}})
+- [Next: Monitoring and Logs]({{< relref "monitoring-and-logs" >}})

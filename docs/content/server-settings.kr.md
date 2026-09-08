@@ -19,7 +19,7 @@ OPC UA Client에서 먼저 등록해야 하는 것은 **OPC UA Server**가 아�
 - `Delete`
 - `Connection Test`
 
-![Database Server 설정 화면](./images/opcua-server-settings.png)
+![Database Server 설정 화면]({{< asset "images/opcua-server-settings.png" >}})
 
 ## 새 Database Server 추가
 
@@ -56,5 +56,5 @@ OPC UA Client에서 먼저 등록해야 하는 것은 **OPC UA Server**가 아�
 
 ## 문서 이동
 
-- [목차로 돌아가기](./index.kr.md)
-- [다음: Job 생성과 실행](./create-and-run-job.kr.md)
+- [목차로 돌아가기]({{< relref "/" >}})
+- [다음: Job 생성과 실행]({{< relref "create-and-run-job" >}})

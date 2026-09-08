@@ -5,7 +5,7 @@ weight: 10
 
 # OPC UA Client User Manual
 
-[한국어](./index.kr.md) | **English**
+[한국어]({{< relref "/" >}}) | **English**
 
 This document explains how to install the **Machbase Neo OPC UA Client package**, register a Database Server, create jobs, check status, and review logs.
 
@@ -16,7 +16,7 @@ Select the OPC UA Client package and click the `Install` button to install it.
 
 Installation may take a short time, so wait until it is completed.
 
-![Package installation screen](./images/package-install.png)
+![Package installation screen]({{< asset "images/package-install.png" >}})
 
 ## What This Manual Covers
 
@@ -42,15 +42,15 @@ Installation may take a short time, so wait until it is completed.
 - Main area: selected job details or the create/edit form
 - Modal windows: Database Server management and log viewing
 
-![OPC UA Client main screen](./images/opcua-dashboard-main.png)
+![OPC UA Client main screen]({{< asset "images/opcua-dashboard-main.png" >}})
 
 ## Documents
 
-- [Server Settings](./server-settings.en.md)
-- [Create and Run Jobs](./create-and-run-job.en.md)
-- [Monitoring and Logs](./monitoring-and-logs.en.md)
-- [Troubleshooting](./troubleshooting.en.md)
+- [Server Settings]({{< relref "server-settings" >}})
+- [Create and Run Jobs]({{< relref "create-and-run-job" >}})
+- [Monitoring and Logs]({{< relref "monitoring-and-logs" >}})
+- [Troubleshooting]({{< relref "troubleshooting" >}})
 
 ## Navigation
 
-- [Next: Server Settings](./server-settings.en.md)
+- [Next: Server Settings]({{< relref "server-settings" >}})

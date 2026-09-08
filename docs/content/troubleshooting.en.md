@@ -56,5 +56,5 @@ Check the following:
 
 ## Navigation
 
-- [Previous: Monitoring and Logs](./monitoring-and-logs.en.md)
-- [Back to Index](./index.en.md)
+- [Previous: Monitoring and Logs]({{< relref "monitoring-and-logs" >}})
+- [Back to Index]({{< relref "/" >}})

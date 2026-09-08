@@ -19,7 +19,7 @@ Available actions:
 - `Delete`
 - `Connection Test`
 
-![Database Server settings screen](./images/opcua-server-settings.png)
+![Database Server settings screen]({{< asset "images/opcua-server-settings.png" >}})
 
 ## Add a New Database Server
 
@@ -56,5 +56,5 @@ Be careful when deleting a server that is already used by a job, because it can 
 
 ## Navigation
 
-- [Back to Index](./index.en.md)
-- [Next: Create and Run Jobs](./create-and-run-job.en.md)
+- [Back to Index]({{< relref "/" >}})
+- [Next: Create and Run Jobs]({{< relref "create-and-run-job" >}})

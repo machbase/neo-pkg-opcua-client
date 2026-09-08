@@ -5,7 +5,7 @@ weight: 10
 
 # OPC UA Client 사용자 매뉴얼
 
-**한국어** | [English](./index.en.md)
+**한국어** | [English]({{< relref "/" >}})
 
 이 문서는 **Machbase Neo OPC UA Client 패키지**의 설치, Database Server 등록, Job 생성, 상태 확인, 로그 조회 방법을 설명합니다.
 
@@ -16,7 +16,7 @@ Machbase Neo 좌측 사이드 패널에는 사용 가능한 패키지 목록이 
 
 설치에는 약간의 시간이 걸릴 수 있으므로, 완료될 때까지 잠시 기다립니다.
 
-![패키지 설치 화면](./images/package-install.png)
+![패키지 설치 화면]({{< asset "images/package-install.png" >}})
 
 ## 이 문서에서 다루는 내용
 
@@ -42,15 +42,15 @@ Machbase Neo 좌측 사이드 패널에는 사용 가능한 패키지 목록이 
 - 메인 화면: 선택한 Job 상세 정보 또는 생성/수정 폼
 - 모달 창: Database Server 관리, 로그 보기
 
-![OPC UA Client 메인 화면](./images/opcua-dashboard-main.png)
+![OPC UA Client 메인 화면]({{< asset "images/opcua-dashboard-main.png" >}})
 
 ## 문서 목록
 
-- [Server 설정](./server-settings.kr.md)
-- [Job 생성과 실행](./create-and-run-job.kr.md)
-- [모니터링과 로그](./monitoring-and-logs.kr.md)
-- [문제 해결](./troubleshooting.kr.md)
+- [Server 설정]({{< relref "server-settings" >}})
+- [Job 생성과 실행]({{< relref "create-and-run-job" >}})
+- [모니터링과 로그]({{< relref "monitoring-and-logs" >}})
+- [문제 해결]({{< relref "troubleshooting" >}})
 
 ## 문서 이동
 
-- [다음: Server 설정](./server-settings.kr.md)
+- [다음: Server 설정]({{< relref "server-settings" >}})
