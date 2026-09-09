@@ -6,6 +6,7 @@ const process = require('process');
 const { CGI } = require('./cgi_util.js');
 const Service = require('./service.js');
 const { MachbaseClient } = require('../db/client.js');
+const { assertWritableDatabase } = require('../db/database.js');
 const {
   Column,
   TableSchema,
@@ -402,7 +403,7 @@ function normalizeText(value) {
 
 function normalizeDbServerConfig(config) {
   const normalized = { ...(config || {}) };
-  normalized.database = normalizeText(normalized.database || normalized.db) || DEFAULT_DATABASE;
+  normalized.database = (normalizeText(normalized.database || normalized.db) || DEFAULT_DATABASE).toUpperCase();
   delete normalized.db;
   return normalized;
 }
@@ -2098,6 +2099,25 @@ function _mergeServerConfig(current, next) {
   return normalizeDbServerConfig(merged);
 }
 
+function _withDbClient(config, action, clientOptions) {
+  const client = new MachbaseClient(config, clientOptions);
+  try {
+    client.connect();
+    return action(client);
+  } finally {
+    client.close();
+  }
+}
+
+function _validateWritableDbServer(config) {
+  const normalized = normalizeDbServerConfig(config);
+  return _withDbClient(normalized, (client) => {
+    const status = client.selectDatabaseStatus(normalized.database);
+    assertWritableDatabase(status, normalized.database);
+    return normalized;
+  });
+}
+
 /**
  * POST /cgi-bin/api/db/server
  * @param {string} name
@@ -2112,11 +2132,16 @@ function serverPost(name, config, reply) {
     });
     return;
   }
-  CGI.writeServerConfig(name, normalizeDbServerConfig(config));
-  reply({
-    ok: true,
-    data: { name },
-  });
+  try {
+    const normalized = _validateWritableDbServer(config);
+    CGI.writeServerConfig(name, normalized);
+    reply({
+      ok: true,
+      data: { name },
+    });
+  } catch (err) {
+    reply({ ok: false, reason: errorMessage(err) });
+  }
 }
 
 /**
@@ -2158,11 +2183,50 @@ function serverPut(name, body, reply) {
     });
     return;
   }
-  CGI.writeServerConfig(name, _mergeServerConfig(current, body));
-  reply({
-    ok: true,
-    data: { name },
-  });
+  try {
+    const merged = _mergeServerConfig(current, body);
+    const normalized = _validateWritableDbServer(merged);
+    CGI.writeServerConfig(name, normalized);
+    reply({
+      ok: true,
+      data: { name },
+    });
+  } catch (err) {
+    reply({ ok: false, reason: errorMessage(err) });
+  }
+}
+
+function databaseList(body, reply) {
+  const hasServer = !!(body && typeof body.server === 'string' && body.server.trim());
+  const hasProfile = !!(body && body.profile && typeof body.profile === 'object' && !Array.isArray(body.profile));
+  if (hasServer === hasProfile) {
+    reply({ ok: false, reason: 'exactly one of server or profile is required' });
+    return;
+  }
+  let config;
+  if (hasServer) {
+    const name = body.server.trim();
+    config = CGI.getServerConfig(name);
+    if (!config) {
+      reply({ ok: false, reason: `server '${name}' not found` });
+      return;
+    }
+  } else {
+    config = normalizeDbServerConfig(body.profile);
+  }
+  const lookupConfig = { ...config };
+  delete lookupConfig.database;
+  delete lookupConfig.db;
+  try {
+    const databases = _withDbClient(
+      lookupConfig,
+      (client) => client.selectDatabases(),
+      { useDefaultDatabase: false }
+    );
+    reply({ ok: true, data: { databases } });
+  } catch (err) {
+    reply({ ok: false, reason: errorMessage(err) });
+  }
 }
 
 /**
@@ -3462,6 +3526,7 @@ module.exports = {
   opcuaServerDelete,
   opcuaServerList,
   dbConnect,
+  databaseList,
   dbTableCreate,
   dbTableList,
   dbTableColumns,

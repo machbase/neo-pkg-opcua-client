@@ -3,7 +3,7 @@ title: Server 설정
 weight: 20
 ---
 
-# Server 설정
+#
 
 OPC UA Client에서 먼저 등록해야 하는 것은 **OPC UA Server**가 아니라 **Database Server**입니다.  
 수집한 값을 어디에 저장할지 먼저 정해야 Job 생성 화면에서 Table과 Column을 선택할 수 있습니다.
@@ -30,6 +30,7 @@ OPC UA Client에서 먼저 등록해야 하는 것은 **OPC UA Server**가 아�
 - `Name`
 - `Host`
 - `Port`
+- `Database`
 - `User`
 - `Password`
 
@@ -37,8 +38,11 @@ OPC UA Client에서 먼저 등록해야 하는 것은 **OPC UA Server**가 아�
 
 1. **Add Server** 클릭
 2. Name, Host, Port, 계정 정보 입력
-3. 가능하면 **Connection Test**로 먼저 확인
-4. **Save**로 저장
+3. **Load Databases**로 사용 가능한 Database를 불러와 선택하거나 이름을 직접 입력
+4. 가능하면 **Connection Test**로 먼저 확인
+5. **Save**로 저장
+
+OPC UA Client는 수집 데이터를 기록하므로 `READ_WRITE` Database만 저장할 수 있습니다. Database 목록 조회가 실패해도 이름을 직접 입력할 수 있지만, Save 시 실제 접속 권한과 쓰기 가능 여부를 다시 확인합니다.
 
 ## 수정과 삭제
 

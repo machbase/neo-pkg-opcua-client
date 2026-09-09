@@ -753,6 +753,136 @@ pre {
     width: 100%;
 }
 
+/* Editable database selector — follows neo-web's SQL target-db control. */
+.database-picker {
+    position: relative;
+    display: flex;
+    align-items: center;
+}
+.database-picker__database-icon {
+    position: absolute;
+    left: var(--spacing-8);
+    top: 50%;
+    transform: translateY(-50%);
+    z-index: 1;
+    display: inline-flex;
+    align-items: center;
+    color: var(--color-primary-light);
+    pointer-events: none;
+}
+.database-picker__input {
+    width: 100%;
+    padding-left: var(--spacing-32);
+    padding-right: var(--spacing-36);
+    font-family: var(--font-family-mono);
+}
+.database-picker--open .database-picker__input {
+    border-color: var(--color-border-focus);
+    box-shadow: 0 0 0 2px rgba(0, 108, 210, 0.1);
+}
+.database-picker__trigger {
+    position: absolute;
+    right: var(--spacing-4);
+    top: 50%;
+    transform: translateY(-50%);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    border: none;
+    border-radius: var(--radius-base);
+    background: transparent;
+    color: var(--color-on-surface-disabled);
+}
+.database-picker__trigger:hover {
+    color: var(--color-on-surface);
+    background-color: var(--color-surface-hover);
+}
+.database-picker__trigger:focus-visible {
+    outline: 2px solid var(--color-border-focus);
+    outline-offset: -2px;
+}
+.database-picker__trigger:disabled {
+    opacity: 0.5;
+    cursor: default;
+}
+.database-picker__trigger-icon {
+    display: inline-flex;
+    transition: transform 0.2s ease;
+}
+.database-picker--open .database-picker__trigger-icon:not(.animate-spin) {
+    transform: rotate(180deg);
+}
+.database-picker__menu {
+    position: absolute;
+    top: calc(100% + var(--spacing-4));
+    left: 0;
+    right: 0;
+    z-index: var(--z-index-dropdown);
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-2);
+    max-height: 152px;
+    padding: var(--spacing-4);
+    overflow-x: hidden;
+    overflow-y: auto;
+    background-color: var(--color-dropdown);
+    border: 1px solid var(--color-dropdown-border);
+    border-radius: var(--radius-base);
+    box-shadow: var(--shadow-dropdown);
+    animation: database-picker-slide-down 0.15s ease-out;
+}
+.database-picker--drop-up .database-picker__menu {
+    top: auto;
+    bottom: calc(100% + var(--spacing-4));
+    animation-name: database-picker-slide-up;
+}
+.database-picker__message {
+    padding: var(--spacing-6) var(--spacing-8);
+    color: var(--color-on-surface-muted);
+    font-size: var(--font-size-sm);
+}
+.database-picker__option {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--spacing-10);
+    width: 100%;
+    min-height: 28px;
+    padding: var(--spacing-6) var(--spacing-8);
+    border: none;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--color-menu-item-text);
+    font-size: var(--font-size-sm);
+    text-align: left;
+    transition: background-color 0.15s ease;
+}
+.database-picker__option:hover {
+    background-color: var(--color-dropdown-option-hover);
+}
+.database-picker__option:focus-visible {
+    outline: 1px solid var(--color-border-focus);
+    outline-offset: -1px;
+}
+.database-picker__option:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+.database-picker__option:disabled:hover {
+    background: transparent;
+}
+@keyframes database-picker-slide-down {
+    from { opacity: 0; transform: translateY(-4px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+@keyframes database-picker-slide-up {
+    from { opacity: 0; transform: translateY(4px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
 /* Label */
 .label {
     display: block;

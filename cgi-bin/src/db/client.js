@@ -8,6 +8,7 @@
  */
 
 const { Client } = require('machcli');
+const { DATABASE_LIST_SQL, DATABASE_STATUS_SQL, normalizeDatabaseRows } = require('./database.js');
 const {
   ColumnType,
   Column,
@@ -51,9 +52,9 @@ class MachbaseClient {
    * @param {{ host: string, port: number, user: string, password: string }} config - DB 접속 정보
    * @param {{ clientFactory?: function }} [options]
    */
-  constructor(config, { clientFactory } = {}) {
+  constructor(config, { clientFactory, useDefaultDatabase = true } = {}) {
     this._config = { ...config };
-    if (!this._config.database && !this._config.db) {
+    if (useDefaultDatabase && !this._config.database && !this._config.db) {
       this._config.database = DEFAULT_DATABASE;
     }
     this._db = null;
@@ -108,6 +109,15 @@ class MachbaseClient {
     } catch (err) {
       throw new Error(err.message);
     }
+  }
+
+  selectDatabases() {
+    return normalizeDatabaseRows(this.query(DATABASE_LIST_SQL));
+  }
+
+  selectDatabaseStatus(name) {
+    const rows = normalizeDatabaseRows(this.query(DATABASE_STATUS_SQL, [String(name || DEFAULT_DATABASE).toUpperCase()]));
+    return rows.length > 0 ? rows[0] : null;
   }
 
   /**
