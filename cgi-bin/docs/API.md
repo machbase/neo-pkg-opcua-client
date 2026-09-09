@@ -45,6 +45,7 @@
 | PUT    | [/db/server?name=](#put-dbservername) | DB 서버 수정 |
 | DELETE | [/db/server?name=](#delete-dbservername) | DB 서버 삭제 |
 | GET    | [/db/server/list](#get-dbserverlist) | DB 서버 목록 조회 |
+| POST   | [/db/database/list](#post-dbdatabaselist) | 접속 가능한 active database 목록 조회 |
 | GET    | [/db/connect?server=](#get-dbconnectserver) | DB 연결 테스트 |
 | POST   | [/db/table/create](#post-dbtablecreate) | TAG 테이블 생성 |
 | GET    | [/db/table/list?server=](#get-dbtablelistserver) | TAG 테이블 목록 조회 |
@@ -677,7 +678,7 @@ collector service를 중지합니다.
 
 ### POST /db/server
 
-DB 서버 접속 정보를 등록합니다. `password`는 저장 파일에서 바로 보이지 않도록 obfuscation 형태로 저장되며, 조회 시 반환하지 않습니다.
+DB 서버 접속 정보를 등록합니다. `password`는 저장 파일에서 바로 보이지 않도록 obfuscation 형태로 저장되며, 조회 시 반환하지 않습니다. 저장 전에 database가 현재 사용자에게 허용된 active `READ_WRITE` database인지 확인합니다.
 
 **요청 본문**
 
@@ -718,6 +719,8 @@ DB 서버 접속 정보를 등록합니다. `password`는 저장 파일에서 �
 |------|--------|
 | 필드 누락 | `"xxx is required"` |
 | 동일한 이름 이미 존재 | `"server 'xxx' already exists"` |
+| database가 없거나 사용할 수 없음 | Machbase database 접속/권한 오류 메시지 |
+| database가 READ_ONLY | `"database 'xxx' must be READ_WRITE"` |
 
 ---
 
@@ -807,6 +810,51 @@ DB 서버 접속 정보를 삭제합니다.
       }
     }
   ]
+}
+```
+
+---
+
+### POST /db/database/list
+
+저장된 profile 또는 화면에서 입력 중인 접속 정보로 현재 사용자가 접근할 수 있는 active database 목록을 조회합니다. 목록의 값을 선택하거나 database 이름을 직접 입력할 수 있으며, 저장할 때 사용 가능 여부를 다시 확인합니다.
+
+요청은 아래 두 형식 중 하나만 사용합니다.
+
+```json
+{ "server": "my-server" }
+```
+
+```json
+{
+  "profile": {
+    "host": "127.0.0.1",
+    "port": 5656,
+    "database": "MACHBASEDB",
+    "user": "sys",
+    "password": "manager"
+  }
+}
+```
+
+응답의 `writable`은 `accessMode`가 `READ_WRITE`인지 나타냅니다. OPC UA collector의 저장 대상은 `writable: true`인 database만 허용됩니다.
+
+```json
+{
+  "ok": true,
+  "data": {
+    "databases": [
+      {
+        "name": "MACHBASEDB",
+        "kind": "ACTIVE",
+        "accessMode": "READ_WRITE",
+        "canUse": true,
+        "state": "NORMAL",
+        "isDefault": true,
+        "writable": true
+      }
+    ]
+  }
 }
 ```
 

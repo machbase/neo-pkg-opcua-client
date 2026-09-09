@@ -3,7 +3,7 @@ title: Monitoring and Logs
 weight: 40
 ---
 
-# Monitoring and Logs
+#
 
 ## Items Shown on the Dashboard
 

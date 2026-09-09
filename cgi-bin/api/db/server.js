@@ -46,6 +46,7 @@ const handlers = {
     Handler.serverPost(body.name, {
       host: body.host,
       port: Number(body.port),
+      database: body.database || body.db,
       user: body.user,
       password: body.password,
     }, reply);
@@ -71,6 +72,7 @@ const handlers = {
     Handler.serverPut(name, {
       host: body.host,
       port: Number(body.port),
+      database: body.database || body.db,
       user: body.user,
       password: body.password,
     }, reply);

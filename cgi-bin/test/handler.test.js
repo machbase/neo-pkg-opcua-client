@@ -163,6 +163,12 @@ class MockMachbaseClient {
         this.droppedTables = [];
         this.queries = [];
         this.queryResults = [];
+        this.databases = [{
+            name: 'MACHBASEDB', kind: 'ACTIVE', accessMode: 'READ_WRITE',
+            canUse: true, state: 'NORMAL', isDefault: true, writable: true,
+        }];
+        this.lastConfig = null;
+        this.lastOptions = null;
     }
     connect() {
         if (this.connectError) throw new Error(this.connectError);
@@ -186,6 +192,10 @@ class MockMachbaseClient {
     query(sql, values) {
         this.queries.push({ sql, values: values || [] });
         return this.queryResults.shift() || [];
+    }
+    selectDatabases() { return this.databases; }
+    selectDatabaseStatus(name) {
+        return this.databases.find((database) => database.name === String(name).toUpperCase()) || null;
     }
     dropTableCascade(table) {
         this.droppedTables.push(table);
@@ -269,7 +279,11 @@ function makeHandler() {
     };
     require.cache[clientPath] = {
         id: clientPath, filename: clientPath, loaded: true,
-        exports: { MachbaseClient: function() { return mockMachbaseClient; } },
+        exports: { MachbaseClient: function(config, options) {
+            mockMachbaseClient.lastConfig = config;
+            mockMachbaseClient.lastOptions = options;
+            return mockMachbaseClient;
+        } },
     };
     require.cache[opcuaPath] = {
         id: opcuaPath, filename: opcuaPath, loaded: true,
@@ -1231,6 +1245,32 @@ runner.run('Handler: server CRUD', {
         t.assertEqual(mockCGI._servers['db1'].database, 'MACHBASEDB');
     },
 
+    'serverPost preserves and normalizes requested database': (t) => {
+        const H = makeHandler();
+        mockMachbaseClient.databases.push({
+            name: 'WRITABLE_DB', kind: 'ACTIVE', accessMode: 'READ_WRITE',
+            canUse: true, state: 'NORMAL', isDefault: false, writable: true,
+        });
+        let result;
+        H.serverPost('db1', { host: 'h', port: 5656, database: 'writable_db', user: 'sys', password: 'pw' }, (r) => { result = r; });
+        t.assert(result.ok, 'should be ok');
+        t.assertEqual(mockCGI._servers.db1.database, 'WRITABLE_DB');
+        t.assertEqual(mockMachbaseClient.lastConfig.database, 'WRITABLE_DB', 'database validation should use requested database');
+    },
+
+    'serverPost rejects READ_ONLY database without writing config': (t) => {
+        const H = makeHandler();
+        mockMachbaseClient.databases = [{
+            name: 'READ_DB', kind: 'ACTIVE', accessMode: 'READ_ONLY',
+            canUse: true, state: 'NORMAL', isDefault: false, writable: false,
+        }];
+        let result;
+        H.serverPost('db1', { host: 'h', port: 5656, database: 'READ_DB', user: 'sys', password: 'pw' }, (r) => { result = r; });
+        t.assert(!result.ok, 'should fail');
+        t.assert(result.reason.includes('READ_WRITE'));
+        t.assertEqual(mockCGI._servers.db1, undefined);
+    },
+
     'serverPost returns error when server already exists': (t) => {
         const H = makeHandler();
         mockCGI._servers['db1'] = { host: 'h' };
@@ -1261,6 +1301,10 @@ runner.run('Handler: server CRUD', {
     'serverPut preserves password when omitted': (t) => {
         const H = makeHandler();
         mockCGI._servers['db1'] = { host: 'h', database: 'OTHERDB', password: 'secret' };
+        mockMachbaseClient.databases.push({
+            name: 'OTHERDB', kind: 'ACTIVE', accessMode: 'READ_WRITE',
+            canUse: true, state: 'NORMAL', isDefault: false, writable: true,
+        });
         let result;
         H.serverPut('db1', { host: 'h2' }, (r) => { result = r; });
         t.assert(result.ok, 'should be ok');
@@ -1276,6 +1320,21 @@ runner.run('Handler: server CRUD', {
         H.serverPut('db1', { host: 'h', password: 'new' }, (r) => { result = r; });
         t.assert(result.ok, 'should be ok');
         t.assertEqual(mockCGI._servers['db1'].password, 'new');
+    },
+
+    'serverPut keeps previous config when database validation fails': (t) => {
+        const H = makeHandler();
+        mockCGI._servers.db1 = { host: 'old', port: 5656, database: 'MACHBASEDB', user: 'sys', password: 'secret' };
+        mockMachbaseClient.databases = [{
+            name: 'READ_DB', kind: 'ACTIVE', accessMode: 'READ_ONLY',
+            canUse: true, state: 'NORMAL', isDefault: false, writable: false,
+        }];
+        let result;
+        H.serverPut('db1', { host: 'new', port: 5656, database: 'READ_DB', user: 'sys', password: '' }, (r) => { result = r; });
+        t.assert(!result.ok, 'should fail');
+        t.assertEqual(mockCGI._servers.db1.host, 'old');
+        t.assertEqual(mockCGI._servers.db1.database, 'MACHBASEDB');
+        t.assertEqual(mockCGI._servers.db1.password, 'secret');
     },
 
     'serverDelete removes server config': (t) => {
@@ -1305,6 +1364,30 @@ runner.run('Handler: server CRUD', {
         for (const item of result.data) {
             t.assertEqual(item.config.password, undefined, 'password should not be in list');
         }
+    },
+});
+
+runner.run('Handler: databaseList', {
+    'returns usable databases for an unsaved profile': (t) => {
+        const H = makeHandler();
+        mockMachbaseClient.databases.push({
+            name: 'OTHER_DB', kind: 'ACTIVE', accessMode: 'READ_ONLY',
+            canUse: true, state: 'NORMAL', isDefault: false, writable: false,
+        });
+        let result;
+        H.databaseList({ profile: { host: 'h', port: 5656, database: 'MACHBASEDB', user: 'sys', password: 'pw' } }, (r) => { result = r; });
+        t.assert(result.ok, 'should be ok');
+        t.assertEqual(result.data.databases.length, 2);
+        t.assertEqual(result.data.databases[1].accessMode, 'READ_ONLY');
+        t.assertEqual(mockMachbaseClient.lastConfig.database, undefined, 'database lookup should not use current selection');
+        t.assertEqual(mockMachbaseClient.lastOptions.useDefaultDatabase, false);
+    },
+
+    'requires exactly one lookup source': (t) => {
+        const H = makeHandler();
+        let result;
+        H.databaseList({}, (r) => { result = r; });
+        t.assert(!result.ok, 'should fail');
     },
 });
 

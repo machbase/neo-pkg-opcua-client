@@ -10,6 +10,8 @@ export const deleteServer = (name) =>
     request("DELETE", `/cgi-bin/api/db/server?name=${encodeURIComponent(name)}`);
 export const checkConnection = (name) =>
     request("GET", `/cgi-bin/api/db/connect?server=${encodeURIComponent(name)}`);
+export const listDatabases = (body) =>
+    request("POST", "/cgi-bin/api/db/database/list", body);
 export const listTables = (server) =>
     request("GET", `/cgi-bin/api/db/table/list?server=${encodeURIComponent(server)}`);
 export const listColumns = (server, table) =>

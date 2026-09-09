@@ -3,7 +3,7 @@ title: Server Settings
 weight: 20
 ---
 
-# Server Settings
+#
 
 In OPC UA Client, the first thing to register is not the **OPC UA Server** but the **Database Server**.  
 You need to decide where collected values will be stored before you can select a table and column in the job form.
@@ -30,6 +30,7 @@ Main input fields:
 - `Name`
 - `Host`
 - `Port`
+- `Database`
 - `User`
 - `Password`
 
@@ -37,8 +38,11 @@ Registration steps:
 
 1. Click **Add Server**.
 2. Enter the name, host, port, and account information.
-3. If possible, check the connection with **Connection Test** first.
-4. Click **Save**.
+3. Use **Load Databases** to select an available database, or type its name directly.
+4. If possible, check the connection with **Connection Test** first.
+5. Click **Save**.
+
+The OPC UA Client writes collected data, so only a `READ_WRITE` database can be saved. You can type a database name even if loading the list fails, but Save checks the actual access permission and write mode again.
 
 ## Edit and Delete
 
