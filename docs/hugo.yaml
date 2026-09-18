@@ -18,6 +18,7 @@ languages:
     weight: 2
 
 module:
+  proxy: https://proxy.golang.org
   imports:
     - path: github.com/imfing/hextra
 

@@ -3,60 +3,93 @@ title: Server Settings
 weight: 20
 ---
 
-#
+A job uses two types of connection profile.
 
-In OPC UA Client, the first thing to register is not the **OPC UA Server** but the **Database Server**.  
-You need to decide where collected values will be stored before you can select a table and column in the job form.
+- **Database Server**: the Machbase Database that stores collected values
+- **OPC UA Server**: the OPC UA endpoint and its security settings
 
-## Open Server Settings
+You may register them in either order, but both should be ready before creating a job.
 
-Open Server Settings from the left sidebar to see the list of registered Database Servers.
+## Register a Database Server
 
-Available actions:
+Open `Server Settings` in the left sidebar and click `Add Server`.
 
-- `Add Server`
-- `Edit`
-- `Delete`
-- `Connection Test`
+![Input fields shown while reviewing a saved Database Server profile](/images/database-server-form.png)
 
-![Database Server settings screen]({{< asset "images/opcua-server-settings.png" >}})
+The form contains:
 
-## Add a New Database Server
-
-In most cases, you enter Machbase Neo connection information here.
-
-Main input fields:
-
-- `Name`
-- `Host`
-- `Port`
+- `Name`: the profile name shown in the job form
+- `Host`, `Port`
 - `Database`
-- `User`
-- `Password`
+- `User`, `Password`
 
-Registration steps:
+Open the picker in the `Database` field to load databases available to the current account. On a new server, enter `User` and `Password` first. Only `READ_WRITE` databases can be selected and saved.
 
-1. Click **Add Server**.
-2. Enter the name, host, port, and account information.
-3. Use **Load Databases** to select an available database, or type its name directly.
-4. If possible, check the connection with **Connection Test** first.
-5. Click **Save**.
+Click `Create` when the form is complete. The registration form does not have its own Connection Test button.
 
-The OPC UA Client writes collected data, so only a `READ_WRITE` database can be saved. You can type a database name even if loading the list fails, but Save checks the actual access permission and write mode again.
+## Test the Database Connection
 
-## Edit and Delete
+![Database Server list after a successful connection test](/images/database-servers-tested.png)
 
-- `Edit`
-  - Updates the saved connection information.
-- `Delete`
-  - Removes the registered Database Server.
+1. Return to the `Database Servers` list.
+2. Click the `Connection Test` icon for the saved server.
+3. Confirm that `Connected` appears.
 
-Be careful when deleting a server that is already used by a job, because it can affect future edits or restarts of that job.
+`Edit` changes the saved connection, and `Delete` removes the profile. Removing a profile used by a job can prevent that job from being edited or restarted correctly.
 
-## Notes
+## Register an OPC UA Server
 
-- The Database Server must work properly for the table and column lists to appear correctly.
-- It is better to prepare the target table structure before creating a job.
+Open `OPC UA Servers` in the left sidebar and click `Add OPC UA Server`. The form has `Server Input` and `Security` tabs.
+
+### Server Input
+
+![Saved OPC UA Server profile after a successful connection test](/images/opcua-server-input-tested.png)
+
+- `Name`: the profile name shown in the job form
+- `Endpoint URL`: for example, `opc.tcp://127.0.0.1:4840`
+- `Read Batch Size`: the number of nodes read in one batch
+
+For a new profile, `Connection Test` must succeed before `Read Batch Size` and `Create` are enabled. The result shows the server's `Max Nodes Per Read`, and the allowed batch size follows that limit. The UI may show Unlimited when the server does not provide a limit.
+
+### Security
+
+![OPC UA Server Security settings](/images/opcua-server-security.png)
+
+`Security Mode` provides:
+
+- `None`
+- `Sign & Encrypt`
+
+With `Sign & Encrypt`, select one of these Security Policies:
+
+- `Basic256Sha256`
+- `Basic256`
+- `Aes128_Sha256_RsaOaep`
+- `Aes256_Sha256_RsaPss`
+
+`Auth Mode` is `Anonymous` or `UserName`. With `UserName`, enter a Username and Password.
+
+An encrypted connection requires a client certificate and private key. Paste their contents into `Cert PEM` and `Key PEM`, or choose the files. Never disclose a private key.
+
+## Generate a Self-Signed Certificate
+
+The key icon at the bottom of the `OPC UA Servers` list opens the certificate generator.
+
+1. Enter the certificate name and validity period.
+2. Click `Generate`.
+3. Download the result as a ZIP and store it securely.
+4. Add the certificate and key to an OPC UA Server profile when needed.
+
+The result contains a private key. Do not expose it in screen sharing or screenshots.
+
+## Test the OPC UA Connection
+
+![OPC UA Server list after a successful connection test](/images/opcua-servers-tested.png)
+
+- Before registration: use `Connection Test` at the bottom of the form.
+- After registration: use the `Connection Test` icon in the `OPC UA Servers` list.
+
+The test can fail when the endpoint, security mode, authentication, or certificate does not match the server.
 
 ## Navigation
 

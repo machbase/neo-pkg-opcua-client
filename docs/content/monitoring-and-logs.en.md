@@ -3,125 +3,78 @@ title: Monitoring and Logs
 weight: 40
 ---
 
-#
+## Check the Dashboard
 
-## Items Shown on the Dashboard
+Select a job in the left sidebar to see its current configuration and status.
 
-When you select a job, the detail area on the right shows the following information.
+![Job Dashboard while collecting real test data](/images/job-detail-running.png)
 
-- Job name
-- Current status (`running` / `stopped`)
-- OPC UA endpoint
-- Interval / Read Retry Interval
-- Number of Nodes Monitored
-- Last Updated At
-- Database Server / Table / Column
-- Logging Controls
-- Live Logs
+The top area shows:
 
-![Job detail screen]({{< asset "images/opcua-job-detail.png" >}})
+- Job name and `Running` or `Stopped` status
+- OPC UA Server, Interval, and Read Retry Interval
+- Counts for source `Nodes` and `Derived` Tags
+- Last collection time
+- Database Server, Table, and Value Column
+
+The lower area provides:
+
+- Monitored Nodes: Tag Name, Node ID/Path, Data Type, and Transform
+- Derived Tags: expression, variables, Base Time, and error action
+- Collection Policy: Time Policy and Bad Status Policy
+- Logging Controls: Log Level, File Limit, and `View Logs`
 
 ## Status Meanings
 
-- `running`
-  - Data is being collected.
-- `stopped`
-  - Data collection is stopped.
+- `Running`: the job is collecting data.
+- `Stopped`: collection is stopped.
+- `Disconnected`: the job has not collected recently and the OPC UA connection test also failed.
+- `Stale`: the OPC UA Server is reachable, but the last collection time is old.
 
-Additional status hints:
+`Disconnected` and `Stale` may appear after a running job has not collected for more than three times its configured Interval and the UI checks the connection.
 
-- `Disconnected`
-  - A connection problem with the OPC UA server is suspected.
-- `Stale`
-  - The server is reachable, but recent updates are old.
+## Job Action Restrictions
 
-These may appear as badges in the OPC UA card at the top of the dashboard.
+`Edit` and `Delete` are disabled while a job is `Running`. Stop it with the switch in the left sidebar before changing its configuration or removing it.
 
-## Nodes Monitored
-
-The middle card shows the number of nodes currently being monitored.
-
-Information shown together:
-
-- The last collection time
-- A human-readable relative time
-
-If collection appears to have stopped for too long, check the endpoint connection and interval settings first.
-
-## Monitored Nodes List
-
-The table in the lower area shows the currently registered nodes.
-
-Main columns:
-
-- `Tag Name`
-- `Node ID`
-- `Transform`
-
-Available actions in the UI:
-
-- Filter by name or Node ID
-- Sort
-
-## Logging Controls
-
-The lower part of the detail screen shows a summary of the current job's log settings.
-
-- `Log Level`
-- Included log level guidance
-- `File Limit`
-- `View Logs`
+`Data Viewer` is disabled for a job that uses a JSON Value Column. See [Data Viewer]({{< relref "data-viewer" >}}) for the reason.
 
 ## Live Logs
 
-If you scroll down in the detail screen, you will find the **Live Logs** card.  
-If you only look at the top summary cards, it may not be visible right away, so scroll down when needed.
+Live Logs is not a fixed card at the bottom of the Dashboard. Use the **`Live Logs` button in the page header** to open and close the live log window.
 
-Characteristics of Live Logs:
+![Live Logs showing actual collection activity](/images/live-logs-running.png)
 
-- It does not replay the full old log history. It follows only newly generated log lines.
-- The panel may appear empty if there are no recent new logs.
-- The panel may also appear empty or minimal when the log level is restrictive, such as `WARN` or `ERROR`.
+- `CONNECTED`: the live log connection is open
+- `Pause`: temporarily stop displaying new lines
+- `Clear`: remove lines currently displayed in the window
 
-Available actions in the UI:
+Live Logs follows lines produced after the connection opens. It does not replay the complete history. The window may be empty when there are no new messages or when the Log Level is limited to `WARN` or `ERROR`.
 
-- `Pause`
-- `Clear`
+## View Saved Logs
 
-For reviewing older log history, **View Logs** is more suitable.
+Click `View Logs` in the Dashboard's Logging Controls.
 
-## Open Log Files
+![Saved Log Viewer showing a stored log file](/images/saved-log-viewer.png)
 
-Click **View Logs** in the Logging Controls area to open the log file list for the current job.
+1. Check the file name and size in the current job's log file list.
+2. Select a file to read its contents.
+3. Older rotated files appear in the same list when they are still retained.
 
-## Log File List
+Saved logs are better than Live Logs for investigating an earlier failure.
 
-The first screen shows the list of log files related to that job.
+## Recommended Check Order
 
-Typical items to check:
-
-- File name
-- File size
-
-If older rotated log files remain, they may also appear in the list.
-
-![Log file viewer screen]({{< asset "images/opcua-log-viewer.png" >}})
-
-## View Log File Contents
-
-After selecting a file, you can view its log content.
-
-## Recommended Check Order During Operation
-
-1. Check whether the job is `running`.
-2. Check whether `Last Updated At` is recent.
-3. Check whether the number of `Nodes Monitored` matches expectations.
-4. Check whether the Database Server, Table, and Column are correct.
-5. Check current activity in Live Logs near the bottom of the screen.
-6. If needed, use View Logs to inspect detailed causes.
+1. Confirm that the job is `Running`.
+2. Confirm that the last collection time is recent.
+3. Check the OPC UA card for `Disconnected` or `Stale`.
+4. Check that the Nodes and Derived counts match expectations.
+5. Verify the Database, Table, Column, and Collection Policy.
+6. Open `Live Logs` from the header to watch current activity.
+7. Use `View Logs` to investigate earlier errors when needed.
 
 ## Navigation
 
 - [Previous: Create and Run Jobs]({{< relref "create-and-run-job" >}})
 - [Back to Index]({{< relref "/" >}})
-- [Next: Troubleshooting]({{< relref "troubleshooting" >}})
+- [Next: Data Viewer]({{< relref "data-viewer" >}})

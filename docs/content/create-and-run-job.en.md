@@ -3,121 +3,128 @@ title: Create and Run Jobs
 weight: 30
 ---
 
-#
+## Create a Job
 
-## Create a New Job
+Click `New Job` in the left sidebar. The current form is arranged in this order:
 
-Open **New Job** from the left sidebar to move to the job creation screen.
+![New Job form with server profiles and an existing table selected](/images/job-form-existing-table.png)
 
-The screen is usually organized in this order:
+1. Job
+2. OPC UA Server and Database
+3. Node Mapping
+4. Derived Tags
+5. Collection Policy
+6. Logging Controls
 
-- Job
-- OPC UA
-- Database
-- Node Mapping
-- Logging Controls
+## Job and OPC UA Server
 
-![Job creation screen]({{< asset "images/opcua-job-form.png" >}})
+Enter a job name in `Name`. Letters, numbers, `_`, and `-` are allowed.
 
-## Job Section
+In `OPC UA Server`, select a profile registered in [Server Settings]({{< relref "server-settings" >}}). A `Legacy endpoint` may appear only when editing an older configuration. New jobs use a server profile instead of entering an Endpoint URL directly.
 
-- `Name`
-  - The name used to identify the job.
+- `Interval (ms)`: the collection interval, with a minimum of 1,000ms
+- `Read Retry Interval (MS)`: how long to wait before retrying after a read failure
 
-It is best to use letters, numbers, `_`, and `-` in the job name.
+## Database and Table
 
-## OPC UA Section
+Select a `Database Server`, then select or enter a Table name. The collector writes collection time into the TAG table's base column, so it supports **time-based TAG tables only**. Distance-based TAG tables are removed from the list and cannot be saved even when typed directly.
 
-Main input fields:
+### Use an Existing Table
 
-- `Endpoint URL`
-- `Interval (ms)`
-- `Read Retry Interval`
+Selecting an existing table loads its columns.
 
-Descriptions:
+- `Value Column`: a numeric or JSON column
+- `String Value Column`: an optional VARCHAR column for text values
 
-- `Endpoint URL`
-  - The OPC UA server address.
-- `Interval`
-  - The data collection interval.
-- `Read Retry Interval`
-  - The retry interval after a read failure.
+Storage behavior depends on the selected columns.
 
-It is usually safer to start with a stable interval instead of a very short one.
+| Mode | Configuration | Result |
+|---|---|---|
+| Numeric | Numeric `Value Column` only | Stores numeric and boolean values as rows |
+| Numeric and string | Numeric `Value Column` plus `String Value Column` | Stores numeric/boolean and text values in the appropriate columns |
+| JSON | JSON `Value Column` | Stores one merged JSON payload row per collection cycle |
+| String-only | No numeric/JSON column; select a VARCHAR column | Converts every value to text before storing it |
 
-## Database Section
+A string node is not stored when only a numeric column is configured. Add a `String Value Column` or use a JSON column.
 
-In this section, you choose which server, table, and column will store the collected data.
+### Create a New Table Automatically
 
-Main fields:
+For a new job, enter a new Table name without a dot (`.`). When the table is confirmed missing, the form displays:
 
-- `Database Server`
-- `Table`
-- `Value Column`
-- `String Value Column`
+`Table not found. It will be created automatically when the job is saved.`
 
-Behavior:
+Saving the job creates a time-based TAG table with `VALUE` and `STR_VALUE` columns. Auto-create is unavailable while editing an existing job or for qualified names such as `USER.TABLE`.
 
-- Numeric or boolean values can be stored in `Value Column`.
-- String values can be stored separately in `String Value Column`.
-- If the selected column is of type `JSON`, one cycle of collected data may be stored as a JSON payload.
-- If the table has no numeric or JSON column, the form may switch to string-only mode.
+## Node Mapping
 
-## Node Mapping Section
+Nodes can be added in two ways.
 
-This section is where you define the actual nodes to collect.
+- Manual: enter `Tag Name` and `Node ID`, then click `Add`.
+- Browse: click `Browse` to open the OPC UA node tree.
 
-There are two input methods.
+In the Node Browser:
 
-### Manual Input
+![Node Browser with real OPC UA nodes selected](/images/job-node-browser.png)
 
-- `Tag Name`
-- `Node ID`
+1. Enter the starting Node ID in `Browse From`.
+2. Expand folders or use `Filter results by name or address...`.
+3. Select one or more Variable Nodes.
+4. Click `Apply` to update Node Mapping.
 
-After entering the values, click **Add** to add them to the list.
+Non-numeric nodes cannot be selected in numeric-only mode. A String Value Column, JSON column, or string-only mode enables supported text nodes.
 
-### Browse
+The Node Mapping table shows Tag Name, Node ID/Path, and Data Type. Edit one name directly, or select multiple rows and use `Rename N selected`. Bulk rename is performed in the Mapping table, not the Node Browser.
 
-If the OPC UA Endpoint is already entered, you can click **Browse** to explore nodes from the server.
+### Transform
 
-![Node Browser screen]({{< asset "images/opcua-node-browser.png" >}})
+Numeric nodes can use Bias and Multiplier. Drag the two calculation segments to change their order.
 
-Nodes added through Browse may appear in the list with automatically generated names.  
-You can click `Tag Name` in the mapped list to edit it directly, and press `Enter` or click outside the input to save it.
+- `(value + bias) × multiplier`
+- `(value × multiplier) + bias`
 
-## Transform Settings
+Transform does not apply to boolean values, text values, or string-only storage.
 
-Each node in the list can have a Transform.
+## Derived Tags
 
-Basic concepts:
+Click `New derived tag` to calculate a new tag from source nodes read in the same cycle.
 
-- `Bias`
-- `Multiplier`
-- Changing the calculation order
+![Derived Tag editor using two source nodes](/images/job-derived-tag-editor.png)
 
-This is useful when you need value correction or scaling.
+1. Name the derived tag.
+2. Bind source nodes to variables `A` through `Z`.
+3. Enter an expression such as `A * 1.8 + 32` and confirm its validation result.
+4. Set `TIME SOURCE` to `latest` or a specific variable.
+5. Choose an `ON ERROR` action.
 
-It is usually safer to confirm basic collection first without Transform, and then adjust only the nodes that need it.
+Error actions are:
 
-## Logging Controls
+- `skip`: do not store a value
+- `write null`: store null
+- `use fallback value`: store a specified number
+- `hold last value`: reuse the last valid value
 
-At the bottom of the form, you can configure the log policy.
+`write null` is unavailable for a SUMMARIZED value column. Derived Tags are not collected in string-only mode. Under `requestTime`, all rows use the read time, so `TIME SOURCE` is preserved but not applied.
 
-- `Log Level`
-- `File Limit`
+## Collection Policy
 
-For normal operation, `INFO` or `WARN` is usually appropriate.
+### Time Policy
 
-## Finish Create or Edit
+- `sourceTime`: prefer the node's `sourceTimestamp`, or fall back to the request time. A Derived Tag follows its `TIME SOURCE`.
+- `requestTime`: use one request time for all source and Derived Tag rows from the read.
 
-- `Create`
-  - Creates a new job.
-- `Update`
-  - Updates an existing job.
-- `Cancel`
-  - Returns without saving.
+JSON merges several nodes into one row and can carry only one timestamp. A JSON Value Column therefore requires `requestTime`.
 
-After creation, select the job from the sidebar and check its status.
+### Bad Status Policy
+
+- `skip`: do not store a Bad Status value. A Derived Tag using that input applies its own `ON ERROR` action.
+- `ignore`: store and calculate with the value when it exists, regardless of quality status.
+
+## Logging Controls and Save
+
+- `Log Level`: the threshold among `TRACE`, `DEBUG`, `INFO`, `WARN`, and `ERROR`
+- `File Limit`: the number of log files to retain
+
+Use `Create` or `Update` in the header to save. Start and stop the job with its sidebar switch. A running job must be stopped before it can be edited or deleted.
 
 ## Navigation
 

@@ -1271,7 +1271,7 @@ OPC UA 서버 profile을 등록합니다. Collector와 one-shot OPC UA API는 `s
 
 `Sign` only 모드는 OPC UA 서버와 JSH OPC UA client 조합에 따라 연결이 실패할 수 있습니다. 서버 profile 등록 후 `/opcua/connect` 또는 `/opcua/read`로 실제 연결 가능 여부를 확인하는 것을 권장합니다.
 
-`readBatchSize`는 collector와 `/opcua/read`가 여러 node를 읽을 때 내부적으로 chunking하는 기준입니다. 서버에서 `MaxNodesPerRead`를 조회한 경우 `readBatchSize`는 그 값을 초과할 수 없습니다. 서버가 값을 제공하지 않으면 backend는 기본값 `32`를 적용하고, `readBatchSize`도 `32`를 초과할 수 없습니다.
+`readBatchSize`는 collector와 `/opcua/read`가 여러 node를 읽을 때 내부적으로 chunking하는 기준입니다. 서버의 `MaxNodesPerRead`가 양수이면 `readBatchSize`는 그 값을 초과할 수 없습니다. 서버 값이 `0`이면 제한 없음으로 보고 기본값 `300`을 적용하며, 값을 읽지 못한 경우에도 기본값 `300`을 적용합니다.
 
 **응답 (성공)**
 
@@ -1482,7 +1482,7 @@ OPC UA 서버 profile 목록을 반환합니다.
 
 ### POST /opcua/connect
 
-OPC UA 서버에 접속 가능한지 확인합니다. 노드 읽기나 브라우즈는 수행하지 않고 연결 성공 여부만 확인한 뒤 즉시 연결을 종료합니다. `server`가 있으면 등록된 OPC UA server profile의 endpoint와 security 설정을 사용합니다. `endpoint`를 직접 사용할 때는 저장 전 connection test를 위해 `security`를 함께 전달할 수 있습니다.
+OPC UA 서버의 Connection과 Browse를 확인합니다. 연결한 뒤 OperationLimits의 `MaxNodesPerRead` 읽기를 시도하고, 연결을 종료한 후 다시 연결해 Objects Folder(`ns=0;i=85`)부터 하위 Node를 Browse합니다. Connection과 Browse는 모두 성공해야 합니다. `MaxNodesPerRead` 읽기에 실패하면 기본값 `300`으로 계속 진행하며, 이 실패만으로 전체 연결 시험이 실패하지는 않습니다. `server`가 있으면 등록된 OPC UA server profile의 endpoint와 security 설정을 사용합니다. `endpoint`를 직접 사용할 때는 저장 전 connection test를 위해 `security`를 함께 전달할 수 있습니다.
 
 **요청 본문**
 
@@ -1539,7 +1539,7 @@ OPC UA 서버에 접속 가능한지 확인합니다. 노드 읽기나 브라우
 }
 ```
 
-`/opcua/connect`는 연결 성공 후 OPC UA standard OperationLimits의 `MaxNodesPerRead`를 best-effort로 읽습니다. 성공하면 `capabilities.maxNodesPerReadSource`가 `"server"`이고 `readBatchSize`는 해당 값으로 반환됩니다. 읽을 수 없으면 `capabilities.maxNodesPerRead`는 `null`, source는 `"default"`, `readBatchSize`는 `32`입니다.
+`/opcua/connect`는 연결 성공 후 OPC UA standard OperationLimits의 `MaxNodesPerRead`를 best-effort로 읽습니다. 서버 값이 양수이면 `capabilities.maxNodesPerReadSource`가 `"server"`이고 `readBatchSize`는 서버 값과 기본 상한 `300` 중 작은 값으로 반환됩니다. 서버 값이 `0`이면 제한 없음으로 보고 `readBatchSize`는 `300`입니다. 값을 읽을 수 없으면 `capabilities.maxNodesPerRead`는 `null`, source는 `"default"`, `readBatchSize`는 `300`입니다. 그 뒤 Objects Folder(`ns=0;i=85`)부터 하위 Node Browse가 성공해야 전체 연결 시험이 성공합니다.
 
 **응답 (실패)**
 

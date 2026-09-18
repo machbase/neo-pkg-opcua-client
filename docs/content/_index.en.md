@@ -3,50 +3,47 @@ title: OPC UA Client User Manual
 weight: 10
 ---
 
-#
-
-This document explains how to install the **Machbase Neo OPC UA Client package**, register a Database Server, create jobs, check status, and review logs.
+This manual explains how to read OPC UA values with the **Machbase Neo OPC UA Client package**, store them in a Machbase Database, and inspect the results.
 
 ## Installation
 
-The left sidebar in Machbase Neo shows the list of available packages.  
-Select the OPC UA Client package and click the `Install` button to install it.
+On the Machbase Neo package screen, select OPC UA Client and click `Install`. Open the package after installation finishes.
 
-Installation may take a short time, so wait until it is completed.
-
-![Package installation screen]({{< asset "images/package-install.png" >}})
-
-## What This Manual Covers
-
-- Package installation
-- Database Server registration
-- OPC UA collection job creation
-- Node Mapping and Transform setup
-- Job start/stop and status checks
-- Log file review
+> Check the package name and installation status. Exact version numbers shown by Neo depend on the release being installed.
 
 ## Basic Workflow
 
-1. Install the OPC UA Client package in Neo.
-2. Register a Database Server.
-3. Create a new job.
-4. Select the OPC UA Endpoint and target database table.
-5. Map the nodes to collect.
-6. Start the job and check its status from the dashboard.
+1. Install the OPC UA Client package.
+2. Register and test the **Database Server** that will store collected values.
+3. Register and test the **OPC UA Server** that provides the values.
+4. Open `New Job` and create a job.
+5. Select an existing time-based TAG table or enter a new table name.
+6. Add nodes manually or select them in the Node Browser.
+7. Configure Transform, Derived Tags, and Collection Policy when needed.
+8. Start the job and check the Dashboard and logs.
+9. Inspect stored values as a Raw table or Chart in `Data Viewer`.
 
 ## Screen Layout
 
-- Left sidebar: job list, new job creation, and Server Settings
-- Main area: selected job details or the create/edit form
-- Modal windows: Database Server management and log viewing
+![OPC UA Client collecting real test data](/images/app-overview-running.png)
 
-![OPC UA Client main screen]({{< asset "images/opcua-dashboard-main.png" >}})
+- Left sidebar
+  - Job list and run switches
+  - `New Job`
+  - `Server Settings`: Database Server management
+  - `OPC UA Servers`: OPC UA connection profile management
+- Main area
+  - Status, nodes, derived tags, storage, and policies for the selected job
+  - `Live Logs`, `Data Viewer`, `Edit`, and `Delete`
+- Settings dialogs
+  - Database Servers, OPC UA Servers, certificates, and saved logs
 
 ## Documents
 
 - [Server Settings]({{< relref "server-settings" >}})
 - [Create and Run Jobs]({{< relref "create-and-run-job" >}})
 - [Monitoring and Logs]({{< relref "monitoring-and-logs" >}})
+- [Data Viewer]({{< relref "data-viewer" >}})
 - [Troubleshooting]({{< relref "troubleshooting" >}})
 
 ## Navigation
