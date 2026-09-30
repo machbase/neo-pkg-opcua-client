@@ -1,3 +1,25 @@
+/* Keep JSON dialog geometry independent of the package's common modal styles.
+ * Values follow neo-web PR #737; vw/vh refer to the available APP viewport. */
+.opcua-json-viewer .modal.json-key-modal {
+    box-sizing: border-box;
+    border-radius: 4px;
+    box-shadow: 0 20px 50px rgba(0, 0, 0, 0.45);
+}
+.opcua-json-viewer .json-key-modal > .modal-header {
+    padding: 16px 20px;
+}
+.opcua-json-viewer .json-key-modal > .modal-footer {
+    padding: 12px 20px;
+    gap: 8px;
+}
+.opcua-json-viewer .json-key-modal .btn-icon-sm {
+    width: 28px;
+    height: 28px;
+}
+.opcua-json-viewer .json-key-modal .modal-header-title {
+    font-size: 13px;
+}
+
 
 .json-key-modal {
 
@@ -679,8 +701,7 @@
 }
 
 @media (max-width: 760px) {
-    .opcua-json-viewer .modal.json-key-picker-modal,
-    .opcua-json-viewer .modal.json-key-detail-modal {
+    .opcua-json-viewer .modal.json-key-picker-modal {
         height: 90vh;
         max-height: 90vh;
     }

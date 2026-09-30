@@ -1196,7 +1196,9 @@ const COMPACT_NUMBER_FLOOR = 10 ** -Y_AXIS_MAX_FRACTION_DIGITS;
 
 const AXIS_LINE_STYLE = { lineStyle: { color: "#323333" } };
 const AXIS_SPLIT_LINE_STYLE = { color: "#323333", width: 1 };
-const PANEL_AXIS_LABEL_STYLE = { color: "#f8f8f8", fontSize: 10 };
+// ECharts 6 adds horizontal text margins by default; neo-web's ECharts 5 does not.
+// Reset those margins so hideOverlap keeps the same time labels at the same width.
+const PANEL_AXIS_LABEL_STYLE = { color: "#f8f8f8", fontSize: 10, textMargin: 0 };
 const Y_AXIS_LABEL_STYLE = {
     color: "#afb5bc",
     fontSize: 10,
