@@ -1,14 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import * as echarts from "echarts";
+import TagEChart from "../components/dataViewer/TagEChart";
+import JsonKeyPickerModal from "../components/dataViewer/JsonKeyPickerModal";
+import JsonKeyDetailModal from "../components/dataViewer/JsonKeyDetailModal";
+import RawRowDetailModal from "../components/dataViewer/RawRowDetailModal";
+import { jsonKeyDocumentHasKeys } from "../components/dataViewer/jsonKeyTree.js";
 import Icon from "../components/common/Icon";
 import { useApp } from "../context/AppContext";
 import { listTableTags, queryTagBoundaryTime, queryTagData, queryTagDataTotal } from "../api/dataViewer";
-import ZoomInTwo from "../assets/image/btn_zoom in x2@3x.png";
-import ZoomInFour from "../assets/image/btn_zoom in x4@3x.png";
-import ZoomOutTwo from "../assets/image/btn_zoom out x2@3x.png";
-import ZoomOutFour from "../assets/image/btn_zoom out x4@3x.png";
 import {
     DATA_VIEWER_BACK_PATH,
     DEFAULT_DATA_VIEWER_ROWS_PER_TAG,
@@ -17,10 +17,9 @@ import {
     QUICK_TIME_RANGE_GROUPS,
     TIME_FORMATS,
     TIME_ZONE_OPTIONS,
-    buildAssetRows,
+    buildCollectorAssetRows,
     buildDataViewerChartGroups,
     buildDataViewerChartResultsFromRawRows,
-    buildDataViewerEChartOption,
     buildDataViewerGlobalTimeUpdate,
     buildDataViewerHeaderLabels,
     buildDataViewerDefaultChartShiftRawPageUpdate,
@@ -30,24 +29,20 @@ import {
     buildDataViewerSplitRangeUpdate,
     buildDataViewerSplitGroups,
     buildDataViewerShiftMainRangeUpdate,
-    buildDataViewerDragRangeUpdate,
+    buildDataViewerShiftBaseRangeUpdate,
     buildDataViewerTagSelectionUpdate,
-    buildDataViewerWheelZoomRange,
-    buildDataViewerZoomControlRange,
     buildDerivedTagRows,
     buildNeoWebTagAnalyzerMessage,
+    buildNeoWebTagAnalyzerTableName,
     buildRawColumnWidths,
     buildRawResultColumns,
     buildRawRowNameColors,
     buildSeriesColorMap,
     buildTagRows,
     DEFAULT_DATA_VIEWER_TIME_RANGE,
-    extractDataViewerDataZoomRange,
-    formatDataViewerNavigatorRangeLabels,
     formatDataViewerTime,
     formatTimeRangeInput,
     formatTimeRangeLabel,
-    getDataViewerChartRangeMs,
     getDataViewerRawPageSize,
     usesLastDataAnchor,
     getResultHeading,
@@ -56,17 +51,14 @@ import {
     getTimeZoneLabel,
     getVisibleTagRows,
     hasDataViewerRawNextPage,
-    hasExplicitDataViewerDataZoomEventRange,
     hasAssetHierarchy,
     isJsonValueColumn,
-    isSameDataViewerChartRange,
     normalizeSelectedTagNames,
     resolveTagAnalyzerKeyColumns,
     resolveTimeRangeInput,
     resolveTagNodes,
     sendNeoWebTagAnalyzerMessage,
     showsDataViewerTimeControls,
-    JSON_VALUE_COLUMN_BLOCK_REASON,
 } from "./dataViewerModel";
 import useTableColumns from "../hooks/useTableColumns";
 import useModalDismiss from "../hooks/useModalDismiss";
@@ -517,419 +509,7 @@ function FormatTimezoneModal({ timeFormat, timeZone, onApply, onClose }) {
     );
 }
 
-function TagEChart({ series, timeFormat, timeZone, timeRange, displayRange, seriesColors, onDisplayRangeChange, onShiftMainRange }) {
-    const containerRef = useRef(null);
-    const chartRef = useRef(null);
-    const rangeRef = useRef({ currentRange: {}, navigatorRange: {}, onDisplayRangeChange });
-    const dragStateRef = useRef(null);
-    const [dragPreview, setDragPreview] = useState(null);
-    const allPoints = useMemo(() => series.flatMap((item) => item.data), [series]);
-    const hasChartData = allPoints.length > 0;
-    const options = useMemo(
-        () => buildDataViewerEChartOption({ series, timeFormat, timeZone, timeRange, displayRange, seriesColors }),
-        [displayRange, series, seriesColors, timeFormat, timeRange, timeZone]
-    );
-    const currentRange = useMemo(
-        () => getDataViewerChartRangeMs(allPoints, displayRange || timeRange),
-        [allPoints, displayRange, timeRange]
-    );
-    const navigatorRange = useMemo(
-        () => getDataViewerChartRangeMs(allPoints, timeRange),
-        [allPoints, timeRange]
-    );
-
-    useEffect(() => {
-        rangeRef.current = { currentRange, navigatorRange, onDisplayRangeChange };
-    }, [currentRange, navigatorRange, onDisplayRangeChange]);
-
-    useEffect(() => {
-        const container = containerRef.current;
-        if (!container) return undefined;
-
-        const chart = echarts.init(container, null, { renderer: "canvas" });
-        chartRef.current = chart;
-        const getDataZoomEventState = (params = {}) => {
-            const eventState = Array.isArray(params.batch) ? params.batch[0] : params;
-            const dataZoomOptions = chart.getOption?.()?.dataZoom || [];
-            const dataZoomIndex = Number(eventState?.dataZoomIndex);
-            const dataZoomId = eventState?.dataZoomId;
-            const optionState = dataZoomId
-                ? dataZoomOptions.find((item) => item?.id === dataZoomId)
-                : (Number.isFinite(dataZoomIndex) ? dataZoomOptions[dataZoomIndex] : undefined);
-
-            return {
-                ...(optionState || dataZoomOptions[1] || dataZoomOptions[0] || {}),
-                ...(eventState || {}),
-            };
-        };
-        // The axis extent the chart is drawing right now. Its two ends are the plot's left and
-        // right edges expressed in axis units, so value clamping needs no pixel math.
-        const getAxisExtent = () => {
-            const axis = chart.getOption?.()?.xAxis?.[0] || {};
-            const axisMin = Number(axis.min);
-            const axisMax = Number(axis.max);
-            if (Number.isFinite(axisMin) && Number.isFinite(axisMax) && axisMax > axisMin) {
-                return { min: axisMin, max: axisMax };
-            }
-            const { currentRange: activeRange } = rangeRef.current;
-            const start = Number(activeRange?.startTime);
-            const end = Number(activeRange?.endTime);
-            return Number.isFinite(start) && Number.isFinite(end) && end > start ? { min: start, max: end } : undefined;
-        };
-        // Container-relative pixel edges of the plot. `option.grid.left`/`right` cannot be used:
-        // with `containLabel: true` the plot is pushed further inward by the axis label width,
-        // so converting the axis ends back to pixels is the only honest source.
-        const getPlotPixelBounds = () => {
-            const extent = getAxisExtent();
-            if (!extent) return undefined;
-            const left = Number(chart.convertToPixel?.({ xAxisIndex: 0 }, extent.min));
-            const right = Number(chart.convertToPixel?.({ xAxisIndex: 0 }, extent.max));
-            return Number.isFinite(left) && Number.isFinite(right) && right > left ? { left, right } : undefined;
-        };
-        // `reject` keeps a gesture from starting on the legend / navigator / margins.
-        // `clamp` lets an in-flight drag survive the pointer leaving the plot: the pointer keeps
-        // reporting, and the value is pinned to the axis end it walked past.
-        const convertMouseEventToTimestamp = (event, { outside = "reject" } = {}) => {
-            const rect = container.getBoundingClientRect?.();
-            if (!rect) return undefined;
-
-            const pixel = [event.clientX - rect.left, event.clientY - rect.top];
-            if (outside === "reject" && !chart.containPixel?.({ gridIndex: 0 }, pixel)) return undefined;
-
-            const extent = getAxisExtent();
-            const toAxisTime = (time) => {
-                if (!Number.isFinite(time)) return undefined;
-                if (outside !== "clamp" || !extent) return time;
-                return Math.min(Math.max(time, extent.min), extent.max);
-            };
-
-            const fromAxis = chart.convertFromPixel?.({ xAxisIndex: 0 }, pixel);
-            const axisTime = Array.isArray(fromAxis) ? Number(fromAxis[0]) : Number(fromAxis);
-            if (Number.isFinite(axisTime)) return toAxisTime(axisTime);
-
-            const fromGrid = chart.convertFromPixel?.({ gridIndex: 0 }, pixel);
-            const gridTime = Array.isArray(fromGrid) ? Number(fromGrid[0]) : Number(fromGrid);
-            if (Number.isFinite(gridTime)) return toAxisTime(gridTime);
-
-            // Both conversions refused (unresolvable axis finder). Interpolate over the measured
-            // plot bounds before falling back to the middle of the window.
-            const bounds = getPlotPixelBounds();
-            if (bounds && extent) {
-                const ratio = (pixel[0] - bounds.left) / (bounds.right - bounds.left);
-                return toAxisTime(extent.min + ratio * (extent.max - extent.min));
-            }
-            return extent ? (extent.min + extent.max) / 2 : undefined;
-        };
-        const handleMouseWheelZoom = (event) => {
-            if (event.deltaY === 0) return;
-            const { currentRange: activeRange, navigatorRange: activeNavigatorRange, onDisplayRangeChange: activeRangeChange } = rangeRef.current;
-            const anchorTime = convertMouseEventToTimestamp(event);
-            const nextRange = buildDataViewerWheelZoomRange(event.deltaY, anchorTime, activeRange, activeNavigatorRange);
-            if (!nextRange || isSameDataViewerChartRange(nextRange, activeRange)) return;
-
-            event.preventDefault();
-            event.stopPropagation();
-            activeRangeChange?.({
-                from: new Date(nextRange.startTime).toISOString(),
-                to: new Date(nextRange.endTime).toISOString(),
-            }, {
-                from: new Date(activeNavigatorRange.startTime).toISOString(),
-                to: new Date(activeNavigatorRange.endTime).toISOString(),
-            });
-        };
-        const getDragMode = (button) => {
-            if (button === 0) return "zoom-in";
-            if (button === 1) return "pan";
-            if (button === 2) return "zoom-out";
-            return undefined;
-        };
-        const getMainGridBounds = () => {
-            const grid = chart.getOption?.()?.grid?.[0] || {};
-            const top = Number(grid.top);
-            const height = Number(grid.height);
-            return {
-                top: Number.isFinite(top) ? top : 40,
-                height: Number.isFinite(height) ? height : 178,
-            };
-        };
-        // clientX -> container-relative pixel, pinned to the plot edges captured at mousedown.
-        const clampToPlotPixel = (dragState, clientX) => {
-            const containerX = clientX - dragState.containerLeft;
-            const bounds = dragState.plotBounds;
-            if (!bounds) return containerX;
-            return Math.min(Math.max(containerX, bounds.left), bounds.right);
-        };
-        const emitDragRange = (dragState, endTime) => {
-            const nextRange = buildDataViewerDragRangeUpdate({
-                mode: dragState.mode,
-                dragStartTime: dragState.startTime,
-                dragEndTime: endTime,
-                currentRange: dragState.currentRange,
-                navigatorRange: dragState.navigatorRange,
-            });
-            if (!nextRange || isSameDataViewerChartRange(nextRange, dragState.currentRange)) return;
-
-            dragState.onDisplayRangeChange?.({
-                from: new Date(nextRange.startTime).toISOString(),
-                to: new Date(nextRange.endTime).toISOString(),
-            }, {
-                from: new Date(dragState.navigatorRange.startTime).toISOString(),
-                to: new Date(dragState.navigatorRange.endTime).toISOString(),
-            });
-        };
-        const applyDragRange = (event) => {
-            const dragState = dragStateRef.current;
-            dragStateRef.current = null;
-            setDragPreview(null);
-            if (!dragState) return;
-
-            const endTime = convertMouseEventToTimestamp(event, { outside: "clamp" });
-            if (!Number.isFinite(endTime) || Math.abs(event.clientX - dragState.startX) < 8) return;
-
-            emitDragRange(dragState, endTime);
-        };
-        const handleDragMove = (event) => {
-            const dragState = dragStateRef.current;
-            if (!dragState) return;
-            event.preventDefault();
-            event.stopPropagation();
-
-            const endTime = convertMouseEventToTimestamp(event, { outside: "clamp" });
-            if (dragState.mode === "pan") {
-                if (Number.isFinite(endTime) && Math.abs(event.clientX - dragState.startX) >= 1) {
-                    emitDragRange(dragState, endTime);
-                }
-                return;
-            }
-            // Both ends go through the same clamp so the guide stops exactly where the applied
-            // range stops.
-            const startLeft = clampToPlotPixel(dragState, dragState.startX);
-            const currentLeft = clampToPlotPixel(dragState, event.clientX);
-            setDragPreview({
-                mode: dragState.mode,
-                left: Math.min(startLeft, currentLeft),
-                width: Math.abs(currentLeft - startLeft),
-                ...dragState.gridBounds,
-            });
-        };
-        const handleDragEnd = (event) => {
-            if (!dragStateRef.current) return;
-            event.preventDefault();
-            event.stopPropagation();
-            window.removeEventListener("mousemove", handleDragMove, true);
-            window.removeEventListener("mouseup", handleDragEnd, true);
-            applyDragRange(event);
-        };
-        const handleMouseDownDrag = (event) => {
-            const mode = getDragMode(event.button);
-            if (!mode) return;
-            const startTime = convertMouseEventToTimestamp(event);
-            if (!Number.isFinite(startTime)) return;
-
-            const rect = container.getBoundingClientRect?.();
-            if (!rect) return;
-            event.preventDefault();
-            event.stopPropagation();
-
-            const { currentRange: activeRange, navigatorRange: activeNavigatorRange, onDisplayRangeChange: activeRangeChange } = rangeRef.current;
-            dragStateRef.current = {
-                mode,
-                startTime,
-                startX: event.clientX,
-                containerLeft: rect.left,
-                currentRange: activeRange,
-                navigatorRange: activeNavigatorRange,
-                onDisplayRangeChange: activeRangeChange,
-                gridBounds: getMainGridBounds(),
-                plotBounds: getPlotPixelBounds(),
-            };
-            setDragPreview(mode === "pan" ? null : {
-                mode,
-                left: clampToPlotPixel(dragStateRef.current, event.clientX),
-                width: 0,
-                ...dragStateRef.current.gridBounds,
-            });
-            window.addEventListener("mousemove", handleDragMove, true);
-            window.addEventListener("mouseup", handleDragEnd, true);
-        };
-        const handleContextMenu = (event) => {
-            const startTime = convertMouseEventToTimestamp(event);
-            if (!Number.isFinite(startTime)) return;
-            event.preventDefault();
-        };
-        const handleDataZoom = (params) => {
-            const { currentRange: activeRange, navigatorRange: activeNavigatorRange, onDisplayRangeChange: activeRangeChange } = rangeRef.current;
-            const dataZoomState = getDataZoomEventState(params);
-            const nextRange = hasExplicitDataViewerDataZoomEventRange(params)
-                ? extractDataViewerDataZoomRange(params, activeRange, activeNavigatorRange)
-                : extractDataViewerDataZoomRange(dataZoomState, activeRange, activeNavigatorRange);
-
-            if (!nextRange || isSameDataViewerChartRange(nextRange, activeRange)) return;
-            activeRangeChange?.({
-                from: new Date(nextRange.startTime).toISOString(),
-                to: new Date(nextRange.endTime).toISOString(),
-            }, {
-                from: new Date(activeNavigatorRange.startTime).toISOString(),
-                to: new Date(activeNavigatorRange.endTime).toISOString(),
-            });
-        };
-        chart.on("datazoom", handleDataZoom);
-        container.addEventListener("wheel", handleMouseWheelZoom, { passive: false, capture: true });
-        container.addEventListener("mousedown", handleMouseDownDrag, { capture: true });
-        container.addEventListener("contextmenu", handleContextMenu, { capture: true });
-
-        const resize = () => chart.resize();
-        let observer;
-        if (typeof ResizeObserver !== "undefined") {
-            observer = new ResizeObserver(resize);
-            observer.observe(container);
-        } else {
-            window.addEventListener("resize", resize);
-        }
-        resize();
-
-        return () => {
-            chart.off("datazoom", handleDataZoom);
-            container.removeEventListener("wheel", handleMouseWheelZoom, true);
-            container.removeEventListener("mousedown", handleMouseDownDrag, true);
-            container.removeEventListener("contextmenu", handleContextMenu, true);
-            window.removeEventListener("mousemove", handleDragMove, true);
-            window.removeEventListener("mouseup", handleDragEnd, true);
-            if (observer) observer.disconnect();
-            else window.removeEventListener("resize", resize);
-            chart.dispose();
-            chartRef.current = null;
-            dragStateRef.current = null;
-        };
-    }, [hasChartData]);
-
-    useEffect(() => {
-        if (!chartRef.current) return;
-        chartRef.current.setOption(options, true);
-        if (Number.isFinite(currentRange.startTime) && Number.isFinite(currentRange.endTime)) {
-            chartRef.current.dispatchAction?.({
-                type: "dataZoom",
-                dataZoomId: "panel-inside-data-zoom",
-                startValue: currentRange.startTime,
-                endValue: currentRange.endTime,
-            });
-            chartRef.current.dispatchAction?.({
-                type: "dataZoom",
-                dataZoomId: "panel-slider-data-zoom",
-                startValue: currentRange.startTime,
-                endValue: currentRange.endTime,
-            });
-        }
-        chartRef.current.resize();
-    }, [currentRange, options]);
-
-    const applyZoomControl = useCallback((action, zoom) => {
-        const nextRange = buildDataViewerZoomControlRange(action, currentRange, navigatorRange, zoom);
-        if (!nextRange || isSameDataViewerChartRange(nextRange, currentRange)) return;
-        onDisplayRangeChange?.({
-            from: new Date(nextRange.startTime).toISOString(),
-            to: new Date(nextRange.endTime).toISOString(),
-        }, {
-            from: new Date(navigatorRange.startTime).toISOString(),
-            to: new Date(navigatorRange.endTime).toISOString(),
-        });
-    }, [currentRange, navigatorRange, onDisplayRangeChange]);
-
-    const zoomControlsDisabled = !Number.isFinite(currentRange.startTime) ||
-        !Number.isFinite(currentRange.endTime) ||
-        !Number.isFinite(navigatorRange.startTime) ||
-        !Number.isFinite(navigatorRange.endTime);
-    const navigatorLabels = useMemo(
-        () => formatDataViewerNavigatorRangeLabels(navigatorRange, timeFormat, timeZone),
-        [navigatorRange, timeFormat, timeZone]
-    );
-
-    return (
-        <div className="data-viewer-chart-shell">
-            <button
-                type="button"
-                className="data-viewer-chart-range-shift data-viewer-chart-range-shift-left"
-                title="Move range backward"
-                aria-label="Move range backward"
-                disabled={zoomControlsDisabled}
-                onClick={() => onShiftMainRange?.("backward", currentRange, navigatorRange)}
-            >
-                <Icon name="chevron_left" className="icon-sm" />
-            </button>
-            <div className="data-viewer-chart-footer-form" aria-label="Chart zoom controls">
-                <div className="data-viewer-chart-toolbar-controls">
-                    <div className="data-viewer-chart-toolbar-group">
-                        {[
-                            ["zoom-in", ZoomInFour, "Zoom in", 0.4],
-                            ["zoom-in", ZoomInTwo, "Zoom in", 0.2],
-                            ["focus", undefined, "Focus", undefined],
-                            ["zoom-out", ZoomOutTwo, "Zoom out", 0.2],
-                            ["zoom-out", ZoomOutFour, "Zoom out", 0.4],
-                        ].map(([action, image, label, zoom], index) => (
-                            <button
-                                key={`${action}-${index}`}
-                                type="button"
-                                className="data-viewer-chart-toolbar-button"
-                                title={label}
-                                aria-label={label}
-                                disabled={zoomControlsDisabled}
-                                onClick={() => applyZoomControl(action, zoom)}
-                            >
-                                {image ? (
-                                    <img src={image} alt="" className="data-viewer-chart-toolbar-image" />
-                                ) : (
-                                    <Icon name="center_focus_strong" className="data-viewer-chart-toolbar-icon" />
-                                )}
-                            </button>
-                        ))}
-                    </div>
-                </div>
-            </div>
-            <div
-                ref={containerRef}
-                className={`data-viewer-chart${dragStateRef.current?.mode === "pan" ? " is-panning" : ""}`}
-                data-display-from={Number.isFinite(currentRange.startTime) ? String(Math.floor(currentRange.startTime)) : ""}
-                data-display-to={Number.isFinite(currentRange.endTime) ? String(Math.ceil(currentRange.endTime)) : ""}
-                data-navigator-from={Number.isFinite(navigatorRange.startTime) ? String(Math.floor(navigatorRange.startTime)) : ""}
-                data-navigator-to={Number.isFinite(navigatorRange.endTime) ? String(Math.ceil(navigatorRange.endTime)) : ""}
-            />
-            {dragPreview && (
-                <div
-                    className={`data-viewer-chart-drag-preview data-viewer-chart-drag-preview-${dragPreview.mode}`}
-                    style={{
-                        left: `${48 + Math.max(0, dragPreview.left)}px`,
-                        top: `${dragPreview.top}px`,
-                        width: `${dragPreview.width}px`,
-                        height: `${dragPreview.height}px`,
-                    }}
-                />
-            )}
-            {!hasChartData && (
-                <div className="data-viewer-chart-empty-overlay" aria-live="polite">
-                    No chart data
-                </div>
-            )}
-            {(navigatorLabels.start || navigatorLabels.end) && (
-                <div className="data-viewer-chart-navigator-labels" aria-label="Mini chart time range">
-                    <span title={navigatorLabels.start}>{navigatorLabels.start}</span>
-                    <span title={navigatorLabels.end}>{navigatorLabels.end}</span>
-                </div>
-            )}
-            <button
-                type="button"
-                className="data-viewer-chart-range-shift data-viewer-chart-range-shift-right"
-                title="Move range forward"
-                aria-label="Move range forward"
-                disabled={zoomControlsDisabled}
-                onClick={() => onShiftMainRange?.("forward", currentRange, navigatorRange)}
-            >
-                <Icon name="chevron_right" className="icon-sm" />
-            </button>
-        </div>
-    );
-}
-
-export default function DataViewerPage({ collectors, detail, embedded = false }) {
+export default function DataViewerPage({ collectors, detail, servers = [], serversLoading = false, embedded = false }) {
     const navigate = useNavigate();
     const { selectedCollectorId, notify } = useApp();
     const collector = collectors.find((c) => c.id === selectedCollectorId);
@@ -940,10 +520,18 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
     );
     const dbServer = typeof config.db === "string" ? config.db : "";
     const dbTable = config.dbTable || "";
+    const dbServerProfile = servers.find((server) => server.name === dbServer);
     const valueColumn = selectedValueColumn(config);
-    // One columns lookup feeds both the JSON block and the Tag Analyzer key columns, since the
+    // One columns lookup feeds both JSON exploration and the Tag Analyzer key columns, since the
     // collector config only stores column names — never which ones carry the TAG flags.
-    const { columns: tableColumns } = useTableColumns({ server: dbServer, table: dbTable });
+    const { columns: tableColumns, checked: columnsChecked, error: columnsError, retry: retryColumns } =
+        useTableColumns({ server: dbServer, table: dbTable });
+    const valueColumnFound = tableColumns.some((column) =>
+        String(column?.name ?? "").toUpperCase() === valueColumn.toUpperCase());
+    const schemaError = columnsError || (columnsChecked && !valueColumnFound
+        ? `Value column '${valueColumn}' was not found in the table.` : "");
+    const schemaReady = columnsChecked && !schemaError;
+    const schemaPending = Boolean(dbServer && dbTable && !columnsChecked);
     const jsonValueColumn = useMemo(() => isJsonValueColumn(tableColumns, valueColumn), [tableColumns, valueColumn]);
     const tagAnalyzerKeyColumns = useMemo(() => resolveTagAnalyzerKeyColumns(tableColumns), [tableColumns]);
     const stringValueColumn = config.stringOnly ? "" : (config.stringValueColumn || "");
@@ -953,20 +541,48 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
     const [assetHierarchyChecked, setAssetHierarchyChecked] = useState(false);
     const [tagsLoading, setTagsLoading] = useState(false);
     const [tagError, setTagError] = useState("");
-    const nodes = useMemo(() => resolveTagNodes(configuredNodes, tableTags), [configuredNodes, tableTags]);
+    const [tagsAttempt, setTagsAttempt] = useState(0);
+    const retryTableMetadata = () => {
+        retryColumns();
+        setTagError("");
+        setTableTags([]);
+        setAssetHierarchy(null);
+        setAssetHierarchyChecked(false);
+        setTagsLoading(true);
+        setTagsAttempt((attempt) => attempt + 1);
+    };
+    const nodes = useMemo(() => !schemaReady ? [] : jsonValueColumn
+        ? resolveTagNodes([], tableTags.filter((tag) => tag.name === collector?.id))
+        : resolveTagNodes(configuredNodes, tableTags), [collector?.id, configuredNodes, jsonValueColumn, schemaReady, tableTags]);
     const tagRows = useMemo(() => buildTagRows(nodes), [nodes]);
     const derivedTagRows = useMemo(
-        () => buildDerivedTagRows(config?.derivedTags, nodes.map((node) => node?.name)),
-        [config, nodes]
+        () => !schemaReady || jsonValueColumn ? [] : buildDerivedTagRows(config?.derivedTags, nodes.map((node) => node?.name)),
+        [config, jsonValueColumn, nodes, schemaReady]
     );
-    const showAssetTab = hasAssetHierarchy(assetHierarchy);
     const assetHierarchyPending = Boolean(dbServer && dbTable && !assetHierarchyChecked && tagsLoading);
-    const assetRows = useMemo(() => buildAssetRows(assetHierarchy, tableTags), [assetHierarchy, tableTags]);
+    const assetRows = useMemo(() => schemaReady
+        ? buildCollectorAssetRows(assetHierarchy, tableTags, collector?.id, jsonValueColumn) : [],
+        [assetHierarchy, collector?.id, jsonValueColumn, schemaReady, tableTags]);
+    const showAssetTab = schemaReady && hasAssetHierarchy(assetHierarchy) &&
+        (!jsonValueColumn || assetRows.some((row) => row.type === "tag"));
     const [activeTagTab, setActiveTagTab] = useState("tags");
     const [tagFilter, setTagFilter] = useState("");
     const [collapsedTagFolders, setCollapsedTagFolders] = useState(() => new Set());
     const [selectedTagNames, setSelectedTagNames] = useState([]);
     const [mode, setMode] = useState("raw");
+    const [jsonKeyPicker, setJsonKeyPicker] = useState(null);
+    const [jsonKeyDetail, setJsonKeyDetail] = useState(null);
+    const [rowDetailIndex, setRowDetailIndex] = useState(null);
+    const jsonKeyPickerViewRef = useRef();
+    useEffect(() => {
+        setJsonKeyPicker(null);
+        setJsonKeyDetail(null);
+        setRowDetailIndex(null);
+        jsonKeyPickerViewRef.current = undefined;
+    }, [selectedCollectorId, dbServer, dbTable, valueColumn]);
+    useEffect(() => {
+        if (jsonValueColumn || !schemaReady) setMode("raw");
+    }, [jsonValueColumn, schemaReady]);
     const [resultPage, setResultPage] = useState(1);
     const [range, setRange] = useState(DEFAULT_DATA_VIEWER_TIME_RANGE);
     // range is the expression the user typed (now-1h, last-5m, ...); pinnedRange is that expression
@@ -994,6 +610,7 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
     const [error, setError] = useState("");
     const [rawRowsPerTag, setRawRowsPerTag] = useState(DEFAULT_DATA_VIEWER_ROWS_PER_TAG);
     const [result, setResult] = useState({ rows: [], total: 0, page: 1, pageSize: getDataViewerRawPageSize([]) });
+    useEffect(() => setRowDetailIndex(null), [result.rows]);
     const [rawPageBounds, setRawPageBounds] = useState(null);
     const [rawPageRequest, setRawPageRequest] = useState({ page: 1 });
     const rawScrollRef = useRef(null);
@@ -1041,7 +658,7 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
         return () => {
             alive = false;
         };
-    }, [dbServer, dbTable, notify]);
+    }, [dbServer, dbTable, notify, tagsAttempt]);
 
     const selectableRows = useMemo(
         () => [...tagRows, ...derivedTagRows, ...assetRows].filter((row) => row.type === "tag" && row.tag?.name),
@@ -1154,7 +771,7 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
         () => getVisibleTagRows(filteredTagRows, collapsedTagFolders),
         [collapsedTagFolders, filteredTagRows]
     );
-    const canQuery = Boolean(dbServer && dbTable && selectedTagNames.length > 0);
+    const canQuery = Boolean(schemaReady && dbServer && dbTable && selectedTagNames.length > 0);
     const chartGroups = useMemo(
         () => buildDataViewerChartGroups({
             selectedTagNames,
@@ -1518,9 +1135,10 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
     }, [canQuery, chartGroups, mode, result.rows, splitChartRows]);
 
     const handleModeChange = useCallback((nextMode) => {
+        if ((!schemaReady || jsonValueColumn) && nextMode === "chart") return;
         if (nextMode === mode) return;
         setMode(nextMode);
-    }, [mode]);
+    }, [jsonValueColumn, mode, schemaReady]);
 
     const activeRange = range;
     const rangeEditorRange = useMemo(() => {
@@ -1561,6 +1179,20 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
         overscan: 16,
     });
     const virtualRows = rowVirtualizer.getVirtualItems();
+    const openRawRow = useCallback((index) => {
+        const row = result.rows[index];
+        if (!row) return;
+        if (!jsonValueColumn || !jsonKeyDocumentHasKeys(row.value)) {
+            setJsonKeyPicker(null);
+            setJsonKeyDetail(null);
+            setRowDetailIndex(index);
+            return;
+        }
+        setRowDetailIndex(null);
+        jsonKeyPickerViewRef.current = undefined;
+        setJsonKeyPicker({ tagName: String(row.name), document: row.value,
+            baseLabel: formatDataViewerTime(row.time, timeFormat, timeZone), selected: [] });
+    }, [jsonValueColumn, result.rows, timeFormat, timeZone]);
     const rawTableBody = useMemo(() => {
         const first = virtualRows[0];
         const last = virtualRows[virtualRows.length - 1];
@@ -1573,7 +1205,18 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
                     const row = result.rows[virtualRow.index];
                     if (!row) return null;
                     return (
-                        <tr key={virtualRow.key}>
+                        <tr key={virtualRow.key}
+                            className={`data-viewer-raw-row${jsonValueColumn ? " data-viewer-json-row" : ""}`}
+                            role="button"
+                            tabIndex={0}
+                            aria-label={jsonValueColumn ? `Choose JSON keys from ${row.name}` : `View row from ${row.name}`}
+                            onClick={() => openRawRow(virtualRow.index)}
+                            onKeyDown={(event) => {
+                                if (event.key === "Enter" || event.key === " ") {
+                                    event.preventDefault();
+                                    openRawRow(virtualRow.index);
+                                }
+                            }}>
                             {rawColumns.map((column) => {
                                 const value = column.key === "time"
                                     ? formatDataViewerTime(row[column.key], timeFormat, timeZone)
@@ -1586,7 +1229,7 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
                                     );
                                 }
                                 return (
-                                    <td key={column.key} className={`mono${column.key === "value" ? " is-numeric" : ""}`}>
+                                    <td key={column.key} className={`mono${column.key === "value" && !jsonValueColumn ? " is-numeric" : ""}`}>
                                         {value}
                                     </td>
                                 );
@@ -1597,24 +1240,13 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
                 {padBottom > 0 && <tr aria-hidden="true" style={{ height: padBottom }} />}
             </tbody>
         );
-    }, [rawColumns, rawNameColors, result.rows, rowVirtualizer, timeFormat, timeZone, virtualRows]);
+    }, [jsonValueColumn, openRawRow, rawColumns, rawNameColors, result.rows, rowVirtualizer, timeFormat, timeZone, virtualRows]);
 
     if (!collector) {
         return (
             <div className="empty-state flex flex-col items-center justify-center h-full">
                 <Icon name="query_stats" className="icon-lg opacity-30 mb-12" />
                 <p className="text-md font-medium text-on-surface-tertiary">Select a job from the sidebar</p>
-            </div>
-        );
-    }
-
-    // The dashboard disables the entry button, but the route can still be reached by URL.
-    if (jsonValueColumn) {
-        return (
-            <div className="empty-state flex flex-col items-center justify-center h-full">
-                <Icon name="data_object" className="icon-lg opacity-30 mb-12" />
-                <p className="text-md font-medium text-on-surface-tertiary">{JSON_VALUE_COLUMN_BLOCK_REASON}</p>
-                <p className="text-sm text-on-surface-tertiary mt-8">{`${dbTable} · ${valueColumn}`}</p>
             </div>
         );
     }
@@ -1726,6 +1358,22 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
             setResultPage(1);
         }
         setRangeEditor(null);
+    };
+    const handleShiftBaseRange = (direction) => {
+        if (!canQuery || loading) return;
+        const next = buildDataViewerShiftBaseRangeUpdate({ direction, range: pinnedRange || activeRange });
+        if (!next) return;
+        rowsRequestRef.current += 1;
+        chartRequestRef.current += 1;
+        endPageRequestRef.current += 1;
+        setError("");
+        setChartError("");
+        setChartViewRanges({});
+        setChartNavigatorRanges({});
+        setRange(next);
+        setRawPageBounds(null);
+        setRawPageRequest({ page: 1 });
+        setResultPage(1);
     };
     // Re-pin the query window against the current time (now) / the latest data time (last).
     // A window given as absolute times resolves to the same values, so this effectively just re-queries.
@@ -2064,7 +1712,12 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
                                     disabled={assetHierarchyPending}
                                 />
                             </div>
-                            {tagError && <div className="error-box">{tagError}</div>}
+                            {(schemaError || tagError) && <div className="error-box" role="alert">
+                                {schemaError && <div>Could not check the table columns: {schemaError}</div>}
+                                {tagError && <div>{tagError}</div>}
+                                <button type="button" className="btn btn-sm btn-secondary" onClick={retryTableMetadata}
+                                    disabled={schemaPending || tagsLoading}>Retry</button>
+                            </div>}
                             <div className="data-viewer-tag-list">
                                 {!assetHierarchyPending && visibleTagRows.map((row) => {
                                     if (row.type === "folder") {
@@ -2110,8 +1763,9 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
                                         </label>
                                     );
                                 })}
-                                {(tagsLoading || assetHierarchyPending) && <div className="empty-state">Loading tags...</div>}
-                                {!tagsLoading && !assetHierarchyPending && visibleTagRows.length === 0 && <div className="empty-state">No tags</div>}
+                                {schemaPending && <div className="empty-state">Checking table columns...</div>}
+                                {(tagsLoading || assetHierarchyPending) && !schemaPending && !schemaError && <div className="empty-state">Loading tags...</div>}
+                                {!tagsLoading && !assetHierarchyPending && !schemaPending && !schemaError && !tagError && visibleTagRows.length === 0 && <div className="empty-state">No tags</div>}
                             </div>
                         </aside>
 
@@ -2175,26 +1829,30 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
                                                 >
                                                     <Icon name="public" className="icon-sm" />
                                                 </button>
-                                                <button type="button" aria-label="Set time range" title={timeRangeButtonText} className="btn btn-sm btn-ghost data-viewer-time-range-button" onClick={() => setRangeEditor({ type: "global" })}>
-                                                    <Icon name="calendar_month" className="icon-sm" />
-                                                    <span>{timeRangeButtonText}</span>
-                                                </button>
+                                                <div className="data-viewer-range-chip">
+                                                    <span className="data-viewer-range-chip-axis">TIME</span>
+                                                    <button type="button" aria-label="Time previous" disabled={!canQuery || loading} onClick={() => handleShiftBaseRange("backward")}><Icon name="chevron_left" className="icon-sm" /></button>
+                                                    <button type="button" aria-label="Set time range" title={timeRangeButtonText} className="data-viewer-range-chip-value" onClick={() => setRangeEditor({ type: "global" })}>{timeRangeButtonText}</button>
+                                                    <button type="button" aria-label="Time next" disabled={!canQuery || loading} onClick={() => handleShiftBaseRange("forward")}><Icon name="chevron_right" className="icon-sm" /></button>
+                                                </div>
                                             </div>
                                         )}
                                         <div className="data-viewer-segmented data-viewer-mode-control" role="tablist" aria-label="Result mode">
                                             <button type="button" role="tab" aria-selected={mode === "raw"} className={`data-viewer-segmented-item ${mode === "raw" ? "is-active" : ""}`} onClick={() => handleModeChange("raw")}>
                                                 Raw
                                             </button>
-                                            <button type="button" role="tab" aria-selected={mode === "chart"} className={`data-viewer-segmented-item ${mode === "chart" ? "is-active" : ""}`} onClick={() => handleModeChange("chart")}>
+                                            {schemaReady && !jsonValueColumn && <button type="button" role="tab" aria-selected={mode === "chart"} className={`data-viewer-segmented-item ${mode === "chart" ? "is-active" : ""}`} onClick={() => handleModeChange("chart")}>
                                                 Chart
-                                            </button>
+                                            </button>}
                                         </div>
                                     </div>
                                 </div>
                             </div>
 
                             {error && <div className="error-box">{error}</div>}
-                            {!canQuery && <div className="empty-state">Database table and tag are required</div>}
+                            {!canQuery && <div className="empty-state">{schemaError
+                                ? "Table columns could not be checked. Retry to view the data."
+                                : schemaPending ? "Checking table columns..." : "Database table and tag are required"}</div>}
                             {canQuery && mode === "raw" && (
                                 <div className="table-card data-viewer-raw-card">
                                     <div className="table-card-body" ref={rawScrollRef}>
@@ -2379,6 +2037,72 @@ export default function DataViewerPage({ collectors, detail, embedded = false })
                     </div>
                 </div>
             </div>
+            {rowDetailIndex !== null && result.rows[rowDetailIndex] && <RawRowDetailModal
+                subtitle={dbTable}
+                position={`row ${rowDetailIndex + 1} of ${result.rows.length}`}
+                title={String(result.rows[rowDetailIndex].name ?? "")}
+                fields={rawColumns.map((column) => {
+                    const columnName = column.key === "time" ? tagAnalyzerKeyColumns.timeColumn || "TIME"
+                        : column.key === "name" ? tagAnalyzerKeyColumns.nameColumn || "NAME"
+                        : column.key === "value" ? valueColumn : column.key;
+                    const schema = tableColumns.find((item) => item.name?.toUpperCase() === columnName.toUpperCase());
+                    return { key: column.key, label: column.label, typeLabel: schema?.type?.toUpperCase(),
+                        value: column.key === "time" ? formatDataViewerTime(result.rows[rowDetailIndex].time, timeFormat, timeZone)
+                            : result.rows[rowDetailIndex][column.key] };
+                })}
+                hasPrevious={rowDetailIndex > 0}
+                hasNext={rowDetailIndex < result.rows.length - 1}
+                onPrevious={() => setRowDetailIndex((current) => Math.max(0, current - 1))}
+                onNext={() => setRowDetailIndex((current) => Math.min(result.rows.length - 1, current + 1))}
+                onClose={() => setRowDetailIndex(null)}
+            />}
+            {jsonKeyPicker && !jsonKeyDetail && <JsonKeyPickerModal
+                tagName={jsonKeyPicker.tagName}
+                baseLabel={jsonKeyPicker.baseLabel}
+                document={jsonKeyPicker.document}
+                valueColumn={valueColumn}
+                initialSelected={jsonKeyPicker.selected}
+                initialView={jsonKeyPickerViewRef.current}
+                onViewChange={(view) => { jsonKeyPickerViewRef.current = view; }}
+                onClose={() => setJsonKeyPicker(null)}
+                onConfirm={(paths) => {
+                    setJsonKeyPicker((current) => ({ ...current, selected: paths }));
+                    setJsonKeyDetail({ tagName: jsonKeyPicker.tagName, paths });
+                }}
+            />}
+            {jsonKeyDetail && <JsonKeyDetailModal
+                server={dbServer}
+                table={dbTable}
+                tagName={jsonKeyDetail.tagName}
+                paths={jsonKeyDetail.paths}
+                from={pinnedRange?.from}
+                to={pinnedRange?.to}
+                valueColumn={valueColumn}
+                baseLabel={tagAnalyzerKeyColumns.timeColumn || "TIME"}
+                formatBase={(value) => formatDataViewerTime(value, timeFormat, timeZone)}
+                timeFormat={timeFormat}
+                timeZone={timeZone}
+                onBack={() => setJsonKeyDetail(null)}
+                onClose={() => { setJsonKeyDetail(null); setJsonKeyPicker(null); }}
+                onOpenTagAnalyzer={(paths, windowRange) => {
+                    if (serversLoading) return "Database connection settings are still loading.";
+                    if (!dbServerProfile) return `Database connection '${dbServer}' is unavailable.`;
+                    const qualifiedTable = buildNeoWebTagAnalyzerTableName({
+                        table: dbTable, database: dbServerProfile.database, user: dbServerProfile.user,
+                    });
+                    if (!qualifiedTable.ok) return qualifiedTable.reason;
+                    const built = buildNeoWebTagAnalyzerMessage({
+                        title: jsonKeyDetail.tagName, table: qualifiedTable.table,
+                        tagNames: [jsonKeyDetail.tagName], jsonKeys: paths, range: windowRange,
+                        valueColumn, ...tagAnalyzerKeyColumns,
+                    });
+                    if (!built.ok) return built.reason;
+                    if (window.parent === window) return "Open this Data Viewer inside neo-web to use Tag Analyzer.";
+                    if (!sendNeoWebTagAnalyzerMessage(built.message, window.parent, window.location.origin)) return "Cannot send Tag Analyzer request to neo-web.";
+                    setJsonKeyDetail(null);
+                    setJsonKeyPicker(null);
+                }}
+            />}
             {rangeEditor && (
                 <TimeRangeModal
                     range={rangeEditorRange}

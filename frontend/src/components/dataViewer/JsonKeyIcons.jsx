@@ -1,0 +1,22 @@
+import Icon from "../common/Icon";
+const glyph = (name) => function Glyph({ className = "" }) {
+    return <Icon name={name} className={`icon-sm ${className}`} />;
+};
+export const VscArrowLeft = glyph("arrow_back");
+export const VscChevronDown = glyph("expand_more");
+export const VscChevronUp = glyph("expand_less");
+export const VscChevronLeft = glyph("chevron_left");
+export const VscCheck = glyph("check");
+export const VscCopy = glyph("content_copy");
+export const VscError = glyph("error");
+export const VscChevronRight = glyph("chevron_right");
+export const VscChromeClose = glyph("close");
+export const VscClearAll = glyph("clear_all");
+export const VscClose = glyph("close");
+export const VscListSelection = glyph("checklist");
+export const VscSymbolArray = glyph("data_array");
+export const VscSymbolBoolean = glyph("toggle_on");
+export const VscSymbolNamespace = glyph("data_object");
+export const VscSymbolNumeric = glyph("numbers");
+export const VscSymbolString = glyph("text_fields");
+export const MuiTagAnalyzer = glyph("analytics");

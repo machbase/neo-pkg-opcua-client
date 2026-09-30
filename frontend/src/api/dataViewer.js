@@ -1,6 +1,17 @@
 import { request } from "./client.js";
 import { encodeDataViewerQuery } from "./dataViewerQuery.js";
 import { webRequest } from "./webClient.js";
+import { getJsonPathSegments, jsonPathToSqlPath } from "../utils/dashboardJsonValue.js";
+
+export function queryTagJsonKeyData({ server, table, tagName, paths, from, to, valueColumn, signal }) {
+    const keys = paths.map((path) => {
+        jsonPathToSqlPath(path);
+        return getJsonPathSegments(path);
+    });
+    return request("POST", "/cgi-bin/api/db/table/json-keys", {
+        server, table, name: tagName, keys, from, to, valueColumn,
+    }, { signal });
+}
 
 export function listTableTags({ server, table }) {
     const params = encodeDataViewerQuery({ server, table });

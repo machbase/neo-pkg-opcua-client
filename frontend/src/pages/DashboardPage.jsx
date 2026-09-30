@@ -2,7 +2,6 @@ import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useNavigate } from "react-router";
 import { useApp } from "../context/AppContext";
 import useJsonValueColumn from "../hooks/useJsonValueColumn";
-import { JSON_VALUE_COLUMN_BLOCK_REASON } from "./dataViewerModel";
 import { JSON_REQUIRES_REQUEST_TIME } from "../components/collectors/CollectionPolicyCard";
 import * as api from "../api/collectors";
 import StatusBadge from "../components/common/StatusBadge";
@@ -283,20 +282,15 @@ export default function DashboardPage({ collectors, detail, onDelete }) {
                             <Icon name="terminal" className="icon-sm" />
                             <span>Live Logs</span>
                         </button>
-                        <span
-                            className={jsonValueColumn ? "btn-blocked-hint" : undefined}
-                            title={jsonValueColumn ? JSON_VALUE_COLUMN_BLOCK_REASON : undefined}
+
+                        <button
+                            type="button"
+                            onClick={() => navigate(buildDataViewerPath(collector.id))}
+                            className="btn btn-primary-outline"
                         >
-                            <button
-                                type="button"
-                                disabled={jsonValueColumn}
-                                onClick={() => navigate(buildDataViewerPath(collector.id))}
-                                className="btn btn-primary-outline"
-                            >
-                                <Icon name="query_stats" className="icon-sm" />
-                                <span>Data Viewer</span>
-                            </button>
-                        </span>
+                            <Icon name="query_stats" className="icon-sm" />
+                            <span>Data Viewer</span>
+                        </button>
                         <button
                             disabled={collector.status === "running"}
                             onClick={() => navigate(`/collectors/${encodeURIComponent(collector.id)}/edit`)}

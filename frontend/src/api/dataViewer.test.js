@@ -9,6 +9,7 @@ import {
     queryTagData,
     queryTagDataTotal,
     queryTagChartData,
+    queryTagJsonKeyData,
 } from "./dataViewer.js";
 import { encodeDataViewerQuery } from "./dataViewerQuery.js";
 
@@ -67,6 +68,26 @@ test("buildDataViewerChartQueryPath uses chart endpoint with repeated names", ()
         }),
         "/cgi-bin/api/db/table/chart?server=local&table=TAG&names=sensor.a&names=sensor.b&from=2026-06-01T00%3A00%3A00.000Z&to=2026-06-01T01%3A00%3A00.000Z"
     );
+});
+
+test("JSON projection sends segment arrays without splitting literal OPC UA node names", async () => {
+    const originalFetch = globalThis.fetch;
+    const abort = new AbortController();
+    let received;
+    globalThis.fetch = async (url, options) => {
+        received = { url, options };
+        return { status: 200, text: async () => JSON.stringify({ ok: true, data: { rows: [{ base: 1000, values: [23.5, "on"] }] } }) };
+    };
+    try {
+        const data = await queryTagJsonKeyData({ server: "db", table: "TAG", tagName: "collector,1", valueColumn: "PAYLOAD", paths: ["[sensor.value]", "[sensor][status]"], from: 1000, to: 2000, signal: abort.signal });
+        assert.equal(received.options.method, "POST");
+        assert.equal(received.options.signal, abort.signal);
+        assert.deepEqual(JSON.parse(received.options.body).keys, [["sensor.value"], ["sensor", "status"]]);
+        assert.equal(JSON.parse(received.options.body).name, "collector,1");
+        assert.deepEqual(data.rows[0].values, [23.5, "on"]);
+    } finally {
+        globalThis.fetch = originalFetch;
+    }
 });
 
 test("queryTagData sends raw cursor parameters", async () => {

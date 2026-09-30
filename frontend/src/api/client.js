@@ -8,7 +8,7 @@ class ApiError extends Error {
 
 const API_BASE = import.meta.env?.VITE_API_BASE ?? "/public/neo-pkg-opcua-client";
 
-async function request(method, path, body) {
+async function request(method, path, body, { signal } = {}) {
     const opts = {
         method,
         headers: {
@@ -18,6 +18,7 @@ async function request(method, path, body) {
     if (body !== undefined) {
         opts.body = JSON.stringify(body);
     }
+    if (signal) opts.signal = signal;
 
     const res = await fetch(API_BASE + path, opts);
 

@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import * as serversApi from "../api/servers";
 
 /**
@@ -8,43 +8,47 @@ import * as serversApi from "../api/servers";
  * — whether the value column is JSON, which columns carry the PRIMARY KEY and BASETIME flags
  * — has to come from here.
  *
- * `checked` stays false until the lookup settles so callers can avoid acting on an empty
- * column list before the answer is known. A failed lookup reports no columns rather than an
- * error: callers treat that as "unknown" and fall back to their permissive default, and the
- * viewer surfaces the real failure on its own.
+ * `checked` stays false until the lookup settles. A failed lookup remains an error,
+ * because an empty column list cannot establish whether VALUE is JSON.
  *
  * @param {{ server?: string, table?: string }} params
- * @returns {{ columns: Array<{ name?: string, type?: string, primaryKey?: boolean, basetime?: boolean }>, checked: boolean }}
+ * @returns {{ columns: Array<{ name?: string, type?: string, primaryKey?: boolean, basetime?: boolean }>, checked: boolean, error: string, retry: function }}
  */
 export default function useTableColumns({ server, table }) {
-    const [columns, setColumns] = useState([]);
-    const [checked, setChecked] = useState(false);
+    const [lookup, setLookup] = useState({ server: "", table: "", columns: [], checked: false, error: "" });
+    const [attempt, setAttempt] = useState(0);
+    const retry = useCallback(() => {
+        setLookup((current) => ({ ...current, columns: [], checked: false, error: "" }));
+        setAttempt((current) => current + 1);
+    }, []);
 
     useEffect(() => {
         if (!server || !table) {
-            setColumns([]);
-            setChecked(false);
+            setLookup({ server, table, columns: [], checked: false, error: "" });
             return undefined;
         }
 
         let cancelled = false;
-        setChecked(false);
+        setLookup({ server, table, columns: [], checked: false, error: "" });
         (async () => {
             try {
                 const data = await serversApi.listColumns(server, table);
                 if (cancelled) return;
-                setColumns(Array.isArray(data?.columns) ? data.columns : []);
-            } catch {
-                if (!cancelled) setColumns([]);
-            } finally {
-                if (!cancelled) setChecked(true);
+                if (!Array.isArray(data?.columns)) throw new Error("Invalid table column response");
+                setLookup({ server, table, columns: data.columns, checked: true, error: "" });
+            } catch (reason) {
+                if (!cancelled) setLookup({ server, table, columns: [], checked: true,
+                    error: reason?.reason || reason?.message || "Failed to load table columns" });
             }
         })();
 
         return () => {
             cancelled = true;
         };
-    }, [server, table]);
+    }, [server, table, attempt]);
 
-    return { columns, checked };
+    if (lookup.server !== server || lookup.table !== table) {
+        return { columns: [], checked: false, error: "", retry };
+    }
+    return { columns: lookup.columns, checked: lookup.checked, error: lookup.error, retry };
 }

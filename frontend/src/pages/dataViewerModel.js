@@ -1,3 +1,5 @@
+import { toTagAnalyzerJsonKeyPath } from "../utils/jsonKeyCatalog.js";
+
 export const DEFAULT_TIME_FORMAT = "2006-01-02 15:04:05.000";
 export const DEFAULT_TIME_ZONE = "LOCAL";
 
@@ -119,11 +121,27 @@ export function resolveTagAnalyzerKeyColumns(columns) {
     };
 }
 
+export function buildNeoWebTagAnalyzerTableName({ table, database, user } = {}) {
+    const db = String(database ?? "").trim().toUpperCase();
+    const owner = String(user ?? "").trim().toUpperCase();
+    const parts = String(table ?? "").trim().toUpperCase().split(".");
+    const valid = (name) => /^[A-Z_][A-Z0-9_]*$/.test(name);
+    if (!valid(db) || !valid(owner)) {
+        return { ok: false, reason: "Database connection must have a database and user for Tag Analyzer." };
+    }
+    if (parts.length < 1 || parts.length > 3 || !parts.every(valid)) {
+        return { ok: false, reason: "Database table name is invalid for Tag Analyzer." };
+    }
+    return { ok: true, table: parts.length === 1 ? `${db}.${owner}.${parts[0]}`
+        : parts.length === 2 ? `${db}.${parts.join(".")}` : parts.join(".") };
+}
+
 export function buildNeoWebTagAnalyzerMessage({
     appName = NEO_WEB_TAG_ANALYZER_APP_NAME,
     title = "OPC UA Data Viewer",
     table,
     tagNames = [],
+    jsonKeys,
     range,
     valueColumn = "VALUE",
     nameColumn = "NAME",
@@ -141,10 +159,22 @@ export function buildNeoWebTagAnalyzerMessage({
 
     const seen = new Set();
     const tags = [];
-    for (const rawName of tagNames || []) {
+    if (jsonKeys && jsonKeys.length > 12) return { ok: false, reason: "Tag Analyzer supports up to 12 keys. Reduce the selection and try again." };
+    const selections = jsonKeys
+        ? jsonKeys.map((jsonKey) => ({ tagName: tagNames[0], jsonKey }))
+        : (tagNames || []).map((tagName) => ({ tagName, jsonKey: "" }));
+    for (const selection of selections) {
+        const rawName = selection.tagName;
         const tagName = String(rawName || "").trim();
-        if (!tagName || seen.has(tagName)) continue;
-        seen.add(tagName);
+        const identity = JSON.stringify([tagName, selection.jsonKey]);
+        if (!tagName || seen.has(identity)) continue;
+        seen.add(identity);
+        let jsonKey = "";
+        if (selection.jsonKey) {
+            const converted = toTagAnalyzerJsonKeyPath(selection.jsonKey);
+            if (!converted.ok) return converted;
+            jsonKey = converted.path;
+        }
         tags.push({
             tagName,
             table: tableName,
@@ -157,7 +187,7 @@ export function buildNeoWebTagAnalyzerMessage({
                 value,
                 timeType: TAG_ANALYZER_DATETIME_COLUMN_TYPE,
                 timeBaseTime: true,
-                jsonKey: "",
+                jsonKey,
             },
         });
     }
@@ -185,6 +215,21 @@ export function sendNeoWebTagAnalyzerMessage(message, targetWindow, targetOrigin
     if (!message || typeof targetWindow?.postMessage !== "function") return false;
     targetWindow.postMessage(message, targetOrigin);
     return true;
+}
+
+export function formatDataViewerChartRangeEdge(value, baseKind = "time") {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return "";
+    return baseKind === "distance" ? numeric : new Date(numeric).toISOString();
+}
+
+export function buildDataViewerShiftBaseRangeUpdate({ direction, range = {} } = {}) {
+    const offsetDirection = direction === "backward" ? -1 : direction === "forward" ? 1 : 0;
+    const start = new Date(range.from).getTime();
+    const end = new Date(range.to).getTime();
+    if (!offsetDirection || !Number.isFinite(start) || !Number.isFinite(end) || end <= start) return null;
+    const offset = (end - start) * offsetDirection;
+    return { from: formatDataViewerChartRangeEdge(start + offset), to: formatDataViewerChartRangeEdge(end + offset) };
 }
 
 const RAW_COLUMN_ORDER = ["time", "name", "value"];
@@ -667,12 +712,6 @@ export function buildDataViewerGlobalTimeUpdate({
 // Default query window. Leaving the range empty means there is no bounded window to query, so pagination has no fixed basis either.
 export const DEFAULT_DATA_VIEWER_TIME_RANGE = { from: "now-1h", to: "now" };
 
-// The Data Viewer renders a JSON value column as a raw payload string: the chart cannot plot it,
-// the grid cannot size it, and none of the numeric paths apply. Until that is handled properly
-// the viewer is blocked for these collectors rather than showing something misleading.
-export const JSON_VALUE_COLUMN_BLOCK_REASON =
-    "This collector stores values in a JSON column, which the Data Viewer cannot display yet.";
-
 /**
  * Whether the collector's value column is a JSON column.
  *
@@ -954,6 +993,16 @@ export function buildAssetRows(assetHierarchy, tags = []) {
     return rows;
 }
 
+export function buildCollectorAssetRows(assetHierarchy, tags = [], collectorName = "", jsonValueColumn = false) {
+    if (!jsonValueColumn) return buildAssetRows(assetHierarchy, tags);
+    const ownTags = (Array.isArray(tags) ? tags : []).filter((tag) =>
+        String(tag?.name ?? tag?.NAME ?? "") === String(collectorName || ""));
+    const rows = buildAssetRows(assetHierarchy, ownTags);
+    const folderKeys = new Set(rows.filter((row) => row.type === "tag")
+        .flatMap((row) => row.ancestorKeys || []));
+    return rows.filter((row) => row.type === "tag" || folderKeys.has(row.key));
+}
+
 export function getVisibleTagRows(rows = [], collapsedKeys = new Set()) {
     const collapsed = collapsedKeys instanceof Set ? collapsedKeys : new Set(collapsedKeys || []);
     return rows.filter((row) => !(row.ancestorKeys || []).some((key) => collapsed.has(key)));
@@ -1132,9 +1181,18 @@ const PANEL_MAIN_TOP_WITH_LEGEND = 40;
 const PANEL_MAIN_HEIGHT = 178;
 const PANEL_LEGEND_ROW_HEIGHT = 18;
 const PANEL_MAIN_SERIES_ID_PREFIX = "main-series-";
-const PANEL_COLORS = ["#5470c6", "#91cc75", "#fac858", "#ee6666", "#73c0de", "#3ba272", "#fc8452", "#9a60b4", "#ea7ccc"];
+export const PANEL_COLORS = ["#5470c6", "#91cc75", "#fac858", "#ee6666", "#73c0de", "#3ba272", "#fc8452", "#9a60b4", "#ea7ccc"];
 const PANEL_MOUSE_WHEEL_ZOOM_IN_FACTOR = 0.82;
 const PANEL_MOUSE_WHEEL_ZOOM_OUT_FACTOR = 1.22;
+const COMPACT_NUMBER_UNITS = [
+    { value: 1_000_000_000_000, suffix: "T" },
+    { value: 1_000_000_000, suffix: "B" },
+    { value: 1_000_000, suffix: "M" },
+    { value: 1_000, suffix: "K" },
+];
+const COMPACT_NUMBER_CEILING = 1000 * COMPACT_NUMBER_UNITS[0].value;
+const Y_AXIS_MAX_FRACTION_DIGITS = 4;
+const COMPACT_NUMBER_FLOOR = 10 ** -Y_AXIS_MAX_FRACTION_DIGITS;
 
 const AXIS_LINE_STYLE = { lineStyle: { color: "#323333" } };
 const AXIS_SPLIT_LINE_STYLE = { color: "#323333", width: 1 };
@@ -1148,17 +1206,14 @@ const Y_AXIS_LABEL_STYLE = {
 function formatYAxisLabel(value) {
     const numeric = Number(value);
     if (!Number.isFinite(numeric)) return String(value);
-    const units = [
-        { value: 1_000_000_000_000, suffix: "T" },
-        { value: 1_000_000_000, suffix: "B" },
-        { value: 1_000_000, suffix: "M" },
-        { value: 1_000, suffix: "K" },
-    ];
     const normalized = Object.is(numeric, -0) ? 0 : numeric;
     const abs = Math.abs(normalized);
-    const unit = units.find((item) => abs >= item.value);
+    if (abs >= COMPACT_NUMBER_CEILING || (abs > 0 && abs < COMPACT_NUMBER_FLOOR)) {
+        return Number(normalized.toExponential(1)).toExponential();
+    }
+    const unit = COMPACT_NUMBER_UNITS.find((item) => abs >= item.value);
     if (!unit) {
-        return new Intl.NumberFormat("en-US", { maximumFractionDigits: 4 }).format(normalized);
+        return new Intl.NumberFormat("en-US", { maximumFractionDigits: Y_AXIS_MAX_FRACTION_DIGITS }).format(normalized);
     }
     return `${new Intl.NumberFormat("en-US", { maximumFractionDigits: 1 }).format(normalized / unit.value)}${unit.suffix}`;
 }
@@ -1452,22 +1507,40 @@ function getYAxisRange(series, panelRange) {
     };
 }
 
+function escapeTooltipHtml(value) {
+    return String(value ?? "").replace(/[&<>"']/g, (char) => ({
+        "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+    })[char]);
+}
+
 function buildNeoLikeTooltipFormatter(params, timeFormat, timeZone) {
     const items = (Array.isArray(params) ? params : [params])
         .filter((item) => String(item?.seriesId || "").startsWith(PANEL_MAIN_SERIES_ID_PREFIX));
     if (items.length === 0) return "";
     const firstValue = Array.isArray(items[0].value) ? items[0].value : [];
     const time = formatDataViewerTime(Number(firstValue[0] ?? items[0].axisValue), timeFormat, timeZone);
-    return `<div>
-        <div style="min-width:0;padding-left:10px;font-size:10px;color:#afb5bc">${time}</div>
-        <div style="padding:6px 0 0 10px">
+    return `<div style="max-width:240px">
+        <div style="min-width:0;padding-left:10px;font-size:10px;color:#afb5bc;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeTooltipHtml(time)}</div>
+        <div style="padding:6px 0 0 10px;max-width:230px">
         ${items.map((item) => {
             const value = Array.isArray(item.value) ? item.value[1] : "";
-            const colorStyle = typeof item.color === "string" ? `color:${item.color};` : "";
-            return `<div style="${colorStyle}margin:0;padding:0;white-space:nowrap">${item.seriesName} : ${value ?? ""}</div>`;
+            const colorStyle = typeof item.color === "string" && /^#[0-9a-fA-F]{3,8}$/.test(item.color)
+                ? `color:${item.color};` : "";
+            return `<div style="${colorStyle}margin:0;padding:0;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeTooltipHtml(item.seriesName)} : ${escapeTooltipHtml(value)}</div>`;
         }).join("")}
         </div>
     </div>`;
+}
+
+function positionDataViewerTooltip(point, _params, _dom, _rect, size) {
+    const [x = 0, y = 0] = point || [];
+    const [contentWidth = 0, contentHeight = 0] = size.contentSize || [];
+    const [viewWidth = 0, viewHeight = 0] = size.viewSize || [];
+    const margin = 12;
+    const safeWidth = Math.min(contentWidth, 260);
+    const left = x + margin + safeWidth <= viewWidth ? x + margin : Math.max(margin, x - safeWidth - margin);
+    const top = y + margin + contentHeight <= viewHeight ? y + margin : Math.max(margin, y - contentHeight - margin);
+    return [left, top];
 }
 
 // The legend is `type: "scroll"`, so it renders on one line and paginates however many series
@@ -1492,6 +1565,7 @@ export function buildDataViewerEChartOption({
     // Tag-name keyed colours, so a split panel keeps the colour the tag has in the main chart.
     // Falls back to this panel's own palette position for names the map does not cover.
     seriesColors = {},
+    panelHeight,
 } = {}) {
     const colorFor = (item, index) => seriesColors[String(item?.name ?? "")] || PANEL_COLORS[index % PANEL_COLORS.length];
     const allPoints = series.flatMap((item) => Array.isArray(item?.data) ? item.data : []);
@@ -1499,6 +1573,9 @@ export function buildDataViewerEChartOption({
     const navigatorRange = getPanelRange(allPoints, timeRange);
     const yAxisRange = getYAxisRange(series, panelRange);
     const legendLayout = getPanelLegendLayout();
+    const mainHeight = Number.isFinite(panelHeight)
+        ? Math.max(96, Math.round(panelHeight - legendLayout.mainTop - 106))
+        : legendLayout.mainHeight;
 
     return {
         backgroundColor: "#252525",
@@ -1513,7 +1590,7 @@ export function buildDataViewerEChartOption({
                 left: PANEL_GRID_SIDE,
                 right: PANEL_GRID_SIDE,
                 top: legendLayout.mainTop,
-                height: legendLayout.mainHeight,
+                height: mainHeight,
                 containLabel: true,
             },
             {
@@ -1536,10 +1613,16 @@ export function buildDataViewerEChartOption({
                 color: "#e7e8ea",
                 fontSize: 10,
             },
+            pageIconColor: "#e7e8ea",
+            pageIconInactiveColor: "#61646b",
+            pageIconSize: 11,
+            pageTextStyle: { color: "#e7e8ea", fontSize: 10 },
         },
         tooltip: {
             trigger: "axis",
             confine: true,
+            appendToBody: true,
+            extraCssText: "max-width:260px;white-space:normal;pointer-events:none;",
             backgroundColor: "#1f1d1d",
             borderColor: "#292929",
             borderWidth: 1,
@@ -1548,6 +1631,7 @@ export function buildDataViewerEChartOption({
                 fontSize: 10,
             },
             axisPointer: { type: "line", snap: false },
+            position: positionDataViewerTooltip,
             formatter: (params) => buildNeoLikeTooltipFormatter(params, timeFormat, timeZone),
         },
         xAxis: [
@@ -1561,6 +1645,7 @@ export function buildDataViewerEChartOption({
                 axisTick: AXIS_LINE_STYLE,
                 axisLabel: {
                     ...PANEL_AXIS_LABEL_STYLE,
+                    hideOverlap: true,
                     formatter: (value) => formatDataViewerAxisTime(value, { min: panelRange.startTime, max: panelRange.endTime }, timeZone),
                 },
                 splitLine: {
@@ -1898,6 +1983,8 @@ function toDate(value) {
     const date = new Date(epochMs);
     return Number.isNaN(date.getTime()) ? null : date;
 }
+
+export const toDataViewerDate = toDate;
 
 function getDateParts(date, timeZone = DEFAULT_TIME_ZONE) {
     if (!timeZone || timeZone === "LOCAL") {

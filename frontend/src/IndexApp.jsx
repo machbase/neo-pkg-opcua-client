@@ -105,7 +105,7 @@ export default function IndexApp() {
             } />
             <Route path="/data-viewer" element={<Navigate to="/" replace />} />
             <Route path="/data-viewer/:collectorId" element={
-              <CollectorDataViewerRoute collectors={collectors} detail={detail} />
+              <CollectorDataViewerRoute collectors={collectors} detail={detail} servers={servers} serversLoading={serversLoading} />
             } />
             <Route path="/collectors/new" element={
               <CollectorFormPage
