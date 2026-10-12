@@ -3567,4 +3567,71 @@ runner.run('Handler: nodeDescendants', {
     },
 });
 
+runner.run('Handler: JSON key projection', {
+    'projects only chosen keys using catalog columns and bound collector/time values': (t) => {
+        const H = makeHandler();
+        mockMachbaseClient.tableMeta = { ID: 10, TYPE: 6, NAME: 'TAG' };
+        mockMachbaseClient.users = [{ USER_ID: 1, NAME: 'SYS' }];
+        mockMachbaseClient.columns = [
+            { NAME: 'TAG_ID', TYPE: 5, FLAG: 0x8000000 },
+            { NAME: 'TS', TYPE: 6, FLAG: 0x1000000 },
+            { NAME: 'PAYLOAD', TYPE: 61, FLAG: 0 },
+        ];
+        mockMachbaseClient.queryResults = [[{ TIME: new Date(1000), JV0: '23.5', JV1: 'on', JV2: null }]];
+        let result;
+        H.dbTableJsonKeys({ user: 'SYS' }, { table: 'TAG', name: "collector,1'", valueColumn: 'PAYLOAD',
+            keys: [['sensor.value'], ['sensor', 'status'], ["a'b"]], from: 1000, to: 2000 }, r => { result = r; });
+        t.assert(result.ok, result.reason);
+        const query = mockMachbaseClient.queries[0];
+        t.assert(query.sql.includes("PAYLOAD->'$[sensor.value]' AS JV0"), 'literal dotted key must stay one segment');
+        t.assert(query.sql.includes("PAYLOAD->'$[sensor][status]' AS JV1"), 'nested path must stay nested');
+        t.assert(query.sql.includes('SELECT TS AS TIME'), 'use catalog basetime');
+        t.assert(query.sql.includes('WHERE TAG_ID IN (?)'), 'use catalog primary and bind');
+        t.assertEqual(query.values[0], "collector,1'");
+        t.assert(!query.sql.includes('LIMIT'), 'read the full bounded window');
+        t.assertDeepEqual(result.data.rows[0].values, ['23.5', 'on', null]);
+        t.assert(mockMachbaseClient.closed, 'close database connection');
+    },
+    'rejects an unbounded window before connecting': (t) => {
+        const H = makeHandler(); let result;
+        H.dbTableJsonKeys({}, { table: 'TAG', name: 'job', keys: [['x']] }, r => { result = r; });
+        t.assert(!result.ok); t.assert(!mockMachbaseClient.connected);
+    },
+    'rejects JSON path injection and unsupported keys': (t) => {
+        const H = makeHandler(); let result;
+        H.dbTableJsonKeys({}, { table: 'TAG', name: 'job', keys: [['']], from: 1000, to: 2000 }, r => { result = r; });
+        t.assert(!result.ok); t.assert(!mockMachbaseClient.connected);
+        const { jsonKeySqlPath } = require('../src/db/json-key-path.js');
+        t.assertEqual(jsonKeySqlPath(["x'; DROP TABLE TAG;--"]), '$["x\'\'; DROP TABLE TAG;--"]');
+        t.assertThrows(() => jsonKeySqlPath(['x\0y']), 'cannot be queried');
+    },
+    'rejects a numeric value column instead of treating it as JSON': (t) => {
+        const H = makeHandler(); let result;
+        mockMachbaseClient.tableMeta = { ID: 10, TYPE: 6, NAME: 'TAG' };
+        H.dbTableJsonKeys({}, { table: 'TAG', name: 'job', keys: [['x']], from: 1000, to: 2000 }, r => { result = r; });
+        t.assert(!result.ok); t.assert(result.reason.includes('JSON column')); t.assert(mockMachbaseClient.closed);
+    },
+});
+
+runner.run('Handler: collector time bounds', {
+    'anchors JSON collection on collector statistics': (t) => {
+        const H = makeHandler(); let result;
+        mockMachbaseClient.tableMeta = { ID: 10, TYPE: 6, NAME: 'TAG' };
+        mockMachbaseClient.queryResults = [[{ MIN_TIME: new Date(1000), MAX_TIME: new Date(2000) }]];
+        H.dbTableStat({}, { table: 'TAG', names: ['collector-A'] }, r => { result = r; });
+        t.assert(result.ok, result.reason);
+        t.assert(mockMachbaseClient.queries[0].sql.includes('V$TAG_STAT'));
+        t.assertDeepEqual(mockMachbaseClient.queries[0].values, ['collector-A']);
+        t.assertEqual(result.data.maxTime.getTime(), 2000);
+    },
+    'falls back to table bounds when statistics are missing': (t) => {
+        const H = makeHandler(); let result;
+        mockMachbaseClient.tableMeta = { ID: 10, TYPE: 6, NAME: 'TAG' };
+        mockMachbaseClient.queryResults = [[], [{ MIN_TIME: null, MAX_TIME: null }]];
+        H.dbTableStat({}, { table: 'TAG', names: ['collector-A'] }, r => { result = r; });
+        t.assert(result.ok, result.reason); t.assertNull(result.data.maxTime);
+        t.assert(mockMachbaseClient.queries[1].sql.includes('MIN(TIME) AS MIN_TIME'));
+    },
+});
+
 if (!runner.summary()) process.exit(1);

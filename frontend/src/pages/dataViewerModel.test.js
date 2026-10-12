@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import {
     DATA_VIEWER_BACK_PATH,
     buildAssetRows,
+    buildCollectorAssetRows,
     buildDataViewerChartXAxis,
     buildDataViewerChartGroups,
     buildDataViewerEChartOption,
@@ -16,12 +17,14 @@ import {
     buildDataViewerSplitRangeUpdate,
     buildDataViewerSplitGroups,
     buildDataViewerShiftMainRangeUpdate,
+    buildDataViewerShiftBaseRangeUpdate,
     buildDataViewerDragRangeUpdate,
     buildDataViewerTagSelectionUpdate,
     buildDerivedTagRows,
     buildDataViewerWheelZoomRange,
     buildDataViewerZoomControlRange,
     buildNeoWebTagAnalyzerMessage,
+    buildNeoWebTagAnalyzerTableName,
     buildNeoWebTagAnalyzerRange,
     buildTagRows,
     buildTagChartSeries,
@@ -1220,6 +1223,34 @@ test("buildNeoWebTagAnalyzerMessage builds chart-group scoped Tag Analyzer paylo
     });
 });
 
+test("Tag Analyzer uses the collector connection's database and owner", () => {
+    const connection = { database: "MACHBASEDB", user: "sys" };
+    assert.deepEqual(buildNeoWebTagAnalyzerTableName({ ...connection, table: "JSON_SENSORS" }),
+        { ok: true, table: "MACHBASEDB.SYS.JSON_SENSORS" });
+    assert.deepEqual(buildNeoWebTagAnalyzerTableName({ ...connection, table: "OWNER.JSON_SENSORS" }),
+        { ok: true, table: "MACHBASEDB.OWNER.JSON_SENSORS" });
+    assert.deepEqual(buildNeoWebTagAnalyzerTableName({ ...connection, table: "FACTORY_A.OWNER.JSON_SENSORS" }),
+        { ok: true, table: "FACTORY_A.OWNER.JSON_SENSORS" });
+    assert.equal(buildNeoWebTagAnalyzerTableName({ table: "JSON_SENSORS", user: "sys" }).ok, false);
+    assert.equal(buildNeoWebTagAnalyzerTableName({ ...connection, table: "A..B" }).ok, false);
+});
+
+test("JSON Asset rows keep only the current collector and its folder path", () => {
+    const hierarchy = { schema: ["site", "unit"], tree: [
+        { key: "site", value: "A", children: [{ key: "unit", value: "One", children: [] }] },
+        { key: "site", value: "B", children: [{ key: "unit", value: "Two", children: [] }] },
+    ] };
+    const tags = [
+        { name: "collector-A", asset: { site: "A", unit: "One" } },
+        { name: "collector-B", asset: { site: "B", unit: "Two" } },
+    ];
+    const ownRows = buildCollectorAssetRows(hierarchy, tags, "collector-A", true);
+    assert.deepEqual(ownRows.map((row) => row.label), ["A", "One", "collector-A"]);
+    assert.deepEqual(ownRows.filter((row) => row.type === "tag").map((row) => row.tag.name), ["collector-A"]);
+    assert.equal(buildCollectorAssetRows(hierarchy, tags, "collector-A", false)
+        .filter((row) => row.type === "tag").length, 2);
+});
+
 test("resolveTagAnalyzerKeyColumns reads the TAG key columns from the flags, not the names", () => {
     assert.deepEqual(
         resolveTagAnalyzerKeyColumns([
@@ -1277,6 +1308,24 @@ test("buildNeoWebTagAnalyzerMessage falls back to NAME/TIME when the key columns
     assert.equal(built.ok, true);
     assert.equal(built.message.payload.tags[0].colName.name, "NAME");
     assert.equal(built.message.payload.tags[0].colName.time, "TIME");
+});
+
+test("JSON Tag Analyzer handoff keeps one collector with distinct selected keys", () => {
+    const built = buildNeoWebTagAnalyzerMessage({ table: "SYS.JSON_TAG", tagNames: ["collector-A"],
+        jsonKeys: ["[sensor][temperature]", "[sensor.value]", "[sensor][temperature]"],
+        nameColumn: "TAG_ID", timeColumn: "TS", valueColumn: "PAYLOAD",
+        range: { from: 1000, to: 2000 } });
+    assert.equal(built.ok, true);
+    assert.equal(built.message.payload.tags.length, 2);
+    assert.deepEqual(built.message.payload.tags.map((tag) => tag.colName.jsonKey), ["[sensor][temperature]", "[sensor.value]"]);
+    assert.ok(built.message.payload.tags.every((tag) => tag.tagName === "collector-A" && tag.colName.value === "PAYLOAD" && tag.colName.name === "TAG_ID"));
+    assert.deepEqual(built.message.payload.range, { startEpochMs: 1000, endEpochMs: 2000 });
+});
+
+test("JSON handoff rejects excessive selections and paths beyond neo-web limits", () => {
+    assert.equal(buildNeoWebTagAnalyzerMessage({ table: "TAG", tagNames: ["job"], jsonKeys: Array.from({ length: 13 }, (_, i) => `[k${i}]`) }).ok, false);
+    assert.equal(buildNeoWebTagAnalyzerMessage({ table: "TAG", tagNames: ["job"], jsonKeys: [`[${"a".repeat(255)}]`] }).ok, false);
+    assert.equal(buildNeoWebTagAnalyzerMessage({ table: "TAG", tagNames: ["job"], jsonKeys: [] }).ok, false);
 });
 
 test("buildNeoWebTagAnalyzerMessage rejects unsupported payloads", () => {
@@ -1337,6 +1386,39 @@ test("buildDataViewerEChartOption creates line chart options with data zoom", ()
     assert.deepEqual(option.dataZoom.map((zoom) => zoom.type), ["inside", "slider"]);
     assert.deepEqual(option.dataZoom.map((zoom) => zoom.xAxisIndex), [[1], [1]]);
     assert.equal(option.toolbox.show, false);
+});
+
+test("chart shows tiny values and keeps long JSON key tooltips within the viewer", () => {
+    const option = buildDataViewerEChartOption();
+    const axisLabel = option.yAxis[0].axisLabel.formatter;
+    assert.equal(axisLabel(0.00001), "1e-5");
+    assert.equal(axisLabel(1e35), "1e+35");
+    assert.equal(axisLabel(0), "0");
+
+    const tooltip = option.tooltip.formatter({
+        seriesId: "main-series-0",
+        seriesName: "a".repeat(330),
+        value: [Date.parse("2026-06-01T00:00:00Z"), 0.00001],
+    });
+    assert.match(tooltip, /max-width:240px/);
+    assert.match(tooltip, /max-width:220px;overflow:hidden;text-overflow:ellipsis/);
+    assert.match(option.tooltip.extraCssText, /max-width:260px/);
+    assert.deepEqual(option.tooltip.position([390, 340], null, null, null, {
+        contentSize: [250, 100],
+        viewSize: [400, 360],
+    }), [128, 228]);
+});
+
+test("chart tooltip treats JSON key names as text rather than HTML", () => {
+    const payload = '<img src=x onerror=alert(1)>&"\'';
+    const tooltip = buildDataViewerEChartOption().tooltip.formatter({
+        seriesId: "main-series-0",
+        seriesName: payload,
+        color: 'red;" onmouseover="alert(1)',
+        value: [Date.parse("2026-06-01T00:00:00Z"), 1],
+    });
+    assert.doesNotMatch(tooltip, /<img|onmouseover=/);
+    assert.match(tooltip, /&lt;img src=x onerror=alert\(1\)&gt;&amp;&quot;&#39;/);
 });
 
 test("buildDataViewerEChartOption keeps the plot size independent of the tag count", () => {
@@ -1778,4 +1860,20 @@ test("isJsonValueColumn is false for ordinary value columns and unknown input", 
     assert.equal(isJsonValueColumn(columns, ""), false);
     assert.equal(isJsonValueColumn(undefined, "VALUE"), false);
     assert.equal(isJsonValueColumn([{ name: "VALUE" }], "VALUE"), false, "a column with no type is not JSON");
+});
+
+test("time chevrons move the resolved window by its width and reject unresolved ranges", () => {
+    const range = { from: "2026-09-21T06:00:00.000Z", to: "2026-09-21T07:00:00.000Z" };
+    assert.deepEqual(buildDataViewerShiftBaseRangeUpdate({ direction: "forward", range }), { from: range.to, to: "2026-09-21T08:00:00.000Z" });
+    assert.deepEqual(buildDataViewerShiftBaseRangeUpdate({ direction: "backward", range }), { from: "2026-09-21T05:00:00.000Z", to: range.from });
+    for (const range of [{ from: "last-1h", to: "last" }, { from: "", to: "" }, { from: "2026-09-21", to: "2026-09-20" }]) {
+        assert.equal(buildDataViewerShiftBaseRangeUpdate({ direction: "forward", range }), null);
+    }
+});
+
+test("chart plot follows the available panel height and leaves room for controls", () => {
+    const compact = buildDataViewerEChartOption({ panelHeight: 300 });
+    const tall = buildDataViewerEChartOption({ panelHeight: 500 });
+    assert.equal(tall.grid[0].height - compact.grid[0].height, 200);
+    assert.ok(compact.grid[0].top + compact.grid[0].height <= 300 - 100);
 });

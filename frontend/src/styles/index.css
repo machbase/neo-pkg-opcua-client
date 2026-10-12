@@ -4389,7 +4389,7 @@ label.switch input:checked + .switch-slider::before {
 .data-viewer-chart-toolbar-controls {
     position: absolute;
     left: 50%;
-    bottom: 68px;
+    bottom: 52px;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -5760,3 +5760,12 @@ label.switch input:checked + .switch-slider::before {
     font-size: var(--font-size-sm);
     color: var(--color-on-surface-tertiary);
 }
+
+.data-viewer-range-chip { display:inline-flex;align-items:center;gap:4px;height:28px;max-width:min(280px,30vw);padding:0 8px;border:1px solid var(--color-border);border-radius:4px;background:var(--color-surface-input); }
+.data-viewer-range-chip-axis { color:#4199ff;font-size:9px;font-weight:600;flex-shrink:0; }
+.data-viewer-range-chip button { display:inline-flex;align-items:center;background:transparent;border:0;padding:0;cursor:pointer; }
+.data-viewer-range-chip button:disabled { opacity:.4;cursor:default; }
+.data-viewer-range-chip-value { min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;font-size:11px;color:var(--color-on-surface-secondary); }
+
+.data-viewer-raw-row { cursor:pointer; }
+.data-viewer-raw-row:focus-visible { outline:2px solid var(--color-primary);outline-offset:-2px; }

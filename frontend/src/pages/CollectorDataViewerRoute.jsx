@@ -3,7 +3,7 @@ import { useParams } from "react-router";
 import { useApp } from "../context/AppContext";
 import DataViewerPage from "./DataViewerPage";
 
-export default function CollectorDataViewerRoute({ collectors, detail }) {
+export default function CollectorDataViewerRoute({ collectors, detail, servers = [], serversLoading = false }) {
     const { collectorId = "" } = useParams();
     const { selectedCollectorId, setSelectedCollectorId } = useApp();
 
@@ -15,5 +15,5 @@ export default function CollectorDataViewerRoute({ collectors, detail }) {
 
     const activeDetail = selectedCollectorId === collectorId && detail?.name === collectorId ? detail : null;
 
-    return <DataViewerPage collectors={collectors} detail={activeDetail} />;
+    return <DataViewerPage collectors={collectors} detail={activeDetail} servers={servers} serversLoading={serversLoading} />;
 }

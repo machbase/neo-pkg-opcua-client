@@ -3123,6 +3123,75 @@ function dbTableTags(db, params, reply) {
  * }} params
  * @param {function} reply
  */
+function dbTableJsonKeys(db, params, reply) {
+  let req, paths;
+  try {
+    req = parseTagDataRequest({ ...params, names: [params.name] });
+    if (!req.from || !req.to || req.from >= req.to) throw new Error('A valid from/to range is required');
+    if (!Array.isArray(params.keys) || params.keys.length === 0) throw new Error('JSON keys are required');
+    const { jsonKeySqlPath } = require('../db/json-key-path.js');
+    paths = params.keys.map(jsonKeySqlPath);
+  } catch (err) {
+    reply({ ok: false, reason: errorMessage(err) });
+    return;
+  }
+  const client = new MachbaseClient(db);
+  try {
+    client.connect();
+    const { columns } = validateTagDataTable(client, req, db);
+    const column = columns.find(col => String(col.NAME || col.name).toUpperCase() === req.valueColumn.toUpperCase());
+    if (!column || Number(column.TYPE ?? column.type) !== 61) throw new Error('valueColumn must be a JSON column');
+    const where = buildTagDataWhere(req, req.primaryColumn, req.timeColumn);
+    const projections = paths.map((path, index) => `${req.valueColumn}->'${path}' AS JV${index}`).join(', ');
+    const rows = client.query(
+      `SELECT ${req.timeColumn} AS TIME, ${projections} FROM ${req.tableRef} WHERE ${where.sql} ORDER BY ${req.timeColumn} ASC`,
+      where.values
+    ) || [];
+    reply({ ok: true, data: { rows: rows.map(row => ({
+      base: pickRowValue(row, ['TIME', 'time']),
+      values: paths.map((_path, index) => pickRowValue(row, [`JV${index}`, `jv${index}`]) ?? null),
+    })) } });
+  } catch (err) {
+    reply({ ok: false, reason: errorMessage(err) });
+  } finally {
+    client.close();
+  }
+}
+
+function dbTableStat(db, params, reply) {
+  let req;
+  try {
+    req = parseTagDataRequest(params);
+  } catch (err) {
+    reply({ ok: false, reason: errorMessage(err) });
+    return;
+  }
+  const client = new MachbaseClient(db);
+  try {
+    client.connect();
+    validateTagDataTable(client, req, db);
+    let row;
+    try {
+      row = (client.query(
+        `SELECT MIN(MIN_TIME) AS MIN_TIME, MAX(MAX_TIME) AS MAX_TIME FROM ${buildTagStatViewRef(req)} WHERE NAME IN (${req.names.map(() => '?').join(', ')})`,
+        req.names
+      ) || [])[0];
+    } catch (_) {}
+    if (!row || pickRowValue(row, ['MAX_TIME', 'max_time']) == null) {
+      const where = buildTagDataWhere(req, req.primaryColumn, req.timeColumn);
+      row = (client.query(`SELECT MIN(${req.timeColumn}) AS MIN_TIME, MAX(${req.timeColumn}) AS MAX_TIME FROM ${req.tableRef} WHERE ${where.sql}`, where.values) || [])[0];
+    }
+    reply({ ok: true, data: {
+      minTime: pickRowValue(row || {}, ['MIN_TIME', 'min_time']) ?? null,
+      maxTime: pickRowValue(row || {}, ['MAX_TIME', 'max_time']) ?? null,
+    } });
+  } catch (err) {
+    reply({ ok: false, reason: errorMessage(err) });
+  } finally {
+    client.close();
+  }
+}
+
 function dbTableData(db, params, reply) {
   let req;
   try {
@@ -3532,6 +3601,8 @@ module.exports = {
   dbTableColumns,
   dbTableTags,
   dbTableData,
+  dbTableJsonKeys,
+  dbTableStat,
   dbTableDataTotal,
   dbTableChart,
   nodeDescendants,
